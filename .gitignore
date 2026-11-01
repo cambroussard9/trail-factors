@@ -1,0 +1,44 @@
+# --- Private and derived data -------------------------------------------------
+# Everything under data/ is either private (raw recordings carry GPS position;
+# athlete-supplied state is personal) or derived and rebuildable. None of it is
+# committed. Back up data/athlete/ yourself: it cannot be regenerated.
+data/
+*.duckdb
+*.duckdb.wal
+
+# Activity recordings carry GPS position. Only synthetic demo and test fixtures
+# may be committed.
+*.fit
+*.FIT
+!demo/**/*.fit
+!demo/**/*.FIT
+!tests/fixtures/**/*.fit
+!tests/fixtures/**/*.FIT
+
+# DEM tiles: public USGS data, but hundreds of MB each, and the set of cells on
+# disk identifies where you run. Re-fetchable with `fetch-tile`.
+*.tif
+*.tiff
+*.tif.part
+
+# --- Configuration and secrets -----------------------------------------------
+# Your athlete configuration. The committed template is athlete.example.yaml.
+config/athlete.yaml
+.env
+.claude/settings.local.json
+
+# --- Operational state, logs and outputs ---------------------------------------
+jobs.json
+*.log
+logs/
+.ipynb_checkpoints/
+notebooks/output*/
+*.nbconvert.ipynb
+
+# --- Environment and editor ----------------------------------------------------
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.vscode/
+Claude outputs/

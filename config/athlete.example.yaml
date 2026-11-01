@@ -1,0 +1,35 @@
+# Athlete configuration template. Copy to config/athlete.yaml (gitignored) and
+# edit. Every field is optional; a missing field takes the default shown here.
+# Unknown keys, wrong types and out-of-range values are rejected on load, with
+# the field and line named. Point TRAIL_FACTORS_CONFIG elsewhere to use another file.
+
+# Named training areas; a run belongs to the nearest one within radius_km, and comparison sets are built per area.
+clusters:
+  - name: HOME_TRAIL      # letters/digits/_/-, starting with a letter; NO_GPS and OTHER are reserved
+    lat: 0.0              # area centre, decimal degrees (-90 to 90); 2 decimal places is plenty
+    lon: 0.0              # area centre, decimal degrees (-180 to 180)
+    radius_km: 5.0        # how far from the centre a run's median position may sit (0.1 to 500)
+
+# Projected CRS (metres) for terrain geometry. Optional: when unset, each run's WGS84 UTM zone (EPSG:326NN north / 327NN south) is derived from that run's own position and the output says so, and segments in different zones never match. Set it (e.g. EPSG:32633) to pin one CRS for every run.
+projection_crs: null
+
+# Garmin activity id of the run that orders and labels the segment library ("the climb at 1.0 km"); null lists segments by effort count.
+reference_run_garmin_id: null
+
+# run_id (YYYY-MM-DDTHHMMZ) of a run whose peak heart rate you have not resolved; HR-ceiling totals are repeated without it. null for none.
+unresolved_peak_run: null
+
+# Default threshold (bpm) for the hr_above excursion list; set it a few beats below your declared maximum.
+hr_above_default_bpm: 180
+
+# Thresholds (bpm, strictly increasing) for time_above_hr's ladder.
+time_above_ladder_bpm: [170, 175, 180, 185]
+
+# true only if you accept that elevation-by-distance in session_series can fingerprint a known route; latitude/longitude are never emitted either way.
+route_fingerprint_accepted: false
+
+# USGS 3DEP project suffix to GUESS in a missing-tile filename (e.g. STATE_Region_2020); null leaves the filename unresolved until fetch-tile resolves it.
+dem_tile_suffix_guess: null
+
+# Free-text goal shown in the coaching brief, e.g. "a 50 km trail race"; null for none.
+goal_event: null

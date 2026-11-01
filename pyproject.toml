@@ -1,0 +1,33 @@
+[project]
+name = "trail-factors"
+version = "0.1.0"
+description = "Single-athlete ultramarathon training analysis from Garmin FIT files"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "duckdb>=1.5.5",
+    "fitdecode>=0.11.0",
+    "garminconnect>=0.3.11",
+    "imagecodecs>=2026.8.16",
+    "mcp>=2.1.1",
+    "numpy>=2.5.2",
+    "polars>=1.44.1",
+    "pyproj>=3.8.0",
+    "pyyaml>=6.0.3",
+    "tifffile>=2026.8.23",
+]
+
+[project.scripts]
+# The CLI and the MCP server (stdio). `uv sync` installs the project EDITABLE,
+# which is how it is meant to run: data paths default to directories in this
+# clone (src/trail_factors/paths.py) unless a TRAIL_FACTORS_* variable says
+# otherwise.
+trail-factors = "trail_factors.cli.main:main"
+trail-factors-mcp = "trail_factors.mcp_server:main"
+
+[build-system]
+requires = ["uv_build>=0.12.10,<0.13"]
+build-backend = "uv_build"
+
+# Layout follows SPEC.md §11: the package is src/trail_factors/ (ingest,
+# transform, analysis, cli, and the MCP server).
