@@ -17,18 +17,20 @@ from unittest import mock
 
 import duckdb
 
+from tests import fitgen
 from trail_factors.cli import athlete as A
 from trail_factors.ingest import fit_file as ff
 from trail_factors.ingest import validate as V
-from tests import fitgen
 
 
 class TestAnUnreadableFileGetsTheOpenCommand(unittest.TestCase):
     def advice(self, checks):
         # The real layout: a Garmin file lives in RAW_GARMIN and is named by
         # its id. The file is never written, so the detector cannot read it.
-        with tempfile.TemporaryDirectory() as d, \
-                mock.patch.object(A, "RAW_GARMIN", Path(d)):
+        with (
+            tempfile.TemporaryDirectory() as d,
+            mock.patch.object(A, "RAW_GARMIN", Path(d)),
+        ):
             missing = Path(d) / "10000000001_ACTIVITY.fit"
             return A.rejection_advice(missing, "synthetic", checks)
 
@@ -36,7 +38,7 @@ class TestAnUnreadableFileGetsTheOpenCommand(unittest.TestCase):
         a = self.advice(["pace_sustained_impossible"])
         self.assertIsNotNone(a["suggest_error"])
         self.assertIn("confirm-file 10000000001 --end", a["command"])
-        self.assertIsNone(a["fixable_by_window"])           # unknown, not False
+        self.assertIsNone(a["fixable_by_window"])  # unknown, not False
         self.assertNotIn("MIDDLE", a["next_step"])
         self.assertIn("could not read", a["next_step"])
 
@@ -50,12 +52,10 @@ class TestAnUnreadableFileGetsTheOpenCommand(unittest.TestCase):
         """The advice must never hide the rejection -- not even when the file
         cannot be hashed to name it."""
         with tempfile.TemporaryDirectory() as d:
-            gone = Path(d) / "elsewhere.fit"                 # never written
-            a = A.rejection_advice(gone, "synthetic",
-                                   ["pace_sustained_impossible"])
+            gone = Path(d) / "elsewhere.fit"  # never written
+            a = A.rejection_advice(gone, "synthetic", ["pace_sustained_impossible"])
         self.assertEqual(a["ref"], "elsewhere.fit")
         self.assertIn("confirm-file elsewhere.fit --end", a["command"])
-
 
 
 # --------------------------------------------------------------------------
@@ -107,14 +107,15 @@ class TestNoCadenceChannelIsNotCalledMidRun(_Fit):
         self.assertIn("could not place", a["next_step"])
         self.assertIn("no cadence channel", a["next_step"])
         self.assertEqual(a["command"], OPEN_END)
-        self.assertIsNone(a["fixable_by_window"])           # unknown, not False
+        self.assertIsNone(a["fixable_by_window"])  # unknown, not False
 
     def test_twin_the_same_file_WITH_cadence_gets_the_filled_command(self):
         a = self.advice()
         self.assertTrue(a["fixable_by_window"])
         self.assertEqual(
-            a["command"], f"{CLI} confirm-file {GID} "
-                          f"--end '{_fmt(self.facts['last_on_foot_utc'])}'")
+            a["command"],
+            f"{CLI} confirm-file {GID} --end '{_fmt(self.facts['last_on_foot_utc'])}'",
+        )
 
 
 class TestAWalkAfterTheDriveIsACutNotADeadEnd(_Fit):
@@ -128,15 +129,14 @@ class TestAWalkAfterTheDriveIsACutNotADeadEnd(_Fit):
         self.assertGreater(self.WALK_S, V.VEHICLE_EDGE_FOOT_MAX_S)
         a = self.advice(tail=(("walk", self.WALK_S),))
         s = a["suggestion"]
-        self.assertIsNone(s["suggested_valid_end"])         # not PROPOSED
+        self.assertIsNone(s["suggested_valid_end"])  # not PROPOSED
         self.assertEqual(
-            a["command"], f"{CLI} confirm-file {GID} "
-                          f"--end '{_fmt(self.facts['last_on_foot_utc'])}'")
-        self.assertFalse(a["fixable_by_window"])            # not junk-only
-        self.assertAlmostEqual(a["cut_discards_on_foot_s"], self.WALK_S,
-                               delta=2)
-        self.assertIn(f"DISCARDING {a['cut_discards_on_foot_s']:.0f} s",
-                      a["next_step"])
+            a["command"],
+            f"{CLI} confirm-file {GID} --end '{_fmt(self.facts['last_on_foot_utc'])}'",
+        )
+        self.assertFalse(a["fixable_by_window"])  # not junk-only
+        self.assertAlmostEqual(a["cut_discards_on_foot_s"], self.WALK_S, delta=2)
+        self.assertIn(f"DISCARDING {a['cut_discards_on_foot_s']:.0f} s", a["next_step"])
         self.assertNotIn("running on both sides", a["next_step"])
 
     def test_the_cut_verifies_clean(self):
@@ -170,20 +170,26 @@ class TestAnEdgeWindowOverAMidRunDriveIsNotTheFix(_Fit):
         """THE PROOF: apply the printed window to the records and run the
         fatal check itself. The edge window fails it; the cut passes."""
         from trail_factors.ingest import fit_file as ff
+
         a = self.advice(tail=self.TAIL)
         recs = ff.coalesce_records(ff.read_messages(self.fit)["record"])
 
         def fatal(end):
             kept = [r for r in recs if ff.to_utc_naive(r["timestamp"]) <= end]
-            return [f.check for f in V.silver_checks(
-                kept, {"coverage_fraction": 1.0, "contiguous": True})
-                if f.is_fatal]
+            return [
+                f.check
+                for f in V.silver_checks(
+                    kept, {"coverage_fraction": 1.0, "contiguous": True}
+                )
+                if f.is_fatal
+            ]
 
         edge = a["suggestion"]["suggested_valid_end"]
         self.assertEqual(fatal(edge), ["pace_sustained_impossible"])
         self.assertEqual(
-            a["command"], f"{CLI} confirm-file {GID} "
-                          f"--end '{_fmt(self.facts['last_on_foot_utc'])}'")
+            a["command"],
+            f"{CLI} confirm-file {GID} --end '{_fmt(self.facts['last_on_foot_utc'])}'",
+        )
         self.assertEqual(fatal(self.facts["last_on_foot_utc"]), [])
         self.assertAlmostEqual(a["cut_discards_on_foot_s"], 600, delta=2)
 
@@ -218,11 +224,11 @@ class TestNoPlaceholderRef(_Fit):
     def test_a_vehicle_suggestion_survives_a_timestamp_finding(self):
         """Both fatal: the drive's window is still shown, labelled as a fix
         only if the bad gap lies outside it."""
-        a = self.advice(checks=["pace_sustained_impossible",
-                                "timestamp_integrity"])
+        a = self.advice(checks=["pace_sustained_impossible", "timestamp_integrity"])
         self.assertEqual(
-            a["command"], f"{CLI} confirm-file {GID} "
-                          f"--end '{_fmt(self.facts['last_on_foot_utc'])}'")
+            a["command"],
+            f"{CLI} confirm-file {GID} --end '{_fmt(self.facts['last_on_foot_utc'])}'",
+        )
         self.assertIsNone(a["fixable_by_window"])
         self.assertIn("ONLY IF the bad timestamp gap", a["next_step"])
         self.assert_real(a["next_step"])
@@ -234,11 +240,14 @@ class TestRejectedFilesCoversTheWholeRawTree(unittest.TestCase):
 
     def setUp(self):
         from trail_factors.ingest.schema import DDL
+
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         raw = Path(tmp.name) / "raw"
-        for p in (mock.patch.object(A, "RAW_DIR", raw),
-                  mock.patch.object(A, "RAW_GARMIN", raw / "garmin")):
+        for p in (
+            mock.patch.object(A, "RAW_DIR", raw),
+            mock.patch.object(A, "RAW_GARMIN", raw / "garmin"),
+        ):
             p.start()
             self.addCleanup(p.stop)
         self.phone = raw / "strava" / "phone-run.fit"
@@ -249,20 +258,30 @@ class TestRejectedFilesCoversTheWholeRawTree(unittest.TestCase):
         self.addCleanup(self.con.close)
         self.con.execute(DDL)
         for p in (self.phone, self.watch):
-            V.persist(self.con, ff.sha256(p), None, None, [V.Finding(
-                "pace_sustained_impossible", V.FATAL, V.SILVER, "synthetic")])
+            V.persist(
+                self.con,
+                ff.sha256(p),
+                None,
+                None,
+                [
+                    V.Finding(
+                        "pace_sustained_impossible", V.FATAL, V.SILVER, "synthetic"
+                    )
+                ],
+            )
 
     def rec(self, path):
         sha = ff.sha256(path)
-        [r] = [r for r in A.rejected_files(self.con)["rejected"]
-               if r["file_sha256"] == sha]
+        [r] = [
+            r for r in A.rejected_files(self.con)["rejected"] if r["file_sha256"] == sha
+        ]
         return r
 
     def test_the_phone_file_gets_advice_and_a_sha_named_command(self):
         r = self.rec(self.phone)
         ref = ff.sha256(self.phone)[:16]
         self.assertEqual(r["file"], self.phone.name)
-        self.assertIsNone(r["garmin_id"])                  # no guessed id
+        self.assertIsNone(r["garmin_id"])  # no guessed id
         self.assertEqual(r["ref"], ref)
         self.assertTrue(r["next_step"])
         self.assertIn(f"confirm-file {ref} --end", r["confirm_with"])
@@ -286,29 +305,38 @@ class TestTheRejectedFilesListingPrintsNoBlankCommand(unittest.TestCase):
             db = Path(d) / "m.duckdb"
             duckdb.connect(str(db)).close()
             listing = {"rejected": [rec], "n_rejected": 1, "how_to_clear": "x"}
-            with mock.patch.object(M, "ensure_schema", lambda: None), \
-                    mock.patch.object(M, "DB_PATH", db), \
-                    mock.patch.object(M, "rejected_files",
-                                      return_value=listing), \
-                    mock.patch.object(sys, "argv", ["trail_factors.cli",
-                                                    "rejected-files"]), \
-                    contextlib.redirect_stdout(out):
+            with (
+                mock.patch.object(M, "ensure_schema", lambda: None),
+                mock.patch.object(M, "DB_PATH", db),
+                mock.patch.object(M, "rejected_files", return_value=listing),
+                mock.patch.object(sys, "argv", ["trail_factors.cli", "rejected-files"]),
+                contextlib.redirect_stdout(out),
+            ):
                 M.main()
         return out.getvalue()
 
-    BASE = {"file_sha256": "ab" * 32, "checks": "pace_sustained_impossible",
-            "messages": ["synthetic"], "garmin_id": None}
+    BASE = {
+        "file_sha256": "ab" * 32,
+        "checks": "pace_sustained_impossible",
+        "messages": ["synthetic"],
+        "garmin_id": None,
+    }
 
     def test_a_record_without_a_file_says_so(self):
         text = self.run_main(dict(self.BASE, file=None, ref=None))
-        self.assertEqual([ln for ln in text.splitlines()
-                          if ln and not ln.strip()], [])
+        self.assertEqual([ln for ln in text.splitlines() if ln and not ln.strip()], [])
         self.assertIn("no advice can be built", text)
 
     def test_twin_a_record_with_a_command_prints_it(self):
-        text = self.run_main(dict(self.BASE, file="x.fit", ref="abab",
-                                  next_step="do the thing",
-                                  confirm_with="CMD-HERE"))
+        text = self.run_main(
+            dict(
+                self.BASE,
+                file="x.fit",
+                ref="abab",
+                next_step="do the thing",
+                confirm_with="CMD-HERE",
+            )
+        )
         self.assertIn("run: CMD-HERE", text)
         self.assertIn("next step: do the thing", text)
         self.assertIn("abab", text)

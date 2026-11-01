@@ -37,11 +37,15 @@ _BEFORE = _db_files()
 def _check_no_database_created() -> None:
     new = sorted(_db_files() - _BEFORE)
     if new:
-        names = ", ".join(str(p.relative_to(_REPO)) if p.is_relative_to(_REPO)
-                          else p.name for p in new)
-        sys.stderr.write(f"\nFAIL: the test run created database file(s): "
-                         f"{names}. No test may create a database (see "
-                         f"tests/__init__.py).\n")
+        names = ", ".join(
+            str(p.relative_to(_REPO)) if p.is_relative_to(_REPO) else p.name
+            for p in new
+        )
+        sys.stderr.write(
+            f"\nFAIL: the test run created database file(s): "
+            f"{names}. No test may create a database (see "
+            f"tests/__init__.py).\n"
+        )
         sys.stderr.flush()
         os._exit(1)
 

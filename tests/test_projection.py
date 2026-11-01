@@ -13,9 +13,9 @@ import unittest
 
 import numpy as np
 
+from tests.corpus import CorpusTestCase, needs_corpus, one, use_config
 from trail_factors import config
 from trail_factors.transform import dem, matcher, silver
-from tests.corpus import CorpusTestCase, needs_corpus, one, use_config
 
 LATS, LONS = [46.50, 46.51], [7.50, 7.50]
 ZONE_32N, ZONE_33N = "EPSG:32632", "EPSG:32633"
@@ -26,7 +26,7 @@ def _run_around(lat, lon, n=40, north_offset_deg=0.0):
     `north_offset_deg` north of it (so the run's median can sit away from the
     one point two runs share)."""
     lats = lat + north_offset_deg + np.linspace(-0.003, 0.003, n)
-    lats = np.append(lats, lat)                 # the run passes the point
+    lats = np.append(lats, lat)  # the run passes the point
     lons = np.full(lats.shape, lon)
     return lats, lons
 
@@ -39,20 +39,37 @@ def _traversal_at(lat, lon, run_lats, run_lons, *, sort_key):
     x, y = matcher.to_utm([lat], [lon], proj["crs"])
     x, y = float(x[0]), float(y[0])
     return {
-        "activity_id": f"act{sort_key}", "slope_index": 0,
+        "activity_id": f"act{sort_key}",
+        "slope_index": 0,
         "direction": "ascent",
-        "lo_x": x + 40, "lo_y": y, "hi_x": x, "hi_y": y,
-        "mid_x": x + 20, "mid_y": y,
-        "place_x": x, "place_y": y, "place_elevation_m": 900.0,
+        "lo_x": x + 40,
+        "lo_y": y,
+        "hi_x": x,
+        "hi_y": y,
+        "mid_x": x + 20,
+        "mid_y": y,
+        "place_x": x,
+        "place_y": y,
+        "place_elevation_m": 900.0,
         "side_bearing_deg": 90.0,
-        "low_lat": lat, "low_lon": lon, "high_lat": lat, "high_lon": lon,
+        "low_lat": lat,
+        "low_lon": lon,
+        "high_lat": lat,
+        "high_lon": lon,
         "projection": proj["crs"],
         "projection_derived": not proj["configured"],
         "projection_basis": proj["basis"],
-        "low_elevation_m": 888.0, "high_elevation_m": 900.0,
-        "vertical_m": 12.0, "length_m": 200.0, "mean_grade_pct": 6.0,
-        "start_distance_m": 0.0, "start_utc": None, "end_utc": None,
-        "duration_s": 120.0, "vertical_speed_mps": 0.1, "avg_hr": None,
+        "low_elevation_m": 888.0,
+        "high_elevation_m": 900.0,
+        "vertical_m": 12.0,
+        "length_m": 200.0,
+        "mean_grade_pct": 6.0,
+        "start_distance_m": 0.0,
+        "start_utc": None,
+        "end_utc": None,
+        "duration_s": 120.0,
+        "vertical_speed_mps": 0.1,
+        "avg_hr": None,
         "sort_key": sort_key,
     }
 
@@ -66,14 +83,12 @@ def _legacy_id(x, y, side, z):
 
 
 class TestUnsetProjectionIsDerivedAndLabelled(unittest.TestCase):
-
     def test_the_zone_comes_from_the_positions_and_says_so(self):
         with use_config():
             p = dem.resolve_projection(LATS, LONS)
         self.assertEqual(p["crs"], ZONE_32N)
         self.assertFalse(p["configured"])
-        self.assertEqual(p["basis"],
-                         "derived from this run's position: UTM zone 32N")
+        self.assertEqual(p["basis"], "derived from this run's position: UTM zone 32N")
 
     def test_southern_hemisphere_is_the_327NN_code(self):
         with use_config():
@@ -97,7 +112,7 @@ class TestUnsetProjectionIsDerivedAndLabelled(unittest.TestCase):
         is projected in the zone of the run's median, so the stray point's
         x is continuous with its neighbours rather than ~500 km away."""
         lats = [46.50] * 9 + [46.50]
-        lons = [11.99] * 9 + [12.01]            # last point is in zone 33
+        lons = [11.99] * 9 + [12.01]  # last point is in zone 33
         with use_config():
             p = dem.resolve_projection(lats, lons)
             x, _ = matcher.to_utm(lats, lons)
@@ -131,10 +146,13 @@ class TestUnsetProjectionIsDerivedAndLabelled(unittest.TestCase):
     def test_coverage_carries_the_projection_and_its_basis(self):
         with use_config():
             cov = dem.TileSet([]).coverage(LATS, LONS)
-        self.assertEqual(cov["projection"],
-                         {"crs": ZONE_32N,
-                          "basis": "derived from this run's position: "
-                                   "UTM zone 32N"})
+        self.assertEqual(
+            cov["projection"],
+            {
+                "crs": ZONE_32N,
+                "basis": "derived from this run's position: UTM zone 32N",
+            },
+        )
         self.assertIs(cov["projection_configured"], False)
         # Still a cell, never a position (§5a).
         blob = json.dumps(cov)
@@ -148,7 +166,7 @@ class TestConfiguredProjectionWins(unittest.TestCase):
     def test_path_distance_in_metres(self):
         with use_config(projection_crs=ZONE_32N):
             d, x, y = silver.path_distance(LATS, LONS)
-        self.assertTrue(300_000 < float(x[0]) < 700_000)   # a UTM easting
+        self.assertTrue(300_000 < float(x[0]) < 700_000)  # a UTM easting
         self.assertAlmostEqual(float(d[0]), 0.0)
         # 0.01 deg of latitude is ~1,112 m.
         self.assertTrue(1100 < float(d[-1]) < 1125, float(d[-1]))
@@ -158,16 +176,16 @@ class TestConfiguredProjectionWins(unittest.TestCase):
         with use_config(projection_crs=ZONE_33N):
             p = dem.resolve_projection(LATS, LONS)
             x, _ = matcher.to_utm(LATS, LONS)
-        self.assertEqual(p, {"crs": ZONE_33N, "basis": "configured",
-                             "configured": True})
+        self.assertEqual(
+            p, {"crs": ZONE_33N, "basis": "configured", "configured": True}
+        )
         ref, _ = dem.transformer(dem.WGS84, ZONE_33N).transform(LONS[0], LATS[0])
         self.assertAlmostEqual(float(x[0]), float(ref), places=6)
 
     def test_coverage_says_configured(self):
         with use_config(projection_crs=ZONE_32N):
             cov = dem.TileSet([]).coverage(LATS, LONS)
-        self.assertEqual(cov["projection"],
-                         {"crs": ZONE_32N, "basis": "configured"})
+        self.assertEqual(cov["projection"], {"crs": ZONE_32N, "basis": "configured"})
 
     def test_a_different_projection_is_not_served_from_a_stale_cache(self):
         with use_config(projection_crs=ZONE_32N):
@@ -184,18 +202,19 @@ class TestConfiguredProjectionWins(unittest.TestCase):
         with use_config(projection_crs=ZONE_32N):
             t = _traversal_at(46.5, 7.5, run_lats, run_lons, sort_key=1.0)
         self.assertFalse(t["projection_derived"])
-        bare = {k: v for k, v in t.items()
-                if not k.startswith("projection")}
-        expected = _legacy_id(t["place_x"], t["place_y"],
-                              round(t["side_bearing_deg"] / matcher.SIDE_TOL_DEG),
-                              0)
+        bare = {k: v for k, v in t.items() if not k.startswith("projection")}
+        expected = _legacy_id(
+            t["place_x"],
+            t["place_y"],
+            round(t["side_bearing_deg"] / matcher.SIDE_TOL_DEG),
+            0,
+        )
         for tr in (t, bare):
             [seg] = matcher.build_library([tr])
             self.assertEqual(seg["segment_id"], expected)
 
 
 class TestTheZoneIsPartOfSegmentIdentity(unittest.TestCase):
-
     def test_two_runs_a_kilometre_apart_in_one_zone_still_match(self):
         """THE POSITIVE TWIN. Two runs whose medians sit ~1 km apart derive
         the same zone, so a place both cross is one segment."""
@@ -226,26 +245,28 @@ class TestTheZoneIsPartOfSegmentIdentity(unittest.TestCase):
         with use_config():
             a = _traversal_at(lat1, lon1, *r1, sort_key=1.0)
             b = _traversal_at(lat2, lon2, *r2, sort_key=2.0)
-        self.assertEqual((a["projection"], b["projection"]),
-                         (ZONE_32N, ZONE_33N))
+        self.assertEqual((a["projection"], b["projection"]), (ZONE_32N, ZONE_33N))
         self.assertAlmostEqual(
-            math.hypot(a["place_x"] - b["place_x"],
-                       a["place_y"] - b["place_y"]), 0.0, places=3)
+            math.hypot(a["place_x"] - b["place_x"], a["place_y"] - b["place_y"]),
+            0.0,
+            places=3,
+        )
         self.assertFalse(matcher.compatible(a, b))
         self.assertFalse(matcher.compatible(b, a))
         segs = matcher.build_library([a, b])
         self.assertEqual(len(segs), 2)
-        self.assertEqual(len({s["segment_id"] for s in segs}), 2,
-                         "identical rounded coordinates must not share an id")
+        self.assertEqual(
+            len({s["segment_id"] for s in segs}),
+            2,
+            "identical rounded coordinates must not share an id",
+        )
         lib = matcher.build_library([a])
         self.assertIsNone(matcher.match_traversal(b, lib))
 
     def test_a_derived_id_carries_its_zone(self):
         base = matcher.segment_id_for(500_000.4, 5_150_000.6, 1, 0)
-        z32 = matcher.segment_id_for(500_000.4, 5_150_000.6, 1, 0,
-                                     projection=ZONE_32N)
-        z33 = matcher.segment_id_for(500_000.4, 5_150_000.6, 1, 0,
-                                     projection=ZONE_33N)
+        z32 = matcher.segment_id_for(500_000.4, 5_150_000.6, 1, 0, projection=ZONE_32N)
+        z33 = matcher.segment_id_for(500_000.4, 5_150_000.6, 1, 0, projection=ZONE_33N)
         self.assertEqual(base, _legacy_id(500_000.4, 5_150_000.6, 1, 0))
         self.assertEqual(len({base, z32, z33}), 3)
 
@@ -255,18 +276,24 @@ class TestARunsProjectionFromTheCorpus(CorpusTestCase):
     LABEL, never a zone: the corpus is someone's real data."""
 
     def test_unset_is_derived_and_configured_wins(self):
-        aid = one(self.con, """
+        aid = one(
+            self.con,
+            """
             SELECT activity_id FROM records WHERE lat IS NOT NULL LIMIT 1""",
-                  what="positioned record")[0]
+            what="positioned record",
+        )[0]
         with use_config():
             p = dem.run_projection(self.con, aid)
         self.assertFalse(p["configured"])
-        self.assertTrue(p["basis"].startswith(
-            "derived from this run's position: UTM zone "), p["basis"])
+        self.assertTrue(
+            p["basis"].startswith("derived from this run's position: UTM zone "),
+            p["basis"],
+        )
         with use_config(projection_crs=ZONE_32N):
             q = dem.run_projection(self.con, aid)
-        self.assertEqual(q, {"crs": ZONE_32N, "basis": "configured",
-                             "configured": True})
+        self.assertEqual(
+            q, {"crs": ZONE_32N, "basis": "configured", "configured": True}
+        )
 
 
 class TestTerrainPairingNeedsNoSetting(CorpusTestCase):
@@ -274,10 +301,14 @@ class TestTerrainPairingNeedsNoSetting(CorpusTestCase):
 
     def test_matched_terrain_drift_runs_unconfigured(self):
         from trail_factors.analysis import primitives as P
-        aid = one(self.con, """
+
+        aid = one(
+            self.con,
+            """
             SELECT activity_id FROM records_enriched
             GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT 1""",
-                  what="run with enriched records")[0]
+            what="run with enriched records",
+        )[0]
         with use_config():
             got = P.matched_terrain_drift(self.con, aid)
             zone = dem.run_projection(self.con, aid)["crs"]
@@ -294,6 +325,7 @@ class TestTheMcpEnvelopeNeedsNoSetting(unittest.TestCase):
 
     def test_unset_projection_is_not_a_refusal(self):
         from trail_factors import mcp_server as M
+
         with use_config():
             env = json.loads(M.matched_terrain_drift(last_n=2))
         self.assertEqual(env["outcome"], "result", env)

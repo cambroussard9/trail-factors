@@ -16,9 +16,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from tests.isolation import git_ignores
 from trail_factors import lookup as L
 from trail_factors.paths import REPO_ROOT
-from tests.isolation import git_ignores
 
 SRC = REPO_ROOT / "src" / "trail_factors"
 
@@ -32,11 +32,15 @@ def _api_activity(**over) -> dict:
         "activityName": "Morning Run",
         "startTimeLocal": "2020-01-04 08:00:00",
         "activityType": {"typeKey": "running", "typeId": 1},
-        "distance": 5150.0, "duration": 1530.0,
-        "maxHR": 178.0, "averageHR": 165.0,
+        "distance": 5150.0,
+        "duration": 1530.0,
+        "maxHR": 178.0,
+        "averageHR": 165.0,
         # THE ONES THAT MUST NOT SURVIVE.
-        "startLatitude": 46.512345, "startLongitude": 7.498765,
-        "hasPolyline": True, "deviceId": 4000000001,
+        "startLatitude": 46.512345,
+        "startLongitude": 7.498765,
+        "hasPolyline": True,
+        "deviceId": 4000000001,
         **over,
     }
 
@@ -47,8 +51,10 @@ class _Store:
     def __enter__(self):
         self._tmp = tempfile.TemporaryDirectory()
         d = Path(self._tmp.name)
-        self._p = [mock.patch.object(L, "HISTORY_FILE", d / "summaries.json"),
-                   mock.patch.object(L, "LOOKUP_DIR", d)]
+        self._p = [
+            mock.patch.object(L, "HISTORY_FILE", d / "summaries.json"),
+            mock.patch.object(L, "LOOKUP_DIR", d),
+        ]
         for p in self._p:
             p.start()
         return d
@@ -78,10 +84,15 @@ class TestTheProjectionDropsEverythingElse(unittest.TestCase):
             # The fixture's start point is a coordinate at 6 dp. Nothing
             # numeric here may be in coordinate range at coordinate precision.
             if isinstance(v, float):
-                self.assertFalse(-180.0 < v < 180.0 and abs(v) > 0.0001
-                                 and v != int(v) and abs(v) < 200
-                                 and str(v).count(".") and len(str(v).split(".")[1]) > 3,
-                                 f"{v} looks like a coordinate")
+                self.assertFalse(
+                    -180.0 < v < 180.0
+                    and abs(v) > 0.0001
+                    and v != int(v)
+                    and abs(v) < 200
+                    and str(v).count(".")
+                    and len(str(v).split(".")[1]) > 3,
+                    f"{v} looks like a coordinate",
+                )
 
     def test_the_fields_that_ARE_kept_are_kept(self):
         """THE TWIN: a projection that dropped everything would pass above."""
@@ -96,17 +107,21 @@ class TestTheProjectionDropsEverythingElse(unittest.TestCase):
 
 
 class TestTheBoundaryIsStructural(unittest.TestCase):
-
     def test_nothing_that_computes_imports_the_lookup(self):
         """It is a lookup, not data. If analysis or ingest ever reads it, a
         single-sample maximum has entered the corpus's reasoning through the
         side door."""
         offenders = []
-        for path in list((SRC / "analysis").rglob("*.py")) + \
-                    list((SRC / "ingest").rglob("*.py")) + \
-                    list((SRC / "transform").rglob("*.py")):
+        for path in (
+            list((SRC / "analysis").rglob("*.py"))
+            + list((SRC / "ingest").rglob("*.py"))
+            + list((SRC / "transform").rglob("*.py"))
+        ):
             body = path.read_text()
-            if "trail_factors.lookup" in body or "from trail_factors import lookup" in body:
+            if (
+                "trail_factors.lookup" in body
+                or "from trail_factors import lookup" in body
+            ):
                 offenders.append(str(path))
         self.assertEqual(offenders, [])
 
@@ -118,6 +133,7 @@ class TestTheBoundaryIsStructural(unittest.TestCase):
 
     def test_it_lives_outside_the_corpus_directories(self):
         from trail_factors.paths import ATHLETE_DIR, DATA_DIR, LOOKUP_DIR, RAW_DIR
+
         self.assertEqual(LOOKUP_DIR.parent, DATA_DIR)
         self.assertNotEqual(LOOKUP_DIR, RAW_DIR)
         self.assertNotEqual(LOOKUP_DIR, ATHLETE_DIR)
@@ -132,7 +148,6 @@ class TestTheBoundaryIsStructural(unittest.TestCase):
 
 
 class TestTheSweep(unittest.TestCase):
-
     def _api(self, pages):
         api = mock.MagicMock()
         api.count_activities.return_value = sum(len(p) for p in pages)
@@ -158,8 +173,10 @@ class TestTheSweep(unittest.TestCase):
     def test_a_second_sweep_MERGES_rather_than_replacing(self):
         with _Store():
             L.sweep(self._api([[_api_activity()]]), progress=lambda *_: None)
-            L.sweep(self._api([[_api_activity(activityId=999, maxHR=150.0)]]),
-                    progress=lambda *_: None)
+            L.sweep(
+                self._api([[_api_activity(activityId=999, maxHR=150.0)]]),
+                progress=lambda *_: None,
+            )
             stored = L.load_history()
         self.assertIn("10000000001", stored)
         self.assertIn("999", stored)
@@ -167,6 +184,7 @@ class TestTheSweep(unittest.TestCase):
     def test_a_rate_limit_keeps_what_was_fetched(self):
         """Never retry in a loop: repeated attempts extend Garmin's limit."""
         from garminconnect import GarminConnectTooManyRequestsError
+
         with _Store():
             api = mock.MagicMock()
             api.count_activities.return_value = 400
@@ -194,26 +212,55 @@ class TestTheSweep(unittest.TestCase):
 
 
 class TestTheCeilingReport(unittest.TestCase):
-
     # SYNTHETIC: made-up dates and efforts, shaped to exercise the rules
     # (one isolated top, a 5 km band of three ranked by pace, a long run
     # outside the band, and a swim with no HR).
     ROWS = {
-        "a": {"activity_id": "a", "start_local": "2020-01-04 08:00:00",
-              "activity_type": "running", "duration_s": 1530.0,
-              "distance_m": 5150.0, "max_hr": 178.0, "avg_hr": 165.0},
-        "b": {"activity_id": "b", "start_local": "2020-02-08 09:30:00",
-              "activity_type": "running", "duration_s": 3800.0,
-              "distance_m": 9000.0, "max_hr": 185.0, "avg_hr": 162.0},
-        "c": {"activity_id": "c", "start_local": "2020-03-07 07:00:00",
-              "activity_type": "running", "duration_s": 1450.0,
-              "distance_m": 5000.0, "max_hr": 176.0, "avg_hr": 160.0},
-        "d": {"activity_id": "d", "start_local": "2020-04-04 07:00:00",
-              "activity_type": "lap_swimming", "duration_s": 900.0,
-              "distance_m": 380.0, "max_hr": None, "avg_hr": None},
-        "e": {"activity_id": "e", "start_local": "2020-05-02 07:00:00",
-              "activity_type": "running", "duration_s": 1800.0,
-              "distance_m": 5100.0, "max_hr": 150.0, "avg_hr": 140.0},
+        "a": {
+            "activity_id": "a",
+            "start_local": "2020-01-04 08:00:00",
+            "activity_type": "running",
+            "duration_s": 1530.0,
+            "distance_m": 5150.0,
+            "max_hr": 178.0,
+            "avg_hr": 165.0,
+        },
+        "b": {
+            "activity_id": "b",
+            "start_local": "2020-02-08 09:30:00",
+            "activity_type": "running",
+            "duration_s": 3800.0,
+            "distance_m": 9000.0,
+            "max_hr": 185.0,
+            "avg_hr": 162.0,
+        },
+        "c": {
+            "activity_id": "c",
+            "start_local": "2020-03-07 07:00:00",
+            "activity_type": "running",
+            "duration_s": 1450.0,
+            "distance_m": 5000.0,
+            "max_hr": 176.0,
+            "avg_hr": 160.0,
+        },
+        "d": {
+            "activity_id": "d",
+            "start_local": "2020-04-04 07:00:00",
+            "activity_type": "lap_swimming",
+            "duration_s": 900.0,
+            "distance_m": 380.0,
+            "max_hr": None,
+            "avg_hr": None,
+        },
+        "e": {
+            "activity_id": "e",
+            "start_local": "2020-05-02 07:00:00",
+            "activity_type": "running",
+            "duration_s": 1800.0,
+            "distance_m": 5100.0,
+            "max_hr": 150.0,
+            "avg_hr": 140.0,
+        },
     }
 
     def report(self, **kw):
@@ -254,8 +301,8 @@ class TestTheCeilingReport(unittest.TestCase):
         band = self.report()["five_k_band"]
         ids = {f["activity_id"] for f in band["fastest"]}
         self.assertEqual(ids, {"a", "c", "e"})
-        self.assertNotIn("b", ids)          # 9 km
-        self.assertNotIn("d", ids)          # a swim, and 380 m
+        self.assertNotIn("b", ids)  # 9 km
+        self.assertNotIn("d", ids)  # a swim, and 380 m
 
     def test_the_shortlist_is_ranked_by_PACE_not_by_maxHR(self):
         """Ranking by maxHR would sort by the figure that cannot be trusted

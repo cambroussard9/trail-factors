@@ -8,20 +8,27 @@ data/raw/weather/ so a re-run reproduces what was actually used.
 import unittest
 from datetime import datetime, timedelta
 
-from trail_factors.ingest import weather as W
 from tests.corpus import CorpusTestCase, one
-
+from trail_factors.ingest import weather as W
 
 T0 = datetime(2025, 1, 15, 14, 0)
 
 
 def hourly(*vals, start=T0):
     """(temp, dew, wind_dir) per hour from `start`."""
-    return [{"timestamp": start + timedelta(hours=i),
-             "temp_c": t, "dew_point_c": d, "humidity_pct": 50.0,
-             "wind_mps": 3.0, "wind_dir_deg": wd, "precip_mm": 0.0,
-             "cloud_cover_pct": 10.0}
-            for i, (t, d, wd) in enumerate(vals)]
+    return [
+        {
+            "timestamp": start + timedelta(hours=i),
+            "temp_c": t,
+            "dew_point_c": d,
+            "humidity_pct": 50.0,
+            "wind_mps": 3.0,
+            "wind_dir_deg": wd,
+            "precip_mm": 0.0,
+            "cloud_cover_pct": 10.0,
+        }
+        for i, (t, d, wd) in enumerate(vals)
+    ]
 
 
 class TestCoordinateCoarsening(unittest.TestCase):
@@ -38,7 +45,7 @@ class TestCoordinateCoarsening(unittest.TestCase):
         address. If this ever tightens, the privacy claim in the module
         docstring stops being true."""
         self.assertEqual(W.COORD_PRECISION, 2)
-        worst = 0.5 * 10 ** -W.COORD_PRECISION * 111_320      # metres of lat
+        worst = 0.5 * 10**-W.COORD_PRECISION * 111_320  # metres of lat
         self.assertLess(worst, 600)
         self.assertGreater(worst, 100)
 
@@ -97,8 +104,9 @@ class TestWindDirectionIsCircular(unittest.TestCase):
     def test_direction_is_carried_by_nearest_not_averaged_through_south(self):
         """350 deg to 10 deg must never pass through 180."""
         rows = hourly((20.0, 10.0, 350.0), (20.0, 10.0, 10.0))
-        out = W.interpolate(rows, [
-            T0 + timedelta(minutes=10), T0 + timedelta(minutes=50)])
+        out = W.interpolate(
+            rows, [T0 + timedelta(minutes=10), T0 + timedelta(minutes=50)]
+        )
         self.assertEqual([r["wind_dir_deg"] for r in out], [350.0, 10.0])
         for r in out:
             self.assertNotAlmostEqual(r["wind_dir_deg"], 180.0, delta=90.0)
@@ -112,8 +120,10 @@ class TestWindDirectionIsCircular(unittest.TestCase):
 class TestPrecipProxy(unittest.TestCase):
     def test_only_the_24h_before_the_run_counts(self):
         start = T0
-        rows = [{"timestamp": start - timedelta(hours=h), "precip_mm": 1.0}
-                for h in range(1, 40)]
+        rows = [
+            {"timestamp": start - timedelta(hours=h), "precip_mm": 1.0}
+            for h in range(1, 40)
+        ]
         self.assertAlmostEqual(W.precip_prev_24h(rows, start), 24.0, places=6)
 
     def test_rain_during_the_run_is_not_counted_as_prior_wetness(self):
@@ -158,8 +168,9 @@ class TestStoredWeather(CorpusTestCase):
     """
 
     def test_every_outdoor_activity_has_per_record_weather(self):
-        n_weather = self.con.execute(
-            "SELECT count(*) FROM weather_records").fetchone()[0]
+        n_weather = self.con.execute("SELECT count(*) FROM weather_records").fetchone()[
+            0
+        ]
         if n_weather == 0:
             self.skipTest("this corpus has no weather_records (run `weather`)")
         missing = self.con.execute("""
@@ -169,19 +180,22 @@ class TestStoredWeather(CorpusTestCase):
                               WHERE w.activity_id = a.activity_id)
         """).fetchone()[0]
         no_dew = self.con.execute(
-            "SELECT count(*) FILTER (WHERE dew_point_c IS NULL) "
-            "FROM weather_records").fetchone()[0]
+            "SELECT count(*) FILTER (WHERE dew_point_c IS NULL) FROM weather_records"
+        ).fetchone()[0]
         self.assertEqual(missing, 0, "§8: a gap is a fetch failure, not a gap")
         self.assertEqual(no_dew, 0, "dew point is the point (§8)")
 
     def test_weather_is_per_record_not_per_activity(self):
         """THE POSITIVE TWIN: an outdoor activity carries one weather row per
         record, not one scalar for the run."""
-        _, n_rec = one(self.con, """
+        _, n_rec = one(
+            self.con,
+            """
             SELECT w.activity_id, count(*) FROM weather_records w
             WHERE w.weather_source <> 'assumed_indoor'
             GROUP BY 1 ORDER BY 2 DESC LIMIT 1""",
-            what="outdoor activity with weather_records")
+            what="outdoor activity with weather_records",
+        )
         self.assertGreater(n_rec, 1)
 
     def test_weather_varies_within_a_single_activity(self):
@@ -194,8 +208,9 @@ class TestStoredWeather(CorpusTestCase):
         """).fetchone()[0]
         if spread is None:
             self.skipTest("this corpus has no outdoor weather_records")
-        self.assertGreater(spread, 0.0,
-                           "within-run temperature change is what §8 captures")
+        self.assertGreater(
+            spread, 0.0, "within-run temperature change is what §8 captures"
+        )
 
 
 if __name__ == "__main__":

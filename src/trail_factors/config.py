@@ -65,7 +65,8 @@ class AthleteConfig:
             raise ConfigError(
                 f"{name} is not set, and this operation needs it. Set it in "
                 f"{paths.display_path(paths.CONFIG_FILE)} (copy "
-                f"config/athlete.example.yaml if you have no config yet).")
+                f"config/athlete.example.yaml if you have no config yet)."
+            )
         return value
 
 
@@ -82,14 +83,22 @@ LON_RANGE = (-180.0, 180.0)
 RADIUS_RANGE_KM = (0.1, 500.0)
 GOAL_EVENT_MAX_CHARS = 80
 
-TOP_LEVEL_KEYS = ("clusters", "projection_crs", "reference_run_garmin_id",
-                  "unresolved_peak_run", "hr_above_default_bpm",
-                  "time_above_ladder_bpm", "route_fingerprint_accepted",
-                  "dem_tile_suffix_guess", "goal_event")
+TOP_LEVEL_KEYS = (
+    "clusters",
+    "projection_crs",
+    "reference_run_garmin_id",
+    "unresolved_peak_run",
+    "hr_above_default_bpm",
+    "time_above_ladder_bpm",
+    "route_fingerprint_accepted",
+    "dem_tile_suffix_guess",
+    "goal_event",
+)
 CLUSTER_KEYS = ("name", "lat", "lon", "radius_km")
 
 
 # --- locating a value in the file ------------------------------------------
+
 
 def _line_index(node, path=(), out=None) -> dict:
     """Map every path in the node tree to its 1-based line number."""
@@ -151,8 +160,7 @@ class _Checker:
 
     def string(self, path, v, pattern: re.Pattern, what: str) -> str:
         if not isinstance(v, str):
-            self.fail(path, f"must be a string ({what}), got "
-                            f"{type(v).__name__} {v!r}")
+            self.fail(path, f"must be a string ({what}), got {type(v).__name__} {v!r}")
         if not pattern.match(v):
             self.fail(path, f"{v!r} is not {what}")
         return v
@@ -160,14 +168,14 @@ class _Checker:
     def keys(self, path, mapping: dict, allowed: tuple, required=()):
         for k in mapping:
             if k not in allowed:
-                self.fail(path + (k,), f"unknown key (allowed: "
-                                       f"{', '.join(allowed)})")
+                self.fail(path + (k,), f"unknown key (allowed: {', '.join(allowed)})")
         for k in required:
             if k not in mapping:
                 self.fail(path, f"missing required key {k!r}")
 
 
 # --- the fields -------------------------------------------------------------
+
 
 def _clusters(c: _Checker, v) -> tuple[Cluster, ...]:
     path = ("clusters",)
@@ -181,21 +189,31 @@ def _clusters(c: _Checker, v) -> tuple[Cluster, ...]:
         if not isinstance(item, dict):
             c.fail(p, f"must be a mapping with keys {', '.join(CLUSTER_KEYS)}")
         c.keys(p, item, CLUSTER_KEYS, required=CLUSTER_KEYS)
-        name = c.string(p + ("name",), item["name"], CLUSTER_NAME_RE,
-                        "a name of letters, digits, '_' or '-' (max 32), "
-                        "starting with a letter")
+        name = c.string(
+            p + ("name",),
+            item["name"],
+            CLUSTER_NAME_RE,
+            "a name of letters, digits, '_' or '-' (max 32), starting with a letter",
+        )
         if name.upper() in RESERVED_CLUSTER_NAMES:
-            c.fail(p + ("name",), f"{name!r} is reserved (the code uses "
-                                  f"{', '.join(sorted(RESERVED_CLUSTER_NAMES))})")
+            c.fail(
+                p + ("name",),
+                f"{name!r} is reserved (the code uses "
+                f"{', '.join(sorted(RESERVED_CLUSTER_NAMES))})",
+            )
         if name in names:
             c.fail(p + ("name",), f"duplicate cluster name {name!r}")
         names.add(name)
-        out.append(Cluster(
-            name=name,
-            lat=c.number(p + ("lat",), item["lat"], *LAT_RANGE),
-            lon=c.number(p + ("lon",), item["lon"], *LON_RANGE),
-            radius_km=c.number(p + ("radius_km",), item["radius_km"],
-                               *RADIUS_RANGE_KM)))
+        out.append(
+            Cluster(
+                name=name,
+                lat=c.number(p + ("lat",), item["lat"], *LAT_RANGE),
+                lon=c.number(p + ("lon",), item["lon"], *LON_RANGE),
+                radius_km=c.number(
+                    p + ("radius_km",), item["radius_km"], *RADIUS_RANGE_KM
+                ),
+            )
+        )
     return tuple(out)
 
 
@@ -204,16 +222,19 @@ def _projection(c: _Checker, v) -> str | None:
         return None
     crs = c.string(("projection_crs",), v, CRS_RE, "an 'EPSG:<code>' string")
     from pyproj import CRS
+
     try:
         parsed = CRS.from_user_input(crs)
     except Exception as exc:  # pyproj raises its own CRSError
         c.fail(("projection_crs",), f"{crs!r} is not a known CRS ({exc})")
     axis_units = {a.unit_name for a in parsed.axis_info}
     if not parsed.is_projected or axis_units != {"metre"}:
-        c.fail(("projection_crs",),
-               f"{crs!r} must be a PROJECTED CRS in metres (a UTM zone such "
-               f"as EPSG:326NN north / EPSG:327NN south); every distance and "
-               f"matching radius is computed in it")
+        c.fail(
+            ("projection_crs",),
+            f"{crs!r} must be a PROJECTED CRS in metres (a UTM zone such "
+            f"as EPSG:326NN north / EPSG:327NN south); every distance and "
+            f"matching radius is computed in it",
+        )
     return crs
 
 
@@ -222,7 +243,7 @@ def _ladder(c: _Checker, v) -> tuple[float, ...]:
     if not isinstance(v, list) or not v:
         c.fail(path, "must be a non-empty list of heart rates")
     rungs = tuple(c.number(path + (i,), x, *HR_RANGE) for i, x in enumerate(v))
-    if any(b <= a for a, b in zip(rungs, rungs[1:])):
+    if any(b <= a for a, b in zip(rungs, rungs[1:], strict=False)):
         c.fail(path, f"must be strictly increasing, got {list(rungs)}")
     return rungs
 
@@ -242,34 +263,48 @@ def _from_mapping(data: dict, where: str, lines: dict) -> AthleteConfig:
         if isinstance(v, int) and not isinstance(v, bool):
             v = str(v)
         kw["reference_run_garmin_id"] = c.string(
-            ("reference_run_garmin_id",), v, GARMIN_ID_RE,
-            "a Garmin activity id (6-15 digits)")
+            ("reference_run_garmin_id",),
+            v,
+            GARMIN_ID_RE,
+            "a Garmin activity id (6-15 digits)",
+        )
     if data.get("unresolved_peak_run") is not None:
         kw["unresolved_peak_run"] = c.string(
-            ("unresolved_peak_run",), data["unresolved_peak_run"], RUN_ID_RE,
-            "a run_id like 2025-01-31T1405Z")
+            ("unresolved_peak_run",),
+            data["unresolved_peak_run"],
+            RUN_ID_RE,
+            "a run_id like 2025-01-31T1405Z",
+        )
     if "hr_above_default_bpm" in data:
         kw["hr_above_default_bpm"] = c.number(
-            ("hr_above_default_bpm",), data["hr_above_default_bpm"], *HR_RANGE)
+            ("hr_above_default_bpm",), data["hr_above_default_bpm"], *HR_RANGE
+        )
     if "time_above_ladder_bpm" in data:
         kw["time_above_ladder_bpm"] = _ladder(c, data["time_above_ladder_bpm"])
     if "route_fingerprint_accepted" in data:
         v = data["route_fingerprint_accepted"]
         if not isinstance(v, bool):
-            c.fail(("route_fingerprint_accepted",),
-                   f"must be true or false, got {type(v).__name__} {v!r}")
+            c.fail(
+                ("route_fingerprint_accepted",),
+                f"must be true or false, got {type(v).__name__} {v!r}",
+            )
         kw["route_fingerprint_accepted"] = v
     if data.get("dem_tile_suffix_guess") is not None:
         kw["dem_tile_suffix_guess"] = c.string(
-            ("dem_tile_suffix_guess",), data["dem_tile_suffix_guess"],
-            TILE_SUFFIX_RE, "a USGS project suffix of letters, digits and '_'")
+            ("dem_tile_suffix_guess",),
+            data["dem_tile_suffix_guess"],
+            TILE_SUFFIX_RE,
+            "a USGS project suffix of letters, digits and '_'",
+        )
     if data.get("goal_event") is not None:
         v = data["goal_event"]
         if not isinstance(v, str) or not v.strip():
             c.fail(("goal_event",), f"must be a non-empty string, got {v!r}")
         if len(v) > GOAL_EVENT_MAX_CHARS:
-            c.fail(("goal_event",), f"is {len(v)} characters; the limit is "
-                                    f"{GOAL_EVENT_MAX_CHARS}")
+            c.fail(
+                ("goal_event",),
+                f"is {len(v)} characters; the limit is {GOAL_EVENT_MAX_CHARS}",
+            )
         kw["goal_event"] = v.strip()
     return AthleteConfig(source=where, **kw)
 
@@ -282,18 +317,23 @@ def parse(text: str, where: str = "<config>") -> AthleteConfig:
     except yaml.YAMLError as exc:
         mark = getattr(exc, "problem_mark", None)
         at = f" line {mark.line + 1}" if mark is not None else ""
-        raise ConfigError(f"{where}{at}: not valid YAML: "
-                          f"{getattr(exc, 'problem', None) or exc}") from None
+        raise ConfigError(
+            f"{where}{at}: not valid YAML: {getattr(exc, 'problem', None) or exc}"
+        ) from None
     if data is None:
         return AthleteConfig(source=where)
     if not isinstance(data, dict):
-        raise ConfigError(f"{where} line 1: <top level>: must be a mapping of "
-                          f"field: value, got {type(data).__name__}")
+        raise ConfigError(
+            f"{where} line 1: <top level>: must be a mapping of "
+            f"field: value, got {type(data).__name__}"
+        )
     dupes = _duplicate_keys(node)
     if dupes:
         path, line = dupes[0]
-        raise ConfigError(f"{where} line {line}: {_dotted(path)}: duplicate "
-                          f"key (YAML would silently keep only the last)")
+        raise ConfigError(
+            f"{where} line {line}: {_dotted(path)}: duplicate "
+            f"key (YAML would silently keep only the last)"
+        )
     return _from_mapping(data, where, _line_index(node))
 
 

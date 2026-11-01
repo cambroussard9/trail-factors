@@ -25,9 +25,11 @@ class TestCredentialPathsInsideTheRepoAreRefused(unittest.TestCase):
         self.auth = REPO_ROOT / "config" / "auth-state-must-not-exist.json"
 
     def _patched(self, tokenstore, auth_state):
-        return [mock.patch.object(G, "TOKENSTORE", str(tokenstore)),
-                mock.patch.object(G, "AUTH_STATE", Path(auth_state)),
-                mock.patch.object(G, "Garmin", _no_garmin)]
+        return [
+            mock.patch.object(G, "TOKENSTORE", str(tokenstore)),
+            mock.patch.object(G, "AUTH_STATE", Path(auth_state)),
+            mock.patch.object(G, "Garmin", _no_garmin),
+        ]
 
     def _run(self, tokenstore, auth_state, fn):
         patches = self._patched(tokenstore, auth_state)
@@ -49,16 +51,21 @@ class TestCredentialPathsInsideTheRepoAreRefused(unittest.TestCase):
     def test_a_tokenstore_inside_the_repo_is_refused_everywhere(self):
         with tempfile.TemporaryDirectory() as d:
             auth = Path(d) / "auth.json"
-            for fn in (G.client, G.check_backoff, lambda: G.record_failure("x"),
-                       lambda: G.interactive_login("a@example.com", "pw")):
+            for fn in (
+                G.client,
+                G.check_backoff,
+                lambda: G.record_failure("x"),
+                lambda: G.interactive_login("a@example.com", "pw"),
+            ):
                 msg = self._run(self.tok, auth, fn)
                 self.assertIn("TRAIL_FACTORS_GARMIN_TOKENSTORE", msg)
             self.assertFalse(auth.exists())
 
     def test_an_auth_state_inside_the_repo_is_refused(self):
         with tempfile.TemporaryDirectory() as d:
-            msg = self._run(Path(d) / "tokens", self.auth,
-                            lambda: G.record_failure("x"))
+            msg = self._run(
+                Path(d) / "tokens", self.auth, lambda: G.record_failure("x")
+            )
         self.assertIn("TRAIL_FACTORS_GARMIN_AUTH_STATE", msg)
 
 
@@ -68,15 +75,19 @@ class TestOutsideTheRepoTheBackoffWorks(unittest.TestCase):
 
     def test_record_check_clear_round_trip(self):
         with tempfile.TemporaryDirectory() as d:
-            auth = Path(d) / "nested" / "auth.json"     # parent does not exist
-            with mock.patch.object(G, "TOKENSTORE", str(Path(d) / "tokens")), \
-                    mock.patch.object(G, "AUTH_STATE", auth):
-                G.check_backoff()                        # nothing recorded yet
+            auth = Path(d) / "nested" / "auth.json"  # parent does not exist
+            with (
+                mock.patch.object(G, "TOKENSTORE", str(Path(d) / "tokens")),
+                mock.patch.object(G, "AUTH_STATE", auth),
+            ):
+                G.check_backoff()  # nothing recorded yet
                 G.record_failure("429 rate limited")
-                self.assertEqual(json.loads(auth.read_text())["error"],
-                                 "429 rate limited")
-                self.assertEqual([p.name for p in auth.parent.iterdir()],
-                                 ["auth.json"])          # no temp file left
+                self.assertEqual(
+                    json.loads(auth.read_text())["error"], "429 rate limited"
+                )
+                self.assertEqual(
+                    [p.name for p in auth.parent.iterdir()], ["auth.json"]
+                )  # no temp file left
                 with self.assertRaises(G.AuthBackoff) as cm:
                     G.check_backoff()
                 self.assertNotIn(str(Path.home()), str(cm.exception))
@@ -85,17 +96,24 @@ class TestOutsideTheRepoTheBackoffWorks(unittest.TestCase):
                 self.assertFalse(auth.exists())
 
     def test_empty_credentials_are_refused_locally(self):
-        with tempfile.TemporaryDirectory() as d, \
-                mock.patch.object(G, "TOKENSTORE", str(Path(d) / "tokens")), \
-                mock.patch.object(G, "AUTH_STATE", Path(d) / "auth.json"), \
-                mock.patch.object(G, "Garmin", _no_garmin):
-            for email, pw in (("", "pw"), ("a@example.com", ""), ("a@example.com", "  ")):
+        with (
+            tempfile.TemporaryDirectory() as d,
+            mock.patch.object(G, "TOKENSTORE", str(Path(d) / "tokens")),
+            mock.patch.object(G, "AUTH_STATE", Path(d) / "auth.json"),
+            mock.patch.object(G, "Garmin", _no_garmin),
+        ):
+            for email, pw in (
+                ("", "pw"),
+                ("a@example.com", ""),
+                ("a@example.com", "  "),
+            ):
                 with self.assertRaises(SystemExit):
                     G.interactive_login(email, pw)
             self.assertFalse((Path(d) / "auth.json").exists())
 
     def test_the_password_is_never_written(self):
         """A failed login records the error -- never the password."""
+
         class Boom:
             def __init__(self, **kw):
                 pass
@@ -103,14 +121,15 @@ class TestOutsideTheRepoTheBackoffWorks(unittest.TestCase):
             def login(self, tokenstore=None):
                 raise RuntimeError("bad credentials")
 
-        with tempfile.TemporaryDirectory() as d, \
-                mock.patch.object(G, "TOKENSTORE", str(Path(d) / "tokens")), \
-                mock.patch.object(G, "AUTH_STATE", Path(d) / "auth.json"), \
-                mock.patch.object(G, "Garmin", Boom):
+        with (
+            tempfile.TemporaryDirectory() as d,
+            mock.patch.object(G, "TOKENSTORE", str(Path(d) / "tokens")),
+            mock.patch.object(G, "AUTH_STATE", Path(d) / "auth.json"),
+            mock.patch.object(G, "Garmin", Boom),
+        ):
             with self.assertRaises(RuntimeError):
                 G.interactive_login("a@example.com", "s3cret-pw-123")
-            written = "".join(p.read_text() for p in Path(d).rglob("*")
-                              if p.is_file())
+            written = "".join(p.read_text() for p in Path(d).rglob("*") if p.is_file())
         self.assertIn("bad credentials", written)
         self.assertNotIn("s3cret-pw-123", written)
 

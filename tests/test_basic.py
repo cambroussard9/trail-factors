@@ -5,26 +5,41 @@ that only asserts something is absent would still pass against a stub that
 returns nothing.
 """
 
+import contextlib
 import json
 import unittest
-from pathlib import Path
 
+from tests.corpus import (
+    CorpusTestCase,
+    corpus_path,
+    corpus_projection,
+    isolated,
+    one,
+)
 from trail_factors.analysis import basic as B
 from trail_factors.analysis import over as O
 from trail_factors.units import METERS_PER_MILE
-from tests.corpus import CorpusTestCase, connect, corpus_path, one, use_config, isolated, corpus_projection
 
 # --- isolation: never the real athlete state or config ----------------------
+# Entered in setUpModule, CLOSED in tearDownModule -- see tests/corpus.py
+# isolated() for why this is not unittest.enterModuleContext.
+_ISOLATION = contextlib.ExitStack()
+
+
 def setUpModule():
     if corpus_path() is not None:
-        unittest.enterModuleContext(
-            isolated(projection_crs=corpus_projection()))
+        _ISOLATION.enter_context(isolated(projection_crs=corpus_projection()))
+
+
+def tearDownModule():
+    _ISOLATION.close()
 
 
 def garmin_listing() -> dict:
     """Garmin's own activity summaries, keyed by Garmin id, from any cached
     listing under the raw directory. Empty when none is cached."""
     from trail_factors.paths import RAW_DIR
+
     out = {}
     for f in sorted((RAW_DIR / "garmin_api").glob("activities_*.json")):
         out.update({str(a["activityId"]): a for a in json.loads(f.read_text())})
@@ -33,10 +48,14 @@ def garmin_listing() -> dict:
 
 def newest_run(con, order: str = "start_time_utc DESC") -> str:
     """A garmin_watch running activity, by an explicit ordering."""
-    return one(con, f"""
+    return one(
+        con,
+        f"""
         SELECT activity_id FROM activities
         WHERE source = 'garmin_watch' AND sport = 'running'
-        ORDER BY {order} LIMIT 1""", what="garmin_watch running activity")[0]
+        ORDER BY {order} LIMIT 1""",
+        what="garmin_watch running activity",
+    )[0]
 
 
 class TestWeighting(CorpusTestCase):
@@ -50,14 +69,17 @@ class TestWeighting(CorpusTestCase):
         # splits. A corpus with every sport has 1 Hz activities that are not
         # runs, so an unordered pick without a sport filter lands wherever the
         # row order happens to put it.
-        cls.aid = one(cls.con, """
+        cls.aid = one(
+            cls.con,
+            """
             SELECT a.activity_id FROM activities a
             WHERE a.sampling_regime = '1hz' AND a.source = 'garmin_watch'
               AND a.sport = 'running' AND EXISTS (
                 SELECT 1 FROM splits s WHERE s.activity_id = a.activity_id
                   AND s.split_type = 'rwd_run')
             ORDER BY a.start_time_utc LIMIT 1""",
-            what="1 Hz watch run with running splits")[0]
+            what="1 Hz watch run with running splits",
+        )[0]
 
     def test_weights_come_from_the_unfiltered_series(self):
         """The weight sum over running records must not exceed the running
@@ -76,8 +98,8 @@ class TestWeighting(CorpusTestCase):
         """Running and walking weights must sum to no more than the whole."""
         w = B.record_weights(self.con, self.aid)
         rows = self.con.execute(
-            "SELECT timestamp FROM records WHERE activity_id = ?",
-            [self.aid]).fetchall()
+            "SELECT timestamp FROM records WHERE activity_id = ?", [self.aid]
+        ).fetchall()
         subset = [(r[0], 1.0) for r in rows[:50]]
         _, den = B.weighted_mean(subset, w)
         _, all_den = B.weighted_mean([(r[0], 1.0) for r in rows], w)
@@ -92,13 +114,14 @@ class TestWeighting(CorpusTestCase):
 class TestCadence(CorpusTestCase):
     """§9's formula, resolved. Getting the unit wrong is a factor of two."""
 
-
     def test_running_cadence_is_in_the_human_range(self):
         """Undoubled it would read ~82, which is a cadence for nothing."""
         checked = 0
-        for aid, in self.con.execute(
-                "SELECT activity_id FROM activities WHERE source = 'garmin_watch' AND sport = 'running' "
-                "ORDER BY start_time_utc DESC LIMIT 6").fetchall():
+        for (aid,) in self.con.execute(
+            "SELECT activity_id FROM activities WHERE source = 'garmin_watch' AND "
+            "sport = 'running' "
+            "ORDER BY start_time_utc DESC LIMIT 6"
+        ).fetchall():
             c = B.mean_running_cadence(self.con, aid)
             if c["value"] is None:
                 continue
@@ -122,13 +145,15 @@ class TestCadence(CorpusTestCase):
         figure the module reports.
         """
         import re
+
         oracle = garmin_listing()
         if not oracle:
             self.skipTest("no cached Garmin listing under the raw directory")
         diffs = []
         for aid, sf in self.con.execute(
-                "SELECT activity_id, source_file FROM activities "
-                "WHERE source = 'garmin_watch' AND sport = 'running'").fetchall():
+            "SELECT activity_id, source_file FROM activities "
+            "WHERE source = 'garmin_watch' AND sport = 'running'"
+        ).fetchall():
             g = re.search(r"(\d+)_ACTIVITY", sf or "")
             a = oracle.get(g.group(1)) if g else None
             if not a or a.get("averageRunningCadenceInStepsPerMinute") is None:
@@ -137,58 +162,64 @@ class TestCadence(CorpusTestCase):
                 "SELECT timestamp, 2.0 * (cadence_raw_rpm + "
                 "coalesce(fractional_cadence, 0)) FROM records "
                 "WHERE activity_id = ? AND cadence_raw_rpm IS NOT NULL "
-                "ORDER BY timestamp", [aid]).fetchall()
+                "ORDER BY timestamp",
+                [aid],
+            ).fetchall()
             if len(rows) < 2:
                 continue
             # Garmin's basis: timer time INCLUDING standing, so no paused
             # intervals are subtracted. Our own cadence figure is over moving
             # time and is a different quantity on purpose.
-            num, den = B.weighted_mean(
-                rows, B.record_weights(self.con, aid, paused=[]))
+            num, den = B.weighted_mean(rows, B.record_weights(self.con, aid, paused=[]))
             if den > 0:
                 diffs.append(num / den - a["averageRunningCadenceInStepsPerMinute"])
         if not diffs:
-            self.skipTest("no cached summary carries a running cadence for a "
-                          "run in this corpus")
+            self.skipTest(
+                "no cached summary carries a running cadence for a run in this corpus"
+            )
         diffs.sort()
         median = diffs[len(diffs) // 2]
-        self.assertLess(abs(median), 1.0,
-                        f"median difference from Garmin is {median:+.2f} spm")
+        self.assertLess(
+            abs(median), 1.0, f"median difference from Garmin is {median:+.2f} spm"
+        )
 
     def test_run_and_walk_are_never_pooled_in_the_grade_table(self):
         from trail_factors.analysis.report import cluster_of
+
         # The newest run's cluster under the test's config: a property, never
         # a named place.
         cluster = cluster_of(self.con, newest_run(self.con))
         t = O.cadence_table(self.con, cluster=cluster, last_n=8)
         kinds = {r["split_type"] for r in t["table"]}
         if not {"rwd_run", "rwd_walk"} <= kinds:
-            self.skipTest("the recent runs in this cluster never walk on "
-                          "graded ground")
+            self.skipTest("the recent runs in this cluster never walk on graded ground")
         runs = [r["steps_per_min"] for r in t["table"] if r["split_type"] == "rwd_run"]
-        walks = [r["steps_per_min"] for r in t["table"] if r["split_type"] == "rwd_walk"]
+        walks = [
+            r["steps_per_min"] for r in t["table"] if r["split_type"] == "rwd_walk"
+        ]
         # Running and walking cadence are tens of spm apart in any human; a
         # pooled bin would land between the modes.
         self.assertGreater(min(runs), max(walks) + 20)
 
     def test_a_source_with_no_cadence_says_so_rather_than_reporting_zero(self):
-        aid = one(self.con, "SELECT activity_id FROM activities "
-                            "WHERE source = 'strava_phone' LIMIT 1",
-                  what="phone activity")[0]
+        aid = one(
+            self.con,
+            "SELECT activity_id FROM activities WHERE source = 'strava_phone' LIMIT 1",
+            what="phone activity",
+        )[0]
         c = B.mean_running_cadence(self.con, aid)
         self.assertIsNone(c["value"])
         self.assertIn("no cadence", c["reason"])
 
 
 class TestDurationsAndPaces(CorpusTestCase):
-
-
     def test_every_garmin_run_has_durations_whatever_the_regime(self):
         """The claim the standing brief now makes: splits carry durations for
         every run, so these are not 1 Hz-only."""
         rows = self.con.execute(
             "SELECT activity_id, sampling_regime FROM activities "
-            "WHERE source = 'garmin_watch' AND sport = 'running'").fetchall()
+            "WHERE source = 'garmin_watch' AND sport = 'running'"
+        ).fetchall()
         if not rows:
             self.skipTest("this corpus has no garmin_watch run")
         for aid, regime in rows:
@@ -204,28 +235,37 @@ class TestDurationsAndPaces(CorpusTestCase):
                     self.con.execute(
                         "SELECT count(*) FROM splits WHERE activity_id = ? "
                         "AND split_type LIKE 'rwd\\_%' ESCAPE '\\'",
-                        [aid]).fetchone()[0], 0,
-                    f"{aid}: null durations WITH rwd_* splits present is a BUG")
+                        [aid],
+                    ).fetchone()[0],
+                    0,
+                    f"{aid}: null durations WITH rwd_* splits present is a BUG",
+                )
                 self.assertIn("IMPORTED", d["reason"])
                 continue
             self.assertIsNotNone(d.get("run_s"), f"{aid} ({regime})")
             # A GENUINE ZERO IS ALLOWED, AND `n_run_splits` IS WHAT SAYS SO.
             # CLAUDE.md records the mirror of this for walking -- "0 s with 0
             # splits is a REAL zero" -- and a walk logged as a run has the
-            # opposite shape: rwd_walk blocks and no rwd_run at all. The claim being pinned is
+            # opposite shape: rwd_walk blocks and no rwd_run at all. The claim being
+            # pinned is
             # that splits carry durations in both regimes, not that every
             # activity contains running.
             if d["run_s"] == 0:
-                self.assertEqual(d.get("n_run_splits"), 0,
-                                 f"{aid} ({regime}): 0 s of running with run "
-                                 f"splits present is a BUG, not a walk")
+                self.assertEqual(
+                    d.get("n_run_splits"),
+                    0,
+                    f"{aid} ({regime}): 0 s of running with run "
+                    f"splits present is a BUG, not a walk",
+                )
                 continue
             self.assertGreater(d["run_s"], 0, f"{aid} ({regime})")
 
     def test_the_splits_tile_the_timer_time(self):
-        for aid, in self.con.execute(
-                "SELECT activity_id FROM activities WHERE source = 'garmin_watch' AND sport = 'running' "
-                "LIMIT 12").fetchall():
+        for (aid,) in self.con.execute(
+            "SELECT activity_id FROM activities WHERE source = 'garmin_watch' AND "
+            "sport = 'running' "
+            "LIMIT 12"
+        ).fetchall():
             d = B.durations(self.con, aid)
             if d.get("tiling_residual_s") is None:
                 continue
@@ -233,7 +273,8 @@ class TestDurationsAndPaces(CorpusTestCase):
 
     def test_zero_walking_is_a_real_zero_not_missing(self):
         row = self.con.execute("""
-            SELECT a.activity_id FROM activities a WHERE a.source = 'garmin_watch' AND a.sport = 'running'
+            SELECT a.activity_id FROM activities a WHERE a.source = 'garmin_watch' AND
+            a.sport = 'running'
               AND NOT EXISTS (SELECT 1 FROM splits s WHERE s.activity_id = a.activity_id
                               AND s.split_type = 'rwd_walk') LIMIT 1""").fetchone()
         if row is None:
@@ -245,14 +286,17 @@ class TestDurationsAndPaces(CorpusTestCase):
     def test_a_short_walk_class_is_gated_not_reported(self):
         """A walking pace from a few seconds of walking is not a walking
         pace."""
-        row = self.con.execute("""
+        row = self.con.execute(
+            """
             SELECT activity_id FROM splits WHERE split_type = 'rwd_walk'
             GROUP BY 1 HAVING sum(total_timer_time) < ? LIMIT 1""",
-            [B.MIN_CLASS_TIME_S]).fetchone()
+            [B.MIN_CLASS_TIME_S],
+        ).fetchone()
         if row is None:
             self.skipTest("no activity with a short walk class")
-        walking = [p for p in B.paces(self.con, row[0])["paces"]
-                   if p["name"] == "walking"][0]
+        walking = [
+            p for p in B.paces(self.con, row[0])["paces"] if p["name"] == "walking"
+        ][0]
         self.assertEqual(walking["status"], "gated")
         self.assertIsNone(walking["pace_per_mile"])
         # GATED CARRIES ITS EVIDENCE. A bare null would lose the reason.
@@ -265,16 +309,18 @@ class TestDurationsAndPaces(CorpusTestCase):
             GROUP BY 1 HAVING sum(total_timer_time) > 600 LIMIT 1""").fetchone()
         if row is None:
             self.skipTest("no activity with a long walk class")
-        walking = [p for p in B.paces(self.con, row[0])["paces"]
-                   if p["name"] == "walking"][0]
+        walking = [
+            p for p in B.paces(self.con, row[0])["paces"] if p["name"] == "walking"
+        ][0]
         self.assertEqual(walking["status"], "ok")
         self.assertRegex(walking["pace_per_mile"], r"^\d+:[0-5]\d$")
 
     def test_walking_is_slower_than_running_on_every_run_that_has_both(self):
         n = 0
-        for aid, in self.con.execute(
-                "SELECT activity_id FROM activities WHERE source = 'garmin_watch' AND sport = 'running'"
-                ).fetchall():
+        for (aid,) in self.con.execute(
+            "SELECT activity_id FROM activities WHERE source = 'garmin_watch' AND "
+            "sport = 'running'"
+        ).fetchall():
             got = {p["name"]: p for p in B.paces(self.con, aid)["paces"]}
             r, w = got["running"], got["walking"]
             if r["status"] != "ok" or w["status"] != "ok":
@@ -291,17 +337,16 @@ class TestDurationsAndPaces(CorpusTestCase):
 
 
 class TestWindowedBests(CorpusTestCase):
-
-
     def test_bests_get_slower_as_the_window_gets_longer(self):
         """The one invariant that holds regardless of terrain or device: a
         longer window cannot be faster than a shorter one it contains."""
         n = 0
-        for aid, in self.con.execute(
-                "SELECT activity_id FROM activities WHERE source = 'garmin_watch' AND sport = 'running' "
-                "ORDER BY total_distance_m DESC LIMIT 10").fetchall():
-            got = {w["window"]: w for w in
-                   B.windowed_bests(self.con, aid)["windows"]}
+        for (aid,) in self.con.execute(
+            "SELECT activity_id FROM activities WHERE source = 'garmin_watch' AND "
+            "sport = 'running' "
+            "ORDER BY total_distance_m DESC LIMIT 10"
+        ).fetchall():
+            got = {w["window"]: w for w in B.windowed_bests(self.con, aid)["windows"]}
             q, mile = got.get("best_0.25mi"), got.get("best_1mi")
             if q["status"] != "ok" or mile["status"] != "ok":
                 continue
@@ -317,7 +362,7 @@ class TestWindowedBests(CorpusTestCase):
         Garmin cuts laps on its own internal odometer, which is finer than the
         recorded Smart Recording samples, so the invariant is not available."""
         n = 0
-        for aid, in self.con.execute("""
+        for (aid,) in self.con.execute("""
                 SELECT DISTINCT a.activity_id FROM activities a
                 JOIN laps l USING (activity_id)
                 WHERE l.trigger = 'distance' AND a.coverage_fraction >= 0.95
@@ -333,15 +378,21 @@ class TestWindowedBests(CorpusTestCase):
             # A fastest mile lap can contain an auto-pause, and
             # windowed_bests refuses to bridge a gap over MAX_SAMPLE_GAP_S --
             # correctly, because there is no data across it. The lap counts
-            # the mile anyway; the window cannot, and must not. Such a lap is not a counter-example, it is a different
+            # the mile anyway; the window cannot, and must not. Such a lap is not a
+            # counter-example, it is a different
             # measurement.
             lap = self.con.execute(
                 "SELECT min(total_timer_time) FROM laps WHERE activity_id = ? "
-                "AND trigger = 'distance' AND distance_m > 1600", [aid]).fetchone()[0]
+                "AND trigger = 'distance' AND distance_m > 1600",
+                [aid],
+            ).fetchone()[0]
             if lap is not None and self._has_unspannable_gap(aid, lap):
                 continue
-            got = [w for w in B.windowed_bests(self.con, aid)["windows"]
-                   if w["window"] == "best_1mi"]
+            got = [
+                w
+                for w in B.windowed_bests(self.con, aid)["windows"]
+                if w["window"] == "best_1mi"
+            ]
             if lap is None or not got or got[0]["status"] != "ok":
                 continue
             n += 1
@@ -351,8 +402,9 @@ class TestWindowedBests(CorpusTestCase):
             # lap's own boundary by at most one interval -- and the interval
             # that matters is the widest one inside THAT LAP, which on Smart
             # Recording can be wider than the activity's median.
-            self.assertLessEqual(got[0]["seconds"],
-                                 lap + max(3.0, self._lap_max_gap(aid)), aid)
+            self.assertLessEqual(
+                got[0]["seconds"], lap + max(3.0, self._lap_max_gap(aid)), aid
+            )
         if not n:
             self.skipTest("no full-coverage run with a distance auto-lap mile")
 
@@ -361,17 +413,25 @@ class TestWindowedBests(CorpusTestCase):
         row = self.con.execute(
             "SELECT start_time, total_timer_time FROM laps WHERE activity_id = ? "
             "AND trigger = 'distance' AND distance_m > 1600 "
-            "ORDER BY total_timer_time LIMIT 1", [aid]).fetchone()
+            "ORDER BY total_timer_time LIMIT 1",
+            [aid],
+        ).fetchone()
         if row is None:
             return []
         import datetime
+
         end = row[0] + datetime.timedelta(seconds=float(row[1]) * 2)
-        stamps = [r[0] for r in self.con.execute(
-            "SELECT timestamp FROM records WHERE activity_id = ? "
-            "AND timestamp BETWEEN ? AND ? ORDER BY timestamp",
-            [aid, row[0], end]).fetchall()]
-        return [(stamps[i + 1] - stamps[i]).total_seconds()
-                for i in range(len(stamps) - 1)]
+        stamps = [
+            r[0]
+            for r in self.con.execute(
+                "SELECT timestamp FROM records WHERE activity_id = ? "
+                "AND timestamp BETWEEN ? AND ? ORDER BY timestamp",
+                [aid, row[0], end],
+            ).fetchall()
+        ]
+        return [
+            (stamps[i + 1] - stamps[i]).total_seconds() for i in range(len(stamps) - 1)
+        ]
 
     def _lap_max_gap(self, aid) -> float:
         gaps = self._lap_window_gaps(aid)
@@ -382,31 +442,45 @@ class TestWindowedBests(CorpusTestCase):
         row = self.con.execute(
             "SELECT start_time, total_timer_time FROM laps WHERE activity_id = ? "
             "AND trigger = 'distance' AND distance_m > 1600 "
-            "ORDER BY total_timer_time LIMIT 1", [aid]).fetchone()
+            "ORDER BY total_timer_time LIMIT 1",
+            [aid],
+        ).fetchone()
         if row is None:
             return False
         import datetime
+
         end = row[0] + datetime.timedelta(seconds=float(row[1]) * 2)
-        stamps = [r[0] for r in self.con.execute(
-            "SELECT timestamp FROM records WHERE activity_id = ? "
-            "AND timestamp BETWEEN ? AND ? ORDER BY timestamp",
-            [aid, row[0], end]).fetchall()]
-        return any((stamps[i + 1] - stamps[i]).total_seconds() > B.MAX_SAMPLE_GAP_S
-                   for i in range(len(stamps) - 1))
+        stamps = [
+            r[0]
+            for r in self.con.execute(
+                "SELECT timestamp FROM records WHERE activity_id = ? "
+                "AND timestamp BETWEEN ? AND ? ORDER BY timestamp",
+                [aid, row[0], end],
+            ).fetchall()
+        ]
+        return any(
+            (stamps[i + 1] - stamps[i]).total_seconds() > B.MAX_SAMPLE_GAP_S
+            for i in range(len(stamps) - 1)
+        )
 
     def test_the_gap_guard_is_what_makes_that_exception_necessary(self):
         """THE PRESENCE TWIN. The skip above is only legitimate if the guard is
         real and the corpus actually contains such a lap -- otherwise it is a
         licence to skip any inconvenient run."""
         self.assertGreater(B.MAX_SAMPLE_GAP_S, 0)
-        found = [aid for aid, in self.con.execute("""
+        found = [
+            aid
+            for (aid,) in self.con.execute("""
             SELECT DISTINCT a.activity_id FROM activities a JOIN laps l
               USING (activity_id)
             WHERE l.trigger = 'distance' AND a.coverage_fraction >= 0.95""").fetchall()
-            if self._has_unspannable_gap(aid, None)]
+            if self._has_unspannable_gap(aid, None)
+        ]
         if not found:
-            self.skipTest("no lap in this corpus contains an unspannable gap, "
-                          "so the exception above is unused here")
+            self.skipTest(
+                "no lap in this corpus contains an unspannable gap, "
+                "so the exception above is unused here"
+            )
         for aid in found:
             self.assertTrue(self._has_unspannable_gap(aid, None))
 
@@ -416,17 +490,23 @@ class TestWindowedBests(CorpusTestCase):
         never exceed the fastest single step -- which, being a maximum, is
         where GPS spikes live, often at speeds no human runs."""
         aid = newest_run(self.con, "total_distance_m DESC")
-        best30 = [w for w in B.windowed_bests(self.con, aid)["windows"]
-                  if w["window"] == "best_30s"][0]
+        best30 = [
+            w
+            for w in B.windowed_bests(self.con, aid)["windows"]
+            if w["window"] == "best_30s"
+        ][0]
         if best30["status"] != "ok":
             self.skipTest(f"no 30 s best on the subject: {best30['reason']}")
-        step_max = self.con.execute("""
+        step_max = self.con.execute(
+            """
             SELECT max(dd / dt) FROM (
                 SELECT distance_m - lag(distance_m) OVER w AS dd,
                        epoch(timestamp) - epoch(lag(timestamp) OVER w) AS dt
                 FROM records WHERE activity_id = ? AND distance_m IS NOT NULL
                 WINDOW w AS (ORDER BY timestamp))
-            WHERE dt > 0""", [aid]).fetchone()[0]
+            WHERE dt > 0""",
+            [aid],
+        ).fetchone()[0]
         self.assertLessEqual(best30["mps"], step_max + 1e-6)
         # ...and no human holds 12.5 m/s for 30 s.
         self.assertLess(best30["mps"], 12.5)
@@ -451,8 +531,11 @@ class TestWindowedBests(CorpusTestCase):
                 self.assertIn("run_time_fraction", w)
 
     def test_bests_declare_they_are_not_regime_comparable(self):
-        aid = one(self.con, "SELECT activity_id FROM activities "
-                            "ORDER BY activity_id LIMIT 1", what="activity")[0]
+        aid = one(
+            self.con,
+            "SELECT activity_id FROM activities ORDER BY activity_id LIMIT 1",
+            what="activity",
+        )[0]
         f = B.windowed_bests(self.con, aid)["filters"]
         self.assertFalse(f["comparable_across_sampling_regimes"])
         self.assertIn("distance_provenance", f)
@@ -466,10 +549,16 @@ class TestEffortPaces(CorpusTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.hist = O.segment_history(cls.con, one(cls.con, """
+        cls.hist = O.segment_history(
+            cls.con,
+            one(
+                cls.con,
+                """
             SELECT segment_id FROM segment_efforts GROUP BY 1
             ORDER BY count(*) DESC, segment_id LIMIT 1""",
-            what="segment effort")[0])
+                what="segment effort",
+            )[0],
+        )
 
     def test_segment_history_now_carries_pace(self):
         """It returned duration and vertical speed but no pace at all, so a
@@ -497,8 +586,9 @@ class TestEffortPaces(CorpusTestCase):
                 if w["status"] != "ok":
                     continue
                 n += 1
-                self.assertGreaterEqual(w["mps"], e["mean_mps"] - 1e-6,
-                                        f"{e['date']} {w['window']}")
+                self.assertGreaterEqual(
+                    w["mps"], e["mean_mps"] - 1e-6, f"{e['date']} {w['window']}"
+                )
         if not n:
             self.skipTest("no effort on the subject has a reported window")
 
@@ -518,8 +608,12 @@ class TestEffortPaces(CorpusTestCase):
         """Path-derived speed averages over the sampling interval, so a 10 s
         window at Smart Recording can rest on two intervals. That must not be
         returned as a peak."""
-        gated = [w for e in self.hist["efforts"] for w in e["best_windows"]
-                 if w["status"] in ("gated", "unavailable")]
+        gated = [
+            w
+            for e in self.hist["efforts"]
+            for w in e["best_windows"]
+            if w["status"] in ("gated", "unavailable")
+        ]
         if not gated:
             self.skipTest("no window on the subject segment was gated")
         for w in gated:
@@ -528,12 +622,15 @@ class TestEffortPaces(CorpusTestCase):
 
     def test_a_window_that_is_reported_says_how_many_samples_back_it(self):
         """The positive twin: reported windows must carry their evidence."""
-        ok = [w for e in self.hist["efforts"] for w in e["best_windows"]
-              if w["status"] == "ok"]
+        ok = [
+            w
+            for e in self.hist["efforts"]
+            for w in e["best_windows"]
+            if w["status"] == "ok"
+        ]
         self.assertTrue(ok)
         for w in ok:
-            self.assertGreaterEqual(w["n_samples_in_window"],
-                                    B.MIN_SAMPLES_PER_WINDOW)
+            self.assertGreaterEqual(w["n_samples_in_window"], B.MIN_SAMPLES_PER_WINDOW)
 
     def test_the_two_quantities_are_declared_as_different(self):
         f = self.hist["applied_filters"]
@@ -569,8 +666,6 @@ class TestFiltersAreStated(CorpusTestCase):
 
 
 class TestPaceFormatting(CorpusTestCase):
-
-
     def test_every_reported_pace_is_minutes_and_seconds(self):
         aid = newest_run(self.con, "total_distance_m DESC")
         r = B.basic_metrics(self.con, aid)

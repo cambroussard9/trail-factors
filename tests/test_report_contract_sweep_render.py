@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import unittest
 
-from trail_factors.analysis import report as R
 from tests.corpus import CorpusTestCase
+from trail_factors.analysis import report as R
 
 
 class TestTheVerifiedCrasherRenderSweep(CorpusTestCase):
@@ -21,8 +21,10 @@ class TestTheVerifiedCrasherRenderSweep(CorpusTestCase):
     def test_every_activity_in_the_corpus_builds_and_renders(self):
         """One crash had been reported; this sweep found many more, all in
         formatting code that runs outside a section's isolation."""
-        acts = [r[0] for r in self.con.execute(
-            "SELECT activity_id FROM activities").fetchall()]
+        acts = [
+            r[0]
+            for r in self.con.execute("SELECT activity_id FROM activities").fetchall()
+        ]
         self.assertTrue(acts, "the corpus has no activities")
         bad = []
         for aid in acts:

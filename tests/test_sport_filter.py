@@ -38,10 +38,15 @@ def corpus():
     con.execute("""CREATE TABLE runs (run_id VARCHAR, start_time_utc TIMESTAMP,
         local_start_display VARCHAR, local_tz DOUBLE, sport VARCHAR)""")
     for rid, start, tz, sport in ACTS:
-        con.execute("INSERT INTO activities VALUES (?,?,?,?,?,'garmin_watch',"
-                    "5000,1800,1700,'1hz',1.0)", [f"a-{rid}", rid, start, tz, sport])
-        con.execute("INSERT INTO runs VALUES (?,?,?,?,?)",
-                    [rid, start, f"display {rid}", tz, sport])
+        con.execute(
+            "INSERT INTO activities VALUES (?,?,?,?,?,'garmin_watch',"
+            "5000,1800,1700,'1hz',1.0)",
+            [f"a-{rid}", rid, start, tz, sport],
+        )
+        con.execute(
+            "INSERT INTO runs VALUES (?,?,?,?,?)",
+            [rid, start, f"display {rid}", tz, sport],
+        )
     return con
 
 
@@ -62,8 +67,9 @@ class TestListRuns(unittest.TestCase):
         self.assertEqual(self.ids(), ["run-a", "run-late"])
 
     def test_any_widens_to_every_sport(self):
-        self.assertEqual(self.ids(sport="any"),
-                         ["run-a", "ride-b", "hike-c", "run-late"])
+        self.assertEqual(
+            self.ids(sport="any"), ["run-a", "ride-b", "hike-c", "run-late"]
+        )
 
     def test_a_named_sport_selects_only_it(self):
         self.assertEqual(self.ids(sport="cycling"), ["ride-b"])
@@ -105,7 +111,9 @@ class TestRunTypeIsNotCollected(unittest.TestCase):
             with stub_cluster():
                 self.assertEqual(
                     [r["run_id"] for r in Q.list_runs(corpus(), run_type=empty)],
-                    ["run-a", "run-late"], repr(empty))
+                    ["run-a", "run-late"],
+                    repr(empty),
+                )
 
 
 class TestOneLocalDateRule(unittest.TestCase):

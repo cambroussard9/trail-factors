@@ -15,11 +15,11 @@ from unittest import mock
 
 import duckdb
 
+from tests.corpus import use_config
 from trail_factors import config
 from trail_factors.cli import terrain as T
 from trail_factors.transform import dem as D
 from trail_factors.transform import dem_fetch as F
-from tests.corpus import use_config
 
 # Synthetic ground in UTM zone 16N (inside NAD83 / UTM's northern zones).
 LATS, LONS = [45.20, 45.21], [-87.50, -87.49]
@@ -38,8 +38,7 @@ class TestTheZoneTravelsWithTheCell(unittest.TestCase):
     def test_unset_projection_fetch_command_carries_the_derived_zone(self):
         with use_config():
             m = D.TileSet([]).coverage(LATS, LONS)["missing_tiles"][0]
-        self.assertTrue(m["fetch_command"].endswith(" --zone 16"),
-                        m["fetch_command"])
+        self.assertTrue(m["fetch_command"].endswith(" --zone 16"), m["fetch_command"])
 
     def test_configured_projection_needs_no_zone(self):
         """Positive twin: with a projection set the command stays bare."""
@@ -91,8 +90,9 @@ class TestASouthernZoneHasNoFetchCommand(unittest.TestCase):
             cov = D.TileSet([]).coverage(S_LATS, S_LONS)
         m = cov["missing_tiles"][0]
         self.assertIsNone(m["fetch_command"])
-        self.assertIn("no USGS grid exists for UTM zone 18S",
-                      m["fetch_unavailable_reason"])
+        self.assertIn(
+            "no USGS grid exists for UTM zone 18S", m["fetch_unavailable_reason"]
+        )
         self.assertEqual(cov["crs"], "EPSG:32718")
 
     def test_configured_southern_projection_gives_no_command(self):
@@ -115,9 +115,11 @@ class TestASouthernZoneHasNoFetchCommand(unittest.TestCase):
         self.assertIsNone(m["fetch_unavailable_reason"])
 
     def test_a_southern_derived_zone_never_names_the_northern_grid(self):
-        with use_config(), F.derived_zone(18, False), \
-                mock.patch.object(F, "_open",
-                                  side_effect=AssertionError("request sent")):
+        with (
+            use_config(),
+            F.derived_zone(18, False),
+            mock.patch.object(F, "_open", side_effect=AssertionError("request sent")),
+        ):
             with self.assertRaises(F.NotInTheUS) as cm:
                 F.grid_crs()
             self.assertIn("18S", str(cm.exception))
@@ -128,31 +130,38 @@ class TestASouthernZoneHasNoFetchCommand(unittest.TestCase):
 def _missing_cells(lats, lons):
     """corpus_missing_cells' output for one synthetic run, no database."""
     cov = D.TileSet([]).coverage(lats, lons)
-    return [{**m, "grid_crs": cov["crs"],
-             "projection_configured": cov["projection_configured"],
-             "n_activities": 1} for m in cov["missing_tiles"]]
+    return [
+        {
+            **m,
+            "grid_crs": cov["crs"],
+            "projection_configured": cov["projection_configured"],
+            "n_activities": 1,
+        }
+        for m in cov["missing_tiles"]
+    ]
 
 
 class TestFetchMissingCarriesTheHemisphere(unittest.TestCase):
-
     def test_zone_of_cell_keeps_the_hemisphere(self):
-        self.assertEqual(T._zone_of_cell({"grid_crs": "EPSG:32718",
-                                          "projection_configured": False}),
-                         (18, False))
-        self.assertEqual(T._zone_of_cell({"grid_crs": "EPSG:26916",
-                                          "projection_configured": False}),
-                         (16, True))
+        self.assertEqual(
+            T._zone_of_cell({"grid_crs": "EPSG:32718", "projection_configured": False}),
+            (18, False),
+        )
+        self.assertEqual(
+            T._zone_of_cell({"grid_crs": "EPSG:26916", "projection_configured": False}),
+            (16, True),
+        )
 
     def test_a_southern_cell_is_refused_before_resolve(self):
         with use_config():
             cells = _missing_cells(S_LATS, S_LONS)
         out = io.StringIO()
-        with use_config(), \
-                mock.patch.object(T, "corpus_missing_cells",
-                                  return_value=cells), \
-                mock.patch.object(F, "resolve",
-                                  side_effect=AssertionError("resolved")), \
-                contextlib.redirect_stdout(out):
+        with (
+            use_config(),
+            mock.patch.object(T, "corpus_missing_cells", return_value=cells),
+            mock.patch.object(F, "resolve", side_effect=AssertionError("resolved")),
+            contextlib.redirect_stdout(out),
+        ):
             T.fetch_tile(missing=True)
         self.assertIn("REFUSED", out.getvalue())
         self.assertIn("18S", out.getvalue())
@@ -167,11 +176,12 @@ class TestFetchMissingCarriesTheHemisphere(unittest.TestCase):
             seen.append(F.grid_crs())
             raise F.NoProductCovers("synthetic: nothing covers it")
 
-        with use_config(), \
-                mock.patch.object(T, "corpus_missing_cells",
-                                  return_value=cells), \
-                mock.patch.object(F, "resolve", side_effect=fake_resolve), \
-                contextlib.redirect_stdout(io.StringIO()):
+        with (
+            use_config(),
+            mock.patch.object(T, "corpus_missing_cells", return_value=cells),
+            mock.patch.object(F, "resolve", side_effect=fake_resolve),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
             T.fetch_tile(missing=True)
         self.assertEqual(seen, ["EPSG:26916"])
 
@@ -186,8 +196,10 @@ class TestDemKeysMissingCellsByGrid(unittest.TestCase):
         with use_config():
             c14 = D.TileSet([]).coverage(Z14_LATS, Z14_LONS)
             c15 = D.TileSet([]).coverage(Z15_LATS, Z15_LONS)
-            self.assertEqual(c14["missing_tiles"][0]["usgs_cell"],
-                             c15["missing_tiles"][0]["usgs_cell"])
+            self.assertEqual(
+                c14["missing_tiles"][0]["usgs_cell"],
+                c15["missing_tiles"][0]["usgs_cell"],
+            )
             T.tally_missing(outside, c14)
             T.tally_missing(outside, c15)
         self.assertEqual(len(outside), 2)
@@ -209,8 +221,11 @@ class TestDemKeysMissingCellsByGrid(unittest.TestCase):
     def test_dem_command_prints_each_cells_command(self):
         """End to end through `dem`, on a throwaway database: two runs in
         zones 14N and 15N plus one in 18S, none covered by any tile."""
-        runs = {"a14": (Z14_LATS, Z14_LONS), "a15": (Z15_LATS, Z15_LONS),
-                "a18s": (S_LATS, S_LONS)}
+        runs = {
+            "a14": (Z14_LATS, Z14_LONS),
+            "a15": (Z15_LATS, Z15_LONS),
+            "a18s": (S_LATS, S_LONS),
+        }
 
         class NoTiles(D.TileSet):
             def __init__(self):
@@ -225,33 +240,41 @@ class TestDemKeysMissingCellsByGrid(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             db = Path(d) / "t.duckdb"
             con = duckdb.connect(str(db))
-            con.execute("CREATE TABLE activities (activity_id VARCHAR, "
-                        "sport VARCHAR)")
-            con.execute("CREATE TABLE records (activity_id VARCHAR, "
-                        "timestamp TIMESTAMP, lat DOUBLE, lon DOUBLE)")
-            con.execute("CREATE TABLE dem_elevations (activity_id VARCHAR, "
-                        "timestamp TIMESTAMP, altitude_dem_m DOUBLE, "
-                        "tile VARCHAR, calc_version INTEGER)")
+            con.execute("CREATE TABLE activities (activity_id VARCHAR, sport VARCHAR)")
+            con.execute(
+                "CREATE TABLE records (activity_id VARCHAR, "
+                "timestamp TIMESTAMP, lat DOUBLE, lon DOUBLE)"
+            )
+            con.execute(
+                "CREATE TABLE dem_elevations (activity_id VARCHAR, "
+                "timestamp TIMESTAMP, altitude_dem_m DOUBLE, "
+                "tile VARCHAR, calc_version INTEGER)"
+            )
             for aid, (lats, lons) in runs.items():
-                con.execute("INSERT INTO activities VALUES (?, 'running')",
-                            [aid])
-                for i, (la, lo) in enumerate(zip(lats, lons)):
-                    con.execute("INSERT INTO records VALUES (?, TIMESTAMP "
-                                "'2026-01-01 00:00:00' + to_seconds(?), ?, ?)",
-                                [aid, i, la, lo])
+                con.execute("INSERT INTO activities VALUES (?, 'running')", [aid])
+                for i, (la, lo) in enumerate(zip(lats, lons, strict=False)):
+                    con.execute(
+                        "INSERT INTO records VALUES (?, TIMESTAMP "
+                        "'2026-01-01 00:00:00' + to_seconds(?), ?, ?)",
+                        [aid, i, la, lo],
+                    )
             con.close()
             out = io.StringIO()
-            with use_config(), mock.patch.object(T, "DB_PATH", db), \
-                    mock.patch.object(D, "TileSet", NoTiles), \
-                    contextlib.redirect_stdout(out):
+            with (
+                use_config(),
+                mock.patch.object(T, "DB_PATH", db),
+                mock.patch.object(D, "TileSet", NoTiles),
+                contextlib.redirect_stdout(out),
+            ):
                 T.dem_populate()
         text = out.getvalue()
         self.assertIn("--zone 14", text)
         self.assertIn("--zone 15", text)
         self.assertIn("no USGS grid exists for UTM zone 18S", text)
         with use_config():
-            s_cell = D.TileSet([]).coverage(S_LATS, S_LONS)[
-                "missing_tiles"][0]["usgs_cell"]
+            s_cell = D.TileSet([]).coverage(S_LATS, S_LONS)["missing_tiles"][0][
+                "usgs_cell"
+            ]
         self.assertNotIn(f"fetch-tile {s_cell}", text)
         self.assertNotIn("fetch-tile <cell>", text)
         self.assertIn("dem_elevations: 0 rows", text)

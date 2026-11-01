@@ -6,8 +6,8 @@ from pathlib import Path
 
 from trail_factors.ingest.load import DB_PATH
 
-
 TABLES = ("ingest_ledger", "runs", "activities", "records", "laps", "splits")
+
 
 def ensure_schema(db_path: Path = DB_PATH) -> None:
     """Apply the DDL before ANY command touches the database.
@@ -21,9 +21,8 @@ def ensure_schema(db_path: Path = DB_PATH) -> None:
     """
     import duckdb
 
-    from trail_factors.ingest.schema import DDL
-
     from trail_factors.ingest.athlete_state import restore_annotations, restore_into
+    from trail_factors.ingest.schema import DDL
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(str(db_path))
@@ -41,6 +40,7 @@ def ensure_schema(db_path: Path = DB_PATH) -> None:
     finally:
         con.close()
 
+
 def resolve_activity_id(con, arg: str) -> str:
     """Accept a Garmin activity id from the filename, or an internal id.
 
@@ -49,16 +49,20 @@ def resolve_activity_id(con, arg: str) -> str:
     friction on every command.
     """
     hit = con.execute(
-        "SELECT activity_id FROM activities WHERE activity_id = ?", [arg]).fetchone()
+        "SELECT activity_id FROM activities WHERE activity_id = ?", [arg]
+    ).fetchone()
     if hit:
         return hit[0]
     rows = con.execute(
         "SELECT activity_id, source_file FROM activities WHERE source_file LIKE ?",
-        [f"%{arg}%"]).fetchall()
+        [f"%{arg}%"],
+    ).fetchall()
     if len(rows) == 1:
         return rows[0][0]
     if not rows:
         raise SystemExit(
-            f"no activity matches {arg!r} (tried activity_id and Garmin id in filename)")
+            f"no activity matches {arg!r} (tried activity_id and Garmin id in filename)"
+        )
     raise SystemExit(
-        f"{arg!r} is ambiguous: " + ", ".join(f"{a} ({Path(s).name})" for a, s in rows))
+        f"{arg!r} is ambiguous: " + ", ".join(f"{a} ({Path(s).name})" for a, s in rows)
+    )

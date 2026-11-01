@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import statistics
 from collections import defaultdict
-from datetime import timezone
+from datetime import UTC
 from pathlib import Path
 
 import fitdecode
@@ -80,8 +80,11 @@ def read_messages(path: Path) -> dict[str, list[dict]]:
     answerable at all.
     """
     with fitdecode.FitReader(path) as fit:
-        frames = [(frame.name, {f.name: f.value for f in frame.fields})
-                  for frame in fit if frame.frame_type == fitdecode.FIT_FRAME_DATA]
+        frames = [
+            (frame.name, {f.name: f.value for f in frame.fields})
+            for frame in fit
+            if frame.frame_type == fitdecode.FIT_FRAME_DATA
+        ]
     return pair_frames(frames)
 
 
@@ -117,7 +120,7 @@ def to_utc_naive(ts):
         return None
     if ts.tzinfo is None:
         return ts
-    return ts.astimezone(timezone.utc).replace(tzinfo=None)
+    return ts.astimezone(UTC).replace(tzinfo=None)
 
 
 def semicircles_to_degrees(value: int | None) -> float | None:
@@ -176,7 +179,7 @@ def coalesce_records(records: list[dict]) -> list[dict]:
             if value is not None and key not in current:
                 current[key] = value
     out = []
-    for ts in sorted(merged):                     # timestamp ONLY (§9)
+    for ts in sorted(merged):  # timestamp ONLY (§9)
         fields = merged[ts]
         if not any(k != "timestamp" for k in fields):
             continue
@@ -191,7 +194,7 @@ def record_gaps_s(records: list[dict]) -> list[float]:
     reorders duplicate-timestamp samples into a zigzag.
     """
     stamps = sorted(r["timestamp"] for r in records if r.get("timestamp"))
-    return [(b - a).total_seconds() for a, b in zip(stamps, stamps[1:])]
+    return [(b - a).total_seconds() for a, b in zip(stamps, stamps[1:], strict=False)]
 
 
 def gps_coverage(records: list[dict], island_gap_s: float = 60.0) -> dict:
@@ -212,14 +215,16 @@ def gps_coverage(records: list[dict], island_gap_s: float = 60.0) -> dict:
         "contiguous": None,
         "islands": 0,
         "gps_window_s": 0.0,
-        "total_elapsed_s": (stamps[-1] - stamps[0]).total_seconds() if total > 1 else 0.0,
+        "total_elapsed_s": (stamps[-1] - stamps[0]).total_seconds()
+        if total > 1
+        else 0.0,
         "first_fix_offset_s": None,
     }
     if not positioned:
         out["contiguous"] = False
         return out
     islands = 1
-    for a, b in zip(positioned, positioned[1:]):
+    for a, b in zip(positioned, positioned[1:], strict=False):
         if (b - a).total_seconds() > island_gap_s:
             islands += 1
     out["islands"] = islands
@@ -231,10 +236,14 @@ def gps_coverage(records: list[dict], island_gap_s: float = 60.0) -> dict:
 
 def first_positioned(records: list[dict]) -> tuple[float, float] | None:
     """True start coordinates: the first record that actually has a fix."""
-    for r in sorted((r for r in records if r.get("timestamp")), key=lambda r: r["timestamp"]):
+    for r in sorted(
+        (r for r in records if r.get("timestamp")), key=lambda r: r["timestamp"]
+    ):
         if r.get("position_lat") is not None:
-            return (semicircles_to_degrees(r["position_lat"]),
-                    semicircles_to_degrees(r["position_long"]))
+            return (
+                semicircles_to_degrees(r["position_lat"]),
+                semicircles_to_degrees(r["position_long"]),
+            )
     return None
 
 
@@ -326,9 +335,11 @@ def altitude_provenance(records: list[dict]) -> dict:
     pairs, n_after_gap, prev_ts = [], 0, None
     for r in records:
         ts = r.get("timestamp")
-        after_gap = (prev_ts is not None and ts is not None
-                     and (ts - prev_ts).total_seconds()
-                     > GNSS_UNKNOWN_AGE_AFTER_GAP_S)
+        after_gap = (
+            prev_ts is not None
+            and ts is not None
+            and (ts - prev_ts).total_seconds() > GNSS_UNKNOWN_AGE_AFTER_GAP_S
+        )
         prev_ts = ts if ts is not None else prev_ts
         if r.get("enhanced_altitude") is None or r.get(GNSS_ALTITUDE_KEY) is None:
             continue
@@ -336,12 +347,17 @@ def altitude_provenance(records: list[dict]) -> dict:
             n_after_gap += 1
             continue
         pairs.append((r["enhanced_altitude"], r[GNSS_ALTITUDE_KEY]))
-    out = {"source": "unknown", "n_pairs": len(pairs),
-           "n_excluded_after_recording_gap": n_after_gap,
-           "recording_gap_threshold_s": GNSS_UNKNOWN_AGE_AFTER_GAP_S,
-           "identical_fraction": None, "median_abs_diff_m": None,
-           "sd_record_m": None, "sd_gnss_m": None,
-           "reason": f"fewer than {ALTITUDE_MIN_PAIRS} records carry both channels"}
+    out = {
+        "source": "unknown",
+        "n_pairs": len(pairs),
+        "n_excluded_after_recording_gap": n_after_gap,
+        "recording_gap_threshold_s": GNSS_UNKNOWN_AGE_AFTER_GAP_S,
+        "identical_fraction": None,
+        "median_abs_diff_m": None,
+        "sd_record_m": None,
+        "sd_gnss_m": None,
+        "reason": f"fewer than {ALTITUDE_MIN_PAIRS} records carry both channels",
+    }
     if len(pairs) < ALTITUDE_MIN_PAIRS:
         return out
     rec = [a for a, _ in pairs]
@@ -349,25 +365,40 @@ def altitude_provenance(records: list[dict]) -> dict:
     diffs = [abs(a - b) for a, b in pairs]
     identical = sum(1 for d in diffs if d < 1e-9) / len(diffs)
     sd_rec, sd_gnss = _st.pstdev(rec), _st.pstdev(gnss)
-    out.update({"identical_fraction": identical,
-                "median_abs_diff_m": _st.median(diffs),
-                "sd_record_m": sd_rec, "sd_gnss_m": sd_gnss})
+    out.update(
+        {
+            "identical_fraction": identical,
+            "median_abs_diff_m": _st.median(diffs),
+            "sd_record_m": sd_rec,
+            "sd_gnss_m": sd_gnss,
+        }
+    )
     if identical >= ALTITUDE_IDENTICAL_MIN:
-        out.update({"source": "gps",
-                    "reason": f"the record channel reproduces the GNSS channel "
-                              f"in {identical:.1%} of records: one series, not two"})
+        out.update(
+            {
+                "source": "gps",
+                "reason": f"the record channel reproduces the GNSS channel "
+                f"in {identical:.1%} of records: one series, not two",
+            }
+        )
     elif sd_rec < sd_gnss:
-        out.update({"source": "barometric",
-                    "reason": f"the two channels diverge (identical in "
-                              f"{identical:.1%}) and the record channel is "
-                              f"SMOOTHER (sd {sd_rec:.2f} m vs {sd_gnss:.2f} m), "
-                              f"which is what a pressure-derived channel looks "
-                              f"like against GNSS"})
+        out.update(
+            {
+                "source": "barometric",
+                "reason": f"the two channels diverge (identical in "
+                f"{identical:.1%}) and the record channel is "
+                f"SMOOTHER (sd {sd_rec:.2f} m vs {sd_gnss:.2f} m), "
+                f"which is what a pressure-derived channel looks "
+                f"like against GNSS",
+            }
+        )
     else:
-        out["reason"] = (f"the channels diverge (identical in {identical:.1%}) "
-                         f"but the record channel is not smoother "
-                         f"(sd {sd_rec:.2f} m vs {sd_gnss:.2f} m) -- neither "
-                         f"one series nor a barometer; classify it by hand")
+        out["reason"] = (
+            f"the channels diverge (identical in {identical:.1%}) "
+            f"but the record channel is not smoother "
+            f"(sd {sd_rec:.2f} m vs {sd_gnss:.2f} m) -- neither "
+            f"one series nor a barometer; classify it by hand"
+        )
     return out
 
 
@@ -415,5 +446,7 @@ def device_identity(messages: dict[str, list[dict]]) -> tuple[str | None, str | 
             if di.get("device_model"):
                 model = di["device_model"]
                 break
-    return (str(serial) if serial is not None else None,
-            str(model) if model is not None else None)
+    return (
+        str(serial) if serial is not None else None,
+        str(model) if model is not None else None,
+    )

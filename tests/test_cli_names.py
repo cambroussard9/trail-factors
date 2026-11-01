@@ -1,7 +1,8 @@
 """Every global name a CLI module uses must actually resolve.
 
 THE BUG THIS EXISTS FOR. `sync` crashed with a `NameError` on a helper it
-never imported, in the middle of a real sync — after downloading and ingesting a new activity,
+never imported, in the middle of a real sync — after downloading and ingesting a new
+activity,
 in the block that only runs WHEN THERE ARE NEW ACTIVITIES. Nothing caught it:
 the module imports fine, every test passed, and the path is exercised only on
 the days it matters.
@@ -45,14 +46,20 @@ def _global_loads(tree: ast.AST) -> set[str]:
     now the whole top-level function including everything nested inside it.
     """
     used: set[str] = set()
-    top = [n for n in ast.walk(tree)
-           if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
-    nested = {id(sub) for n in top for sub in ast.walk(n)
-              if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef))
-              and sub is not n}
+    top = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    nested = {
+        id(sub)
+        for n in top
+        for sub in ast.walk(n)
+        if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)) and sub is not n
+    }
     for node in top:
         if id(node) in nested:
-            continue                      # analysed as part of its parent
+            continue  # analysed as part of its parent
         bound = {a.arg for a in node.args.args + node.args.kwonlyargs}
         if node.args.vararg:
             bound.add(node.args.vararg.arg)
@@ -78,12 +85,14 @@ def _global_loads(tree: ast.AST) -> set[str]:
 
 
 class TestEveryCliNameResolves(unittest.TestCase):
-
     def test_no_cli_module_uses_an_undefined_global(self):
         problems = []
         for path in sorted(CLI_DIR.glob("*.py")):
             module = importlib.import_module(
-                f"trail_factors.cli.{path.stem}" if path.stem != "__init__" else "trail_factors.cli")
+                f"trail_factors.cli.{path.stem}"
+                if path.stem != "__init__"
+                else "trail_factors.cli"
+            )
             defined = set(vars(module)) | set(vars(builtins))
             for name in sorted(_global_loads(ast.parse(path.read_text()))):
                 if name not in defined:
@@ -98,7 +107,8 @@ class TestEveryCliNameResolves(unittest.TestCase):
             "import os\n"
             "def sync():\n"
             "    missing = missing_names(con, limit=3)\n"
-            "    return missing\n")
+            "    return missing\n"
+        )
         used = _global_loads(ast.parse(source))
         self.assertIn("missing_names", used)
         self.assertIn("con", used)
@@ -113,6 +123,7 @@ class TestEveryCliNameResolves(unittest.TestCase):
         rejected file's next step reaches `advice_lines` the same way: only
         on a sync that has something to report."""
         from trail_factors.cli import report
+
         self.assertTrue(hasattr(report, "outstanding_confirmations"))
         self.assertTrue(hasattr(report, "advice_lines"))
 
@@ -126,7 +137,8 @@ class TestEveryCliNameResolves(unittest.TestCase):
             "    def inner(a, b):\n"
             "        for s0, s1 in stops:\n"
             "            pass\n"
-            "    return inner\n")
+            "    return inner\n"
+        )
         self.assertNotIn("stops", _global_loads(ast.parse(source)))
 
 

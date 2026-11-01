@@ -4,7 +4,8 @@ THIN WRAPPER. Every tool calls the SAME function the CLI calls. There is no
 analysis in this file — no SQL, no thresholds, no interpretation. Two
 implementations of "what is a report" would drift, and §15.4's exclusion rules
 must hold identically whichever path is used. If a tool needs something the
-shared layer does not expose, the fix is a function in src/trail_factors/analysis/, not code
+shared layer does not expose, the fix is a function in src/trail_factors/analysis/, not
+code
 here.
 
 NOTHING HERE MAY MODIFY data/raw/. Not alter, not move, not rename, not
@@ -34,7 +35,8 @@ cannot write an unvalidated or clobbering payload. Every connection is
 read_only=True.
 
 NOTHING HERE ASKS THE ATHLETE FOR ANSWERS. Per-run context such as run_type
-has no source in this build (src/trail_factors/ingest/answers.py): every reader reports it
+has no source in this build (src/trail_factors/ingest/answers.py): every reader reports
+it
 null and labelled "not collected", and a run_type FILTER is rejected by name
 rather than silently matching nothing. A later version re-enables it through
 user-defined run types.
@@ -63,15 +65,16 @@ import json
 from typing import Any
 
 import duckdb
+
 # mcp 2.x: FastMCP was renamed MCPServer. Pinned in pyproject to mcp>=2.
 from mcp.server.mcpserver import MCPServer
 
-from trail_factors.analysis.versions import calc_version, calc_version_ref
-from trail_factors.config import ConfigError
-from trail_factors.ingest.ride_blocks import RideBlockError
 from trail_factors.analysis.queries import AmbiguousRun
 from trail_factors.analysis.select import FilterUnavailable, check_available
+from trail_factors.analysis.versions import calc_version, calc_version_ref
+from trail_factors.config import ConfigError
 from trail_factors.ingest.answers import NOT_COLLECTED
+from trail_factors.ingest.ride_blocks import RideBlockError
 from trail_factors.paths import DB_FILE, REPO_ROOT, display_path
 
 # STDIO ONLY. `main()` calls `mcp.run()` with no transport argument, which is
@@ -103,12 +106,13 @@ def _connect():
     pool = _fut.ThreadPoolExecutor(max_workers=1)
     try:
         return pool.submit(open_it).result(timeout=CONNECT_TIMEOUT_S)
-    except _fut.TimeoutError:
+    except _fut.TimeoutError as exc:
         raise DatabaseBusy(
             f"the database did not open within {CONNECT_TIMEOUT_S:.0f}s: "
             f"another process holds it. Check for a running CLI command "
             f"(`sync` holds the write lock for minutes) or a second "
-            f"mcp_server, then try again.")
+            f"mcp_server, then try again."
+        ) from exc
     except (duckdb.IOException, duckdb.ConnectionException) as exc:
         # TWO DIFFERENT CAUSES, BOTH "SOMETHING ELSE HOLDS IT", and both
         # verified: a lock held by ANOTHER PROCESS raises IOException
@@ -121,7 +125,8 @@ def _connect():
             f"process holds it, or this process already holds a handle with a "
             f"different configuration. Check for a running CLI command "
             f"(`sync` holds the write lock for minutes) or a second "
-            f"mcp_server, then try again.")
+            f"mcp_server, then try again."
+        ) from exc
     finally:
         # Never wait on the worker: if it is blocked on the lock, shutting the
         # pool down synchronously would reintroduce the hang this prevents.
@@ -135,6 +140,7 @@ class ReadBackFailed(RuntimeError):
     fine and the write happened) nor an ordinary breakage (nothing is lost).
     Reporting it as either is what let four invisible saves read as successes.
     """
+
 
 class RunAndSelection(ValueError):
     """A single run AND selection filters were both named.
@@ -170,10 +176,12 @@ REFUSED = "refused"
 # It is deliberately NOT "an identical retry may succeed". That reading would
 # make every corrigible rejection false and leave the field carrying no
 # information a caller could act on.
-RETRYABLE_MEANS = ("a further call can succeed after the stated action "
-                   "(waiting, adding a flag, fixing a field) and nothing was "
-                   "written; false means no next call helps, or the write "
-                   "already landed")
+RETRYABLE_MEANS = (
+    "a further call can succeed after the stated action "
+    "(waiting, adding a flag, fixing a field) and nothing was "
+    "written; false means no next call helps, or the write "
+    "already landed"
+)
 
 
 def _scrub_paths(s: str) -> str:
@@ -207,45 +215,65 @@ def _scrub_paths(s: str) -> str:
     return s
 
 
-def _envelope(tool: str, outcome: str, *, payload: Any = None, text: str = "",
-              problems: list[str] | None = None, remedy: str = "",
-              retryable: bool = False, fingerprint: dict | None = None) -> str:
-    return _scrub_paths(json.dumps({
-        "tool": tool, "outcome": outcome, "payload": payload, "text": text,
-        "problems": problems if problems is not None else [],
-        "remedy": remedy, "retryable": retryable,
-        # NEVER A BARE NULL. Every other field in this envelope means one
-        # thing; a null fingerprint meant three -- the corpus is missing, the
-        # call failed before the fingerprint could be taken, or the fingerprint
-        # itself failed -- which is the same status-collapse §16.2 forbids for
-        # primitives, committed by the envelope that reports them. A failure
-        # path still knows WHICH corpus it failed against, and that is exactly
-        # what a chat needs to decide whether to trust a cached earlier answer.
-        "corpus_fingerprint": fingerprint if fingerprint is not None else {
-            "status": "not_taken",
-            "reason": "this call failed before a fingerprint could be read; "
-                      "the corpus was not identified, not found to be empty",
-        },
-        # The fingerprint says whether the DATA moved; this says whether the
-        # CODE moved. Both are needed: a changed grade window shifts every
-        # number with no new run, and a chat comparing weeks would otherwise
-        # read a refactor as a fitness change.
-        #
-        # THE REFERENCE, NOT THE PARAMETERS. {pipeline_version, digest} is
-        # enough to tell two codes apart; the 81 parameters behind a digest
-        # are in spec_context's payload, which exists for exactly that.
-        "calc_version": calc_version_ref(),
-        # `repo_root` WAS HERE AND IS REMOVED. It existed to disambiguate
-        # which corpus answered, a job `corpus_fingerprint` already does. What
-        # it actually did was hand every chat the absolute path to the
-        # repository in every single result -- and a chat that also has
-        # filesystem access needs nothing else, because CLAUDE.md documents
-        # the database as `data/ultra.duckdb`. Do not re-add it; the same goes
-        # for any absolute path, which _scrub_paths strips as a backstop.
-        #
-        # This does not PREVENT a direct read; nothing in this file can (§14m).
-        # It removes the invitation.
-    }, indent=2, default=str))
+def _envelope(
+    tool: str,
+    outcome: str,
+    *,
+    payload: Any = None,
+    text: str = "",
+    problems: list[str] | None = None,
+    remedy: str = "",
+    retryable: bool = False,
+    fingerprint: dict | None = None,
+) -> str:
+    return _scrub_paths(
+        json.dumps(
+            {
+                "tool": tool,
+                "outcome": outcome,
+                "payload": payload,
+                "text": text,
+                "problems": problems if problems is not None else [],
+                "remedy": remedy,
+                "retryable": retryable,
+                # NEVER A BARE NULL. Every other field in this envelope means one
+                # thing; a null fingerprint meant three -- the corpus is missing, the
+                # call failed before the fingerprint could be taken, or the fingerprint
+                # itself failed -- which is the same status-collapse §16.2 forbids for
+                # primitives, committed by the envelope that reports them. A failure
+                # path still knows WHICH corpus it failed against, and that is exactly
+                # what a chat needs to decide whether to trust a cached earlier answer.
+                "corpus_fingerprint": fingerprint
+                if fingerprint is not None
+                else {
+                    "status": "not_taken",
+                    "reason": "this call failed before a fingerprint could be read; "
+                    "the corpus was not identified, not found to be empty",
+                },
+                # The fingerprint says whether the DATA moved; this says whether the
+                # CODE moved. Both are needed: a changed grade window shifts every
+                # number with no new run, and a chat comparing weeks would otherwise
+                # read a refactor as a fitness change.
+                #
+                # THE REFERENCE, NOT THE PARAMETERS. {pipeline_version, digest} is
+                # enough to tell two codes apart; the 81 parameters behind a digest
+                # are in spec_context's payload, which exists for exactly that.
+                "calc_version": calc_version_ref(),
+                # `repo_root` WAS HERE AND IS REMOVED. It existed to disambiguate
+                # which corpus answered, a job `corpus_fingerprint` already does. What
+                # it actually did was hand every chat the absolute path to the
+                # repository in every single result -- and a chat that also has
+                # filesystem access needs nothing else, because CLAUDE.md documents
+                # the database as `data/ultra.duckdb`. Do not re-add it; the same goes
+                # for any absolute path, which _scrub_paths strips as a backstop.
+                #
+                # This does not PREVENT a direct read; nothing in this file can (§14m).
+                # It removes the invitation.
+            },
+            indent=2,
+            default=str,
+        )
+    )
 
 
 def _fingerprint_or_reason(con) -> dict | None:
@@ -259,6 +287,7 @@ def _fingerprint_or_reason(con) -> dict | None:
         return None
     try:
         from trail_factors.analysis.queries import corpus_fingerprint
+
         return corpus_fingerprint(con)
     except Exception:
         return None
@@ -269,8 +298,10 @@ def _fingerprint_or_reason(con) -> dict | None:
 # and a sync holds the write lock for its whole run, so the one tool that
 # exists to watch a sync returned `broken` for exactly as long as there was a
 # sync to watch. The fingerprint is not taken, and says so in its own words.
-NO_DB_FINGERPRINT = {"status": "not_taken",
-                     "reason": "job-state read; no corpus access"}
+NO_DB_FINGERPRINT = {
+    "status": "not_taken",
+    "reason": "job-state read; no corpus access",
+}
 
 
 def _call_without_db(tool: str, fn) -> str:
@@ -281,17 +312,28 @@ def _call_without_db(tool: str, fn) -> str:
     """
     try:
         payload, text = fn(None)
-        return _envelope(tool, RESULT, payload=payload, text=text,
-                         fingerprint=NO_DB_FINGERPRINT)
+        return _envelope(
+            tool, RESULT, payload=payload, text=text, fingerprint=NO_DB_FINGERPRINT
+        )
     except LookupError as exc:
         # An unknown job id is ABSENT, as it was through _call.
-        return _envelope(tool, ABSENT, text=str(exc),
-                         remedy="call sync_status with no job_id for the latest",
-                         retryable=True, fingerprint=NO_DB_FINGERPRINT)
-    except Exception as exc:                      # never cross the boundary
-        return _envelope(tool, BROKEN, text=f"{type(exc).__name__}: {exc}",
-                         problems=[str(exc)[:400]], retryable=False,
-                         fingerprint=NO_DB_FINGERPRINT)
+        return _envelope(
+            tool,
+            ABSENT,
+            text=str(exc),
+            remedy="call sync_status with no job_id for the latest",
+            retryable=True,
+            fingerprint=NO_DB_FINGERPRINT,
+        )
+    except Exception as exc:  # never cross the boundary
+        return _envelope(
+            tool,
+            BROKEN,
+            text=f"{type(exc).__name__}: {exc}",
+            problems=[str(exc)[:400]],
+            retryable=False,
+            fingerprint=NO_DB_FINGERPRINT,
+        )
 
 
 def _call(tool: str, fn, *, database: bool = True) -> str:
@@ -314,45 +356,71 @@ def _call(tool: str, fn, *, database: bool = True) -> str:
     try:
         if not DB_FILE.exists():
             return _envelope(
-                tool, BROKEN,
+                tool,
+                BROKEN,
                 # REPO-RELATIVE, never absolute: the absolute form carries
                 # the home directory into every chat that hits this.
-                text=(f"no corpus at {display_path(DB_FILE)} (the path comes "
-                      f"from TRAIL_FACTORS_DB, or the default data/ultra.duckdb)"),
+                text=(
+                    f"no corpus at {display_path(DB_FILE)} (the path comes "
+                    f"from TRAIL_FACTORS_DB, or the default data/ultra.duckdb)"
+                ),
                 remedy="run `uv run trail-factors ingest-all` in the repo",
-                retryable=False)
+                retryable=False,
+            )
         con = _connect()
         payload, text = fn(con)
-        return _envelope(tool, RESULT, payload=payload, text=text,
-                         fingerprint=corpus_fingerprint(con))
+        return _envelope(
+            tool,
+            RESULT,
+            payload=payload,
+            text=text,
+            fingerprint=corpus_fingerprint(con),
+        )
     except DatabaseBusy as exc:
         return _envelope(
-            tool, BROKEN, text=str(exc), problems=[str(exc)],
+            tool,
+            BROKEN,
+            text=str(exc),
+            problems=[str(exc)],
             remedy="wait for the CLI command to finish and call again; "
-                   "nothing was computed and nothing was written. This is a "
-                   "LOCK, not a corpus problem -- do not re-ingest.",
-            retryable=True)
+            "nothing was computed and nothing was written. This is a "
+            "LOCK, not a corpus problem -- do not re-ingest.",
+            retryable=True,
+        )
     except ReadBackFailed as exc:
         return _envelope(
-            tool, BROKEN, text=str(exc), problems=[str(exc)],
+            tool,
+            BROKEN,
+            text=str(exc),
+            problems=[str(exc)],
             remedy="the entry is safe in its file in the athlete-state "
-                   "directory -- do NOT re-send it. Reads are not coming from "
-                   "the file: check for a reintroduced table or view in the "
-                   "database that shadows it.",
-            retryable=False)
+            "directory -- do NOT re-send it. Reads are not coming from "
+            "the file: check for a reintroduced table or view in the "
+            "database that shadows it.",
+            retryable=False,
+        )
     except RideBlockError as exc:
         return _envelope(
-            tool, REJECTED, text=str(exc),
-            problems=(str(exc).split("\n  - ")[1:]
-                      if "\n  - " in str(exc) else [str(exc)]),
+            tool,
+            REJECTED,
+            text=str(exc),
+            problems=(
+                str(exc).split("\n  - ")[1:] if "\n  - " in str(exc) else [str(exc)]
+            ),
             remedy="fix the listed entries and resend; nothing was written. "
-                   "Ambiguity is refused rather than resolved -- resolve it "
-                   "with the athlete, who is present, and resend structured "
-                   "blocks.",
-            retryable=True, fingerprint=_fingerprint_or_reason(con))
+            "Ambiguity is refused rather than resolved -- resolve it "
+            "with the athlete, who is present, and resend structured "
+            "blocks.",
+            retryable=True,
+            fingerprint=_fingerprint_or_reason(con),
+        )
     except json.JSONDecodeError as exc:
-        return _envelope(tool, REJECTED, text=f"payload is not valid JSON: {exc}",
-                         remedy="send the payload as a JSON object string")
+        return _envelope(
+            tool,
+            REJECTED,
+            text=f"payload is not valid JSON: {exc}",
+            remedy="send the payload as a JSON object string",
+        )
     except FilterUnavailable as exc:
         # A DOCUMENTED FILTER WITH NO DATA BEHIND IT IN THIS BUILD -- not a
         # typo and not an unknown filter. It is a ValueError, so it must be
@@ -362,18 +430,28 @@ def _call(tool: str, fn, *, database: bool = True) -> str:
         # without changing the contract; until then matching nothing would
         # hand back an empty selection that reads as a finding.
         return _envelope(
-            tool, REJECTED, text=str(exc), problems=[str(exc)],
+            tool,
+            REJECTED,
+            text=str(exc),
+            problems=[str(exc)],
             remedy="omit run_type; a later version re-enables it through "
-                   "user-defined run types. Nothing was computed or written.",
-            retryable=True, fingerprint=_fingerprint_or_reason(con))
+            "user-defined run types. Nothing was computed or written.",
+            retryable=True,
+            fingerprint=_fingerprint_or_reason(con),
+        )
     except RunAndSelection as exc:
         # BOTH HALVES WERE DOCUMENTED; only the combination is not. A
         # ValueError, so it must come before the generic branch below.
         return _envelope(
-            tool, REJECTED, text=str(exc), problems=[str(exc)],
+            tool,
+            REJECTED,
+            text=str(exc),
+            problems=[str(exc)],
             remedy="pass either run or the selection filters, not both; "
-                   "nothing was computed",
-            retryable=True, fingerprint=_fingerprint_or_reason(con))
+            "nothing was computed",
+            retryable=True,
+            fingerprint=_fingerprint_or_reason(con),
+        )
     except ConfigError as exc:
         # A MISSING SETTING, NOT A BAD FILTER. ConfigError is a ValueError, so
         # without this branch it landed below and told the caller to fix
@@ -382,26 +460,37 @@ def _call(tool: str, fn, *, database: bool = True) -> str:
         # terminal and is not this envelope's business. The field is enough.
         field = str(exc).split(" ", 1)[0]
         return _envelope(
-            tool, REFUSED,
+            tool,
+            REFUSED,
             text=f"the athlete configuration has no {field}, which this "
-                 f"tool needs; the arguments were fine",
+            f"tool needs; the arguments were fine",
             problems=[f"{field} is not set"],
             remedy=f"the athlete sets {field} in config/athlete.yaml "
-                   f"(config/athlete.example.yaml documents it) and restarts "
-                   f"the MCP server; nothing was computed or written",
-            retryable=False, fingerprint=_fingerprint_or_reason(con))
+            f"(config/athlete.example.yaml documents it) and restarts "
+            f"the MCP server; nothing was computed or written",
+            retryable=False,
+            fingerprint=_fingerprint_or_reason(con),
+        )
     except ValueError as exc:
         return _envelope(
-            tool, REJECTED, text=str(exc), problems=[str(exc)],
+            tool,
+            REJECTED,
+            text=str(exc),
+            problems=[str(exc)],
             remedy="use only the documented filters; there is no arbitrary "
-                   "query interface by design")
+            "query interface by design",
+        )
     except AmbiguousRun as exc:
         # THE ACTIVITIES EXIST; the reference does not pick one. `absent` would
         # say the opposite of what is true.
         return _envelope(
-            tool, REJECTED, text=str(exc), problems=[str(exc)],
+            tool,
+            REJECTED,
+            text=str(exc),
+            problems=[str(exc)],
             remedy="name one of the run_ids listed; a date with more than one "
-                   "activity is not a reference this tool will guess at")
+            "activity is not a reference this tool will guess at",
+        )
     except KeyError as exc:
         # KeyError IS A LookupError IN PYTHON, so every crash inside a
         # primitive was being caught below and reported as `absent` -- "no such
@@ -411,31 +500,42 @@ def _call(tool: str, fn, *, database: bool = True) -> str:
         sport = _sport_of(con, tool)
         sport_name = sport if sport is not None else "non-running"
         return _envelope(
-            tool, REFUSED,
-            text=(f"this tool could not serve a {sport_name} "
-                  f"activity: missing {exc}. The activity EXISTS and is "
-                  f"ingested; what it cannot do is answer a running question."),
+            tool,
+            REFUSED,
+            text=(
+                f"this tool could not serve a {sport_name} "
+                f"activity: missing {exc}. The activity EXISTS and is "
+                f"ingested; what it cannot do is answer a running question."
+            ),
             problems=[f"KeyError: {exc}"],
             remedy="§4.1 puts every sport in bronze and leaves strictness to "
-                   "the derived layers; which tools serve which sport is not "
-                   "decided yet. Use a run for running primitives.",
-            retryable=False)
+            "the derived layers; which tools serve which sport is not "
+            "decided yet. Use a run for running primitives.",
+            retryable=False,
+        )
     except LookupError as exc:
-        return _envelope(tool, ABSENT, text=str(exc),
-                         remedy="check the run reference with list_runs")
+        return _envelope(
+            tool, ABSENT, text=str(exc), remedy="check the run reference with list_runs"
+        )
     except duckdb.IOException as exc:
         # The measured, expected case: `sync` holds the write lock.
         return _envelope(
-            tool, BROKEN,
+            tool,
+            BROKEN,
             text="the database is locked, which almost always means a `sync` "
-                 "is writing right now",
+            "is writing right now",
             problems=[str(exc)[:200]],
-            remedy="wait for the sync to finish and ask again; do not retry "
-                   "in a loop",
-            retryable=True)
-    except Exception as exc:                      # never cross the boundary
-        return _envelope(tool, BROKEN, text=f"{type(exc).__name__}: {exc}",
-                         problems=[str(exc)[:400]], retryable=False)
+            remedy="wait for the sync to finish and ask again; do not retry in a loop",
+            retryable=True,
+        )
+    except Exception as exc:  # never cross the boundary
+        return _envelope(
+            tool,
+            BROKEN,
+            text=f"{type(exc).__name__}: {exc}",
+            problems=[str(exc)[:400]],
+            retryable=False,
+        )
     finally:
         if con is not None:
             con.close()
@@ -445,6 +545,7 @@ def _call(tool: str, fn, *, database: bool = True) -> str:
 # READ TOOLS
 # --------------------------------------------------------------------------
 
+
 @mcp.tool()
 def spec_context() -> str:
     """The standing brief: how to read results, and the measured findings that
@@ -453,10 +554,12 @@ def spec_context() -> str:
     Stable across runs — refetch only if told the spec changed.
     """
     from trail_factors.analysis.context import spec_context as brief
+
     # THE ONE PLACE THE PARAMETERS TRAVEL. Every other envelope carries only
     # the digest; this payload says what the digest is a digest OF.
-    return _envelope("spec_context", RESULT, text=brief(),
-                     payload={"calc_version": calc_version()})
+    return _envelope(
+        "spec_context", RESULT, text=brief(), payload={"calc_version": calc_version()}
+    )
 
 
 # WHICH ACTIVITY THIS CALL RESOLVED TO, so a refusal can name the sport it is
@@ -464,7 +567,8 @@ def spec_context() -> str:
 # overlap, and a refusal that named the wrong activity's sport would be worse
 # than one that named none.
 _RESOLVED: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "resolved_activity", default=None)
+    "resolved_activity", default=None
+)
 
 
 def _sport_of(con, _tool: str) -> str | None:
@@ -474,21 +578,30 @@ def _sport_of(con, _tool: str) -> str | None:
     the refusal says "non-running" rather than inventing a sport.
     """
     from trail_factors.analysis.queries import sport_of
+
     return sport_of(con, _RESOLVED.get())
 
 
 def _activity_for(con, run: str) -> str:
     """One garmin activity id for a run reference. Thin wrapper, no SQL."""
     from trail_factors.analysis.queries import activity_for_run
+
     aid = activity_for_run(con, run)
     _RESOLVED.set(aid)
     return aid
 
 
 @mcp.tool()
-def basic_metrics(run: str = "", run_type: str = "", start_date: str = "",
-                  end_date: str = "", cluster: str = "", last_n: int = 0,
-                  segment_id: str = "", direction: str = "") -> str:
+def basic_metrics(
+    run: str = "",
+    run_type: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    cluster: str = "",
+    last_n: int = 0,
+    segment_id: str = "",
+    direction: str = "",
+) -> str:
     """§6.0 the run's own description: average HR, three paces, windowed bests,
     run/walk/stand time, and cadence.
 
@@ -513,24 +626,43 @@ def basic_metrics(run: str = "", run_type: str = "", start_date: str = "",
     Cadence is steps per minute. It is running-only and non-zero-only, so it
     does NOT equal Garmin's own averageRunningCadence, which includes standing.
     """
+
     def go(con):
         from trail_factors.analysis.basic import basic_metrics as calc
-        _selection("basic_metrics", run_type=run_type, start_date=start_date,
-                   end_date=end_date, cluster=cluster, last_n=last_n,
-                   segment_id=segment_id, direction=direction)
+
+        _selection(
+            "basic_metrics",
+            run_type=run_type,
+            start_date=start_date,
+            end_date=end_date,
+            cluster=cluster,
+            last_n=last_n,
+            segment_id=segment_id,
+            direction=direction,
+        )
         aid = _activity_for(con, run)
         r = calc(con, aid)
         hr = r["average_hr"]["value"]
         cad = r["mean_running_cadence"]["value"]
-        return r, (f"avg HR {hr:.1f} bpm, cadence {cad:.1f} spm"
-                   if hr is not None and cad is not None else "basic metrics")
+        return r, (
+            f"avg HR {hr:.1f} bpm, cadence {cad:.1f} spm"
+            if hr is not None and cad is not None
+            else "basic metrics"
+        )
+
     return _call("basic_metrics", go)
 
 
 @mcp.tool()
-def max_hr_over(run_type: str = "", start_date: str = "", end_date: str = "",
-                cluster: str = "", last_n: int = 0, segment_id: str = "",
-                direction: str = "") -> str:
+def max_hr_over(
+    run_type: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    cluster: str = "",
+    last_n: int = 0,
+    segment_id: str = "",
+    direction: str = "",
+) -> str:
     """The highest heart rate in a selection, and the run that produced it (§6.0).
 
     TWO CEILINGS, and the difference between them is the point.
@@ -557,31 +689,54 @@ def max_hr_over(run_type: str = "", start_date: str = "", end_date: str = "",
     selection's best 30 s value and the band. Over easy runs the gap measures
     the selection, not the heart.
     """
+
     def go(con):
         from trail_factors.analysis.over import max_hr_over as q
-        r = q(con, **_selection("max_hr_over", run_type=run_type,
-                                start_date=start_date, end_date=end_date,
-                                cluster=cluster, last_n=last_n,
-                                segment_id=segment_id, direction=direction))
+
+        r = q(
+            con,
+            **_selection(
+                "max_hr_over",
+                run_type=run_type,
+                start_date=start_date,
+                end_date=end_date,
+                cluster=cluster,
+                last_n=last_n,
+                segment_id=segment_id,
+                direction=direction,
+            ),
+        )
         top = r["max_hr_recorded"]
         # A SELECTION CAN HAVE A PEAK AND NO 30 s WINDOW (a 20 s activity,
         # records gapped wider than the window). Formatting must not cost the
         # payload that was already computed.
         w30 = r["max_hr_30s"]
         w30_value = w30.get("value") if w30 is not None else None
-        sustained = (f"{w30_value:.0f} sustained over 30 s"
-                     if w30_value is not None
-                     else "no 30 s window could be filled")
-        return r, ("no heart rate in this selection" if top is None else
-                   f"peak {top['value']:.0f} bpm on {top['date']} "
-                   f"({sustained})")
+        sustained = (
+            f"{w30_value:.0f} sustained over 30 s"
+            if w30_value is not None
+            else "no 30 s window could be filled"
+        )
+        return r, (
+            "no heart rate in this selection"
+            if top is None
+            else f"peak {top['value']:.0f} bpm on {top['date']} ({sustained})"
+        )
+
     return _call("max_hr_over", go)
 
 
 @mcp.tool()
-def hr_above(threshold: float = 0.0, run_type: str = "", start_date: str = "",
-             end_date: str = "", cluster: str = "", last_n: int = 0,
-             segment_id: str = "", direction: str = "") -> str:
+def hr_above(
+    threshold: float = 0.0,
+    run_type: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    cluster: str = "",
+    last_n: int = 0,
+    segment_id: str = "",
+    direction: str = "",
+) -> str:
     """Every contiguous excursion at or above a heart-rate threshold (§14e-ter).
 
     THE UNIT IS THE EXCURSION, NOT THE RECORD. A sustained bout would otherwise
@@ -608,29 +763,48 @@ def hr_above(threshold: float = 0.0, run_type: str = "", start_date: str = "",
             top of your own HR distribution. `threshold_bpm` in the result
             says which value was used.
     """
+
     def go(con):
         from trail_factors.analysis.over import hr_above as q
-        sel = _selection("hr_above", run_type=run_type, start_date=start_date,
-                         end_date=end_date, cluster=cluster, last_n=last_n,
-                         segment_id=segment_id, direction=direction)
+
+        sel = _selection(
+            "hr_above",
+            run_type=run_type,
+            start_date=start_date,
+            end_date=end_date,
+            cluster=cluster,
+            last_n=last_n,
+            segment_id=segment_id,
+            direction=direction,
+        )
         if threshold < 0:
-            raise ValueError(f"threshold={threshold!r}: a heart rate cannot be "
-                             f"negative. Pass a bpm, or 0 for the configured "
-                             f"default.")
+            raise ValueError(
+                f"threshold={threshold!r}: a heart rate cannot be "
+                f"negative. Pass a bpm, or 0 for the configured "
+                f"default."
+            )
         # 0 IS THE NOT-SUPPLIED SENTINEL, and the threshold is then left to
         # over.hr_above, which owns the configured default. Reading config
         # here as well would be two places to decide one number.
-        r = (q(con, **sel) if threshold == 0
-             else q(con, float(threshold), **sel))
-        return r, (f"{r['n_excursions']} excursions at or above "
-                   f"{r['threshold_bpm']:.0f} bpm across {r['n_runs_with_any']} runs")
+        r = q(con, **sel) if threshold == 0 else q(con, float(threshold), **sel)
+        return r, (
+            f"{r['n_excursions']} excursions at or above "
+            f"{r['threshold_bpm']:.0f} bpm across {r['n_runs_with_any']} runs"
+        )
+
     return _call("hr_above", go)
 
 
 @mcp.tool()
-def time_above_hr(run_type: str = "", start_date: str = "", end_date: str = "",
-                  cluster: str = "", last_n: int = 0, segment_id: str = "",
-                  direction: str = "") -> str:
+def time_above_hr(
+    run_type: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    cluster: str = "",
+    last_n: int = 0,
+    segment_id: str = "",
+    direction: str = "",
+) -> str:
     """Time at or above each rung of the configured HR ladder
     (`time_above_ladder_bpm` in config/athlete.yaml), per run and corpus-wide.
     `thresholds_bpm` in the result lists the rungs used.
@@ -645,22 +819,44 @@ def time_above_hr(run_type: str = "", start_date: str = "", end_date: str = "",
     a road crossing. Totals are also reported without the run whose provenance
     is open (§14e-bis).
     """
+
     def go(con):
         from trail_factors.analysis.over import time_above_hr as q
-        r = q(con, **_selection("time_above_hr", run_type=run_type,
-                                start_date=start_date, end_date=end_date,
-                                cluster=cluster, last_n=last_n,
-                                segment_id=segment_id, direction=direction))
+
+        r = q(
+            con,
+            **_selection(
+                "time_above_hr",
+                run_type=run_type,
+                start_date=start_date,
+                end_date=end_date,
+                cluster=cluster,
+                last_n=last_n,
+                segment_id=segment_id,
+                direction=direction,
+            ),
+        )
         c = r["corpus"]
-        return r, ("; ".join(f"{int(t)}+: {c[t]['seconds']/60:.1f} min over "
-                             f"{c[t]['n_runs']} runs" for t in r["thresholds_bpm"]))
+        return r, (
+            "; ".join(
+                f"{int(t)}+: {c[t]['seconds'] / 60:.1f} min over {c[t]['n_runs']} runs"
+                for t in r["thresholds_bpm"]
+            )
+        )
+
     return _call("time_above_hr", go)
 
 
 @mcp.tool()
-def zone_by_gait(run_type: str = "", start_date: str = "", end_date: str = "",
-                 cluster: str = "", last_n: int = 0, segment_id: str = "",
-                 direction: str = "") -> str:
+def zone_by_gait(
+    run_type: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    cluster: str = "",
+    last_n: int = 0,
+    segment_id: str = "",
+    direction: str = "",
+) -> str:
     """M7 time in HR zone split by GAIT — running vs walking vs standing.
 
     Zone-2 minutes are the headline, per run and rolled up per LOCAL ISO week.
@@ -680,20 +876,39 @@ def zone_by_gait(run_type: str = "", start_date: str = "", end_date: str = "",
     Do not compare this against Garmin's hrTimeInZone: ours excludes stops and
     flagged records and applies the 40 s HR lag, so it reads lower by design.
     """
+
     def go(con):
         from trail_factors.analysis.over import zone_by_gait as q
-        r = q(con, **_selection("zone_by_gait", run_type=run_type,
-                                start_date=start_date, end_date=end_date,
-                                cluster=cluster, last_n=last_n,
-                                segment_id=segment_id, direction=direction))
+
+        r = q(
+            con,
+            **_selection(
+                "zone_by_gait",
+                run_type=run_type,
+                start_date=start_date,
+                end_date=end_date,
+                cluster=cluster,
+                last_n=last_n,
+                segment_id=segment_id,
+                direction=direction,
+            ),
+        )
         return r, (f"{len(r['per_run'])} runs over {len(r['weekly'])} weeks")
+
     return _call("zone_by_gait", go)
 
 
 @mcp.tool()
-def run_walk_cycles(run: str = "", run_type: str = "", start_date: str = "",
-                    end_date: str = "", cluster: str = "", last_n: int = 0,
-                    segment_id: str = "", direction: str = "") -> str:
+def run_walk_cycles(
+    run: str = "",
+    run_type: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    cluster: str = "",
+    last_n: int = 0,
+    segment_id: str = "",
+    direction: str = "",
+) -> str:
     """M3 run/walk cycle economics — does the walk buy anything? (§17.2)
 
     Args:
@@ -717,22 +932,41 @@ def run_walk_cycles(run: str = "", run_type: str = "", start_date: str = "",
     structure that has not been established cannot be assumed. Read each run
     on its own.
     """
+
     def go(con):
         from trail_factors.analysis.cycles import cycles
-        _selection("run_walk_cycles", run_type=run_type, start_date=start_date,
-                   end_date=end_date, cluster=cluster, last_n=last_n,
-                   segment_id=segment_id, direction=direction)
+
+        _selection(
+            "run_walk_cycles",
+            run_type=run_type,
+            start_date=start_date,
+            end_date=end_date,
+            cluster=cluster,
+            last_n=last_n,
+            segment_id=segment_id,
+            direction=direction,
+        )
         r = cycles(con, _activity_for(con, run))
-        return r, (f"{r['n_cycles']} run blocks, {r['n_complete_cycles']} "
-                   f"complete cycles [{r['status_hint']}]")
+        return r, (
+            f"{r['n_cycles']} run blocks, {r['n_complete_cycles']} "
+            f"complete cycles [{r['status_hint']}]"
+        )
+
     return _call("run_walk_cycles", go)
 
 
 @mcp.tool()
-def session_series(run: str = "", run_type: str = "", start_date: str = "",
-                   end_date: str = "", cluster: str = "", last_n: int = 0,
-                   segment_id: str = "", direction: str = "",
-                   include_dynamics: bool = False) -> str:
+def session_series(
+    run: str = "",
+    run_type: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    cluster: str = "",
+    last_n: int = 0,
+    segment_id: str = "",
+    direction: str = "",
+    include_dynamics: bool = False,
+) -> str:
     """§17.1b the session as a 30 s binned series — for "over the run" reasoning.
 
     Args:
@@ -792,21 +1026,34 @@ def session_series(run: str = "", run_type: str = "", start_date: str = "",
     flags is NOT the same quantity, so the payload says which it is rather
     than refusing the run.
     """
+
     def go(con):
         from trail_factors.analysis.series import binned_series
-        _selection("session_series", run_type=run_type, start_date=start_date,
-                   end_date=end_date, cluster=cluster, last_n=last_n,
-                   segment_id=segment_id, direction=direction)
-        r = binned_series(con, _activity_for(con, run),
-                          include_dynamics=include_dynamics)
+
+        _selection(
+            "session_series",
+            run_type=run_type,
+            start_date=start_date,
+            end_date=end_date,
+            cluster=cluster,
+            last_n=last_n,
+            segment_id=segment_id,
+            direction=direction,
+        )
+        r = binned_series(
+            con, _activity_for(con, run), include_dynamics=include_dynamics
+        )
         if not r["elevation_available"]:
             elev = ", no elevation (no DEM tile)"
         elif not r.get("elevation_emitted", True):
-            elev = (", elevation withheld (route_fingerprint_accepted is "
-                    "false in the athlete config)")
+            elev = (
+                ", elevation withheld (route_fingerprint_accepted is "
+                "false in the athlete config)"
+            )
         else:
             elev = ""
         return r, f"{r['n_bins']} bins of {r['bin_s']:.0f} s{elev}"
+
     return _call("session_series", go)
 
 
@@ -835,17 +1082,27 @@ def mile_splits(run: str = "", unit: str = "mile") -> str:
     RECORDED -- only distance-triggered ones are miles, and their pace
     includes walking -- and are never substituted for ours.
     """
+
     def go(con):
         from trail_factors.analysis.miles import mile_splits as ms
+
         r = ms(con, _activity_for(con, run), unit=unit)
         return r, f"{r.get('n_units', 0)} {unit} units"
+
     return _call("mile_splits", go)
 
 
 @mcp.tool()
-def hill_pace(run: str = "", run_type: str = "", start_date: str = "",
-              end_date: str = "", cluster: str = "", last_n: int = 0,
-              segment_id: str = "", direction: str = "") -> str:
+def hill_pace(
+    run: str = "",
+    run_type: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    cluster: str = "",
+    last_n: int = 0,
+    segment_id: str = "",
+    direction: str = "",
+) -> str:
     """§6.0g pace on every slope effort of one run, split by direction.
 
     Args:
@@ -861,23 +1118,40 @@ def hill_pace(run: str = "", run_type: str = "", start_date: str = "",
     can glue flat ground onto one direction (§14k) — so part of
     any ascent-vs-descent difference is terrain rather than the athlete.
     """
+
     def go(con):
         from trail_factors.analysis.basic import effort_pace_by_direction
-        _selection("hill_pace", run_type=run_type, start_date=start_date,
-                   end_date=end_date, cluster=cluster, last_n=last_n,
-                   segment_id=segment_id, direction=direction)
+
+        _selection(
+            "hill_pace",
+            run_type=run_type,
+            start_date=start_date,
+            end_date=end_date,
+            cluster=cluster,
+            last_n=last_n,
+            segment_id=segment_id,
+            direction=direction,
+        )
         r = effort_pace_by_direction(con, _activity_for(con, run))
-        return r, (f"{len(r['efforts'])} efforts: "
-                   f"{r['by_direction']['ascent']['n_efforts']} ascent, "
-                   f"{r['by_direction']['descent']['n_efforts']} descent")
+        return r, (
+            f"{len(r['efforts'])} efforts: "
+            f"{r['by_direction']['ascent']['n_efforts']} ascent, "
+            f"{r['by_direction']['descent']['n_efforts']} descent"
+        )
+
     return _call("hill_pace", go)
 
 
 @mcp.tool()
-def cadence_by_grade(run_type: str = "", start_date: str = "",
-                     end_date: str = "", cluster: str = "",
-                     last_n: int = 0, segment_id: str = "",
-                     direction: str = "") -> str:
+def cadence_by_grade(
+    run_type: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    cluster: str = "",
+    last_n: int = 0,
+    segment_id: str = "",
+    direction: str = "",
+) -> str:
     """§6.0 cadence per 5% grade bin over a selection, split by split_type.
 
     Never pooled across run and walk — running and walking cadence sit tens of
@@ -886,20 +1160,39 @@ def cadence_by_grade(run_type: str = "", start_date: str = "",
     Needs a DEM tile for the grade, so it sees only DEM-covered runs;
     `n_runs_without_grade` says how many of the selection had none.
     """
+
     def go(con):
         from trail_factors.analysis.over import cadence_table
-        r = cadence_table(con, **_selection("cadence_by_grade", run_type=run_type, start_date=start_date,
-                        end_date=end_date, cluster=cluster, last_n=last_n,
-                        segment_id=segment_id, direction=direction))
-        return r, (f"{len(r['table'])} bins over "
-                   f"{r['selection']['n_included']} runs")
+
+        r = cadence_table(
+            con,
+            **_selection(
+                "cadence_by_grade",
+                run_type=run_type,
+                start_date=start_date,
+                end_date=end_date,
+                cluster=cluster,
+                last_n=last_n,
+                segment_id=segment_id,
+                direction=direction,
+            ),
+        )
+        return r, (f"{len(r['table'])} bins over {r['selection']['n_included']} runs")
+
     return _call("cadence_by_grade", go)
 
 
 @mcp.tool()
-def drift_onset(run: str = "", run_type: str = "", start_date: str = "",
-                end_date: str = "", cluster: str = "", last_n: int = 0,
-                segment_id: str = "", direction: str = "") -> str:
+def drift_onset(
+    run: str = "",
+    run_type: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    cluster: str = "",
+    last_n: int = 0,
+    segment_id: str = "",
+    direction: str = "",
+) -> str:
     """§6.9 WHEN in a run cardiac drift begins — a VIEW of §6.7, currently REFUSED.
 
     Args:
@@ -914,24 +1207,42 @@ def drift_onset(run: str = "", run_type: str = "", start_date: str = "",
     §6.7's own 600 s minimum pair separation. Dew point travels with every
     value because onset is uninterpretable without it.
     """
+
     def go(con):
         from trail_factors.analysis import drift_onset as DO
-        _selection("drift_onset", run_type=run_type, start_date=start_date,
-                   end_date=end_date, cluster=cluster, last_n=last_n,
-                   segment_id=segment_id, direction=direction)
+
+        _selection(
+            "drift_onset",
+            run_type=run_type,
+            start_date=start_date,
+            end_date=end_date,
+            cluster=cluster,
+            last_n=last_n,
+            segment_id=segment_id,
+            direction=direction,
+        )
         aid = _activity_for(con, run)
         gate = DO.gate_status(con)
         c = DO.curve(con, aid)
         return {"gate": gate, "curve": c}, (
             f"drift onset is {'reportable' if gate['reportable'] else 'REFUSED'}; "
-            f"this run: {c['onset_status']}")
+            f"this run: {c['onset_status']}"
+        )
+
     return _call("drift_onset", go)
 
 
 @mcp.tool()
-def report(run: str = "", run_type: str = "", start_date: str = "",
-           end_date: str = "", cluster: str = "", last_n: int = 0,
-           segment_id: str = "", direction: str = "") -> str:
+def report(
+    run: str = "",
+    run_type: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    cluster: str = "",
+    last_n: int = 0,
+    segment_id: str = "",
+    direction: str = "",
+) -> str:
     """The §16.2 post-run report for one run, against its recent history.
 
     Args:
@@ -940,11 +1251,20 @@ def report(run: str = "", run_type: str = "", start_date: str = "",
     Presents only — it does not judge. Eliminating causes is your work.
     Read `notable` first, then `unenforced`.
     """
+
     def go(con):
         from trail_factors.analysis.report import build, render_safe
-        _selection("report", run_type=run_type, start_date=start_date,
-                   end_date=end_date, cluster=cluster, last_n=last_n,
-                   segment_id=segment_id, direction=direction)
+
+        _selection(
+            "report",
+            run_type=run_type,
+            start_date=start_date,
+            end_date=end_date,
+            cluster=cluster,
+            last_n=last_n,
+            segment_id=segment_id,
+            direction=direction,
+        )
         aid = _activity_for(con, run)
         rep = build(con, aid)
         # THE PAYLOAD SURVIVES A BROKEN RENDERER. It is the product; the
@@ -953,10 +1273,13 @@ def report(run: str = "", run_type: str = "", start_date: str = "",
         text, render_error = render_safe(rep)
         if render_error:
             rep = {**rep, "render_error": render_error}
-            text = (f"the payload is complete; its TEXT rendering failed with "
-                    f"{render_error}. Read the payload -- this is a "
-                    f"formatting defect, not a missing result.")
+            text = (
+                f"the payload is complete; its TEXT rendering failed with "
+                f"{render_error}. Read the payload -- this is a "
+                f"formatting defect, not a missing result."
+            )
         return rep, text
+
     return _call("report", go)
 
 
@@ -974,17 +1297,19 @@ def load_summary(rows: list[dict]) -> dict:
     """
     priced = [r for r in rows if r["status"] == "ok"]
     unrated = [r for r in rows if r["garmin_rpe"] is None]
-    rated_unpriced = [r for r in rows
-                      if r["garmin_rpe"] is not None and r["status"] != "ok"]
+    rated_unpriced = [
+        r for r in rows if r["garmin_rpe"] is not None and r["status"] != "ok"
+    ]
     lower_bound = bool(unrated or rated_unpriced)
     if not rows:
-        note = ("the selection is empty: null is no session selected, not a "
-                "load of zero")
+        note = "the selection is empty: null is no session selected, not a load of zero"
     elif lower_bound:
-        note = (f"{len(unrated)} unrated and {len(rated_unpriced)} rated but "
-                f"unpriced session(s) are left out rather than counted as "
-                f"zero, so the sum is a LOWER BOUND on the selection's load; "
-                f"null means no session was priced")
+        note = (
+            f"{len(unrated)} unrated and {len(rated_unpriced)} rated but "
+            f"unpriced session(s) are left out rather than counted as "
+            f"zero, so the sum is a LOWER BOUND on the selection's load; "
+            f"null means no session was priced"
+        )
     else:
         note = "every session in the selection is priced; the sum is its load"
     return {
@@ -993,20 +1318,33 @@ def load_summary(rows: list[dict]) -> dict:
         "n_rated": len(rows) - len(unrated),
         "n_unrated": len(unrated),
         "n_rated_unpriced": len(rated_unpriced),
-        "rated_unpriced": [{"activity_id": r["activity_id"],
-                            "run_id": r["run_id"], "reason": r["reason"]}
-                           for r in rated_unpriced],
+        "rated_unpriced": [
+            {
+                "activity_id": r["activity_id"],
+                "run_id": r["run_id"],
+                "reason": r["reason"],
+            }
+            for r in rated_unpriced
+        ],
         "sum_foster_load_au_priced": (
-            sum(r["foster_load_au"] for r in priced) if priced else None),
+            sum(r["foster_load_au"] for r in priced) if priced else None
+        ),
         "is_lower_bound": lower_bound,
         "note": note,
     }
 
 
 @mcp.tool()
-def session_load(run: str = "", run_type: str = "", start_date: str = "",
-                 end_date: str = "", cluster: str = "", last_n: int = 0,
-                 segment_id: str = "", direction: str = "") -> str:
+def session_load(
+    run: str = "",
+    run_type: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    cluster: str = "",
+    last_n: int = 0,
+    segment_id: str = "",
+    direction: str = "",
+) -> str:
     """Foster session load: Garmin's own post-run RPE x timer minutes, in AU.
 
     Args:
@@ -1035,20 +1373,33 @@ def session_load(run: str = "", run_type: str = "", start_date: str = "",
     never counted as zero. No GPS coverage gate applies -- load is volume,
     not a terrain comparison.
     """
+
     def go(con):
         from trail_factors.analysis import session_load as SL
-        sel = _selection("session_load", run_type=run_type,
-                         start_date=start_date, end_date=end_date,
-                         cluster=cluster, last_n=last_n,
-                         segment_id=segment_id, direction=direction)
+
+        sel = _selection(
+            "session_load",
+            run_type=run_type,
+            start_date=start_date,
+            end_date=end_date,
+            cluster=cluster,
+            last_n=last_n,
+            segment_id=segment_id,
+            direction=direction,
+        )
         if sel and run != "":
             raise RunAndSelection(
                 f"session_load: name a run OR a selection, not both "
                 f"(run={run!r} with {', '.join(sorted(sel))}). Nothing was "
-                f"computed.")
+                f"computed."
+            )
         if sel:
-            from trail_factors.analysis.select import (SPORT_ANY, select_runs,
-                                             validate_filter)
+            from trail_factors.analysis.select import (
+                SPORT_ANY,
+                select_runs,
+                validate_filter,
+            )
+
             problems = validate_filter(sel)
             if problems:
                 raise ValueError("; ".join(problems))
@@ -1057,10 +1408,11 @@ def session_load(run: str = "", run_type: str = "", start_date: str = "",
             # SPORT: a rated ride is load the legs carried, and a running-only
             # sum understated every week with cross-training in it, with one
             # sign and nothing saying so.
-            chosen = select_runs(con, sel, needs_terrain=False,
-                                 sport=SPORT_ANY)
-            rows = [{**SL.session_load(con, r["activity_id"]),
-                     "sport": r["sport"]} for r in chosen["included"]]
+            chosen = select_runs(con, sel, needs_terrain=False, sport=SPORT_ANY)
+            rows = [
+                {**SL.session_load(con, r["activity_id"]), "sport": r["sport"]}
+                for r in chosen["included"]
+            ]
             rule = chosen["rule"]
         else:
             rows = [SL.session_load(con, _activity_for(con, run))]
@@ -1071,31 +1423,52 @@ def session_load(run: str = "", run_type: str = "", start_date: str = "",
             for r in rows:
                 by_sport[r["sport"]] = by_sport.get(r["sport"], 0) + 1
             summary["n_by_sport"] = by_sport
-            summary["sports"] = ("every sport the watch recorded: load is a "
-                                 "session dose, so a ride or a swim counts "
-                                 "as much as a run")
-        out = {"selection_rule": rule, "rows": rows, "summary": summary,
-               "unrated_reason": SL.UNRATED_REASON, "filters": SL.filters()}
+            summary["sports"] = (
+                "every sport the watch recorded: load is a "
+                "session dose, so a ride or a swim counts "
+                "as much as a run"
+            )
+        out = {
+            "selection_rule": rule,
+            "rows": rows,
+            "summary": summary,
+            "unrated_reason": SL.UNRATED_REASON,
+            "filters": SL.filters(),
+        }
         if len(rows) == 1:
             r = rows[0]
-            text = (f"{r['run_id']}: {r['foster_load_au']:.0f} AU "
-                    f"(RPE {r['garmin_rpe']:g} x {r['duration_min']:.1f} min)"
-                    if r["status"] == "ok" else
-                    f"{r['run_id']}: unavailable -- {r['reason']}")
+            text = (
+                f"{r['run_id']}: {r['foster_load_au']:.0f} AU "
+                f"(RPE {r['garmin_rpe']:g} x {r['duration_min']:.1f} min)"
+                if r["status"] == "ok"
+                else f"{r['run_id']}: unavailable -- {r['reason']}"
+            )
         else:
             total = summary["sum_foster_load_au_priced"]
             unpriced = summary["n"] - summary["n_priced"]
-            text = (f"{summary['n_priced']} of {summary['n']} sessions priced"
-                    + (f", {total:.0f} AU" if total is not None else "")
-                    + (f" (a lower bound: {unpriced} unpriced)"
-                       if summary["is_lower_bound"] else ""))
+            text = (
+                f"{summary['n_priced']} of {summary['n']} sessions priced"
+                + (f", {total:.0f} AU" if total is not None else "")
+                + (
+                    f" (a lower bound: {unpriced} unpriced)"
+                    if summary["is_lower_bound"]
+                    else ""
+                )
+            )
         return out, text
+
     return _call("session_load", go)
 
 
 @mcp.tool()
-def list_runs(start_date: str = "", end_date: str = "", run_type: str = "",
-              cluster: str = "", limit: int = 50, sport: str = "") -> str:
+def list_runs(
+    start_date: str = "",
+    end_date: str = "",
+    run_type: str = "",
+    cluster: str = "",
+    limit: int = 50,
+    sport: str = "",
+) -> str:
     """Corpus listing, newest first. All filters optional and AND-ed.
 
     Args:
@@ -1111,15 +1484,24 @@ def list_runs(start_date: str = "", end_date: str = "", run_type: str = "",
 
     Each row carries `local_date`, the day the athlete would call it.
     """
+
     def go(con):
         from trail_factors.analysis.queries import list_runs as q
+
         _reject_run_type("list_runs", run_type)
         # BY KEYWORD, and run_type never passed: it was rejected above if
         # given, so the shared layer's own default applies.
-        rows = q(con, start_date=_opt(start_date), end_date=_opt(end_date),
-                 cluster=_opt(cluster), limit=limit, sport=_opt(sport))
+        rows = q(
+            con,
+            start_date=_opt(start_date),
+            end_date=_opt(end_date),
+            cluster=_opt(cluster),
+            limit=limit,
+            sport=_opt(sport),
+        )
         shown = sport if sport != "" else "running"
         return rows, f"{len(rows)} activities ({shown})"
+
     return _call("list_runs", go)
 
 
@@ -1142,15 +1524,34 @@ def list_runs(start_date: str = "", end_date: str = "", run_type: str = "",
 # The filter vocabulary spec_context advertises. Not every tool can honour
 # every one of these, and the ones it cannot are REJECTED BY NAME rather than
 # ignored -- see _selection().
-SELECTION_FILTERS = ("run_type", "start_date", "end_date", "cluster", "last_n",
-                     "segment_id", "direction")
+SELECTION_FILTERS = (
+    "run_type",
+    "start_date",
+    "end_date",
+    "cluster",
+    "last_n",
+    "segment_id",
+    "direction",
+)
 
 # Which tools honour which. Stated once, here, so the standing brief and the
 # signatures cannot drift apart again.
 SELECTION_SUPPORT = {
-    "matched_terrain_drift": ("run_type", "start_date", "end_date", "cluster", "last_n"),
-    "segment_effort_drift": ("run_type", "start_date", "end_date", "cluster",
-                             "last_n", "direction"),
+    "matched_terrain_drift": (
+        "run_type",
+        "start_date",
+        "end_date",
+        "cluster",
+        "last_n",
+    ),
+    "segment_effort_drift": (
+        "run_type",
+        "start_date",
+        "end_date",
+        "cluster",
+        "last_n",
+        "direction",
+    ),
     "efficiency_factor": ("run_type", "start_date", "end_date", "cluster", "last_n"),
     "grade_binned_pace": ("run_type", "start_date", "end_date", "cluster", "last_n"),
     "cadence_by_grade": ("run_type", "start_date", "end_date", "cluster", "last_n"),
@@ -1175,9 +1576,9 @@ SELECTION_SUPPORT = {
 # Where to send a caller whose filter this tool cannot honour.
 _ALTERNATIVE = {
     "segment_id": "segment_history(segment_id=...) or delta_hr(segment_id=...) "
-                  "-- this primitive is not computed per segment",
+    "-- this primitive is not computed per segment",
     "direction": "segment_history(direction=...) or delta_hr(direction=...) "
-                 "-- this primitive has no per-direction form",
+    "-- this primitive has no per-direction form",
 }
 
 
@@ -1234,15 +1635,22 @@ def _selection(tool: str, **given) -> dict:
     if unsupported:
         bits = []
         for k in unsupported:
-            bits.append(f"{k}={supplied[k]!r}: use "
-                        f"{_ALTERNATIVE.get(k, 'a selection-level tool')}")
-        allowed = (", ".join(supported) if supported
-                   else "none -- this tool reports on ONE run, named by `run`")
+            bits.append(
+                f"{k}={supplied[k]!r}: use "
+                f"{_ALTERNATIVE.get(k, 'a selection-level tool')}"
+            )
+        allowed = (
+            ", ".join(supported)
+            if supported
+            else "none -- this tool reports on ONE run, named by `run`"
+        )
         raise ValueError(
             f"{tool} cannot honour {', '.join(unsupported)}. "
-            f"It accepts: {allowed}. " + " ".join(bits) +
-            " Nothing was computed: a filter this tool ignores would have "
-            "returned a number for a different question.")
+            f"It accepts: {allowed}. "
+            + " ".join(bits)
+            + " Nothing was computed: a filter this tool ignores would have "
+            "returned a number for a different question."
+        )
     return supplied
 
 
@@ -1259,26 +1667,36 @@ def _reject_run_type(tool: str, run_type) -> None:
     # shared layer's cannot drift apart; this adds only the tool's name and
     # what the caller will see on every row instead.
     try:
-        check_available({"run_type": run_type if _is_supplied(run_type)
-                         else None})
+        check_available({"run_type": run_type if _is_supplied(run_type) else None})
     except FilterUnavailable as exc:
         raise FilterUnavailable(
             f"{tool}: {exc} Every run's run_type is reported null and "
-            f"labelled {NOT_COLLECTED!r}.") from None
+            f"labelled {NOT_COLLECTED!r}."
+        ) from None
 
 
 def _filters(run_type, start_date, end_date, cluster, last_n):
     """The five run-selection filters, omitting the ones not supplied."""
-    given = (("run_type", run_type), ("start_date", start_date),
-             ("end_date", end_date), ("cluster", cluster), ("last_n", last_n))
+    given = (
+        ("run_type", run_type),
+        ("start_date", start_date),
+        ("end_date", end_date),
+        ("cluster", cluster),
+        ("last_n", last_n),
+    )
     return {k: v for k, v in given if _is_supplied(v)}
 
 
 @mcp.tool()
-def matched_terrain_drift(run_type: str = "", start_date: str = "",
-                          end_date: str = "", cluster: str = "",
-                          last_n: int = 0, segment_id: str = "",
-                          direction: str = "") -> str:
+def matched_terrain_drift(
+    run_type: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    cluster: str = "",
+    last_n: int = 0,
+    segment_id: str = "",
+    direction: str = "",
+) -> str:
     """§6.7 HR drift on the SAME ground, bpm/hour, over a selection of runs.
 
     Pairs RECORDS within 20 m of each other, at least 10 min apart, BOTH
@@ -1292,23 +1710,43 @@ def matched_terrain_drift(run_type: str = "", start_date: str = "",
     `segment_effort_drift` is a DIFFERENT quantity, usually several times
     larger. Neither is "the" drift.
     """
+
     def go(con):
         from trail_factors.analysis.over import drift
-        r = drift(con, **_selection("matched_terrain_drift", run_type=run_type, start_date=start_date,
-                        end_date=end_date, cluster=cluster, last_n=last_n,
-                        segment_id=segment_id, direction=direction))
-        return r, (f"{r['primitive']}: median "
-                   f"{r['median'] if r['median'] is None else round(r['median'], 2)} "
-                   f"{r['unit']} over {r['n_with_value']} of "
-                   f"{r['selection']['n_included']} runs")
+
+        r = drift(
+            con,
+            **_selection(
+                "matched_terrain_drift",
+                run_type=run_type,
+                start_date=start_date,
+                end_date=end_date,
+                cluster=cluster,
+                last_n=last_n,
+                segment_id=segment_id,
+                direction=direction,
+            ),
+        )
+        return r, (
+            f"{r['primitive']}: median "
+            f"{r['median'] if r['median'] is None else round(r['median'], 2)} "
+            f"{r['unit']} over {r['n_with_value']} of "
+            f"{r['selection']['n_included']} runs"
+        )
+
     return _call("matched_terrain_drift", go)
 
 
 @mcp.tool()
-def segment_effort_drift(run_type: str = "", start_date: str = "",
-                         end_date: str = "", cluster: str = "",
-                         last_n: int = 0, segment_id: str = "",
-                         direction: str = "") -> str:
+def segment_effort_drift(
+    run_type: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    cluster: str = "",
+    last_n: int = 0,
+    segment_id: str = "",
+    direction: str = "",
+) -> str:
     """Effort-level HR drift on a matched slope. NOT §6.7 — a DIFFERENT quantity.
 
     Pairs whole effort averages with no speed match and no split_type filter,
@@ -1319,98 +1757,180 @@ def segment_effort_drift(run_type: str = "", start_date: str = "",
     Use `matched_terrain_drift` unless you specifically want the slope-matched
     measure. NEVER present either as "the" drift. Read `applied_filters`.
     """
+
     def go(con):
         from trail_factors.analysis.over import segment_effort_drift as q
-        r = q(con, **_selection("segment_effort_drift", run_type=run_type,
-                        start_date=start_date, end_date=end_date,
-                        cluster=cluster, last_n=last_n,
-                        segment_id=segment_id, direction=direction))
+
+        r = q(
+            con,
+            **_selection(
+                "segment_effort_drift",
+                run_type=run_type,
+                start_date=start_date,
+                end_date=end_date,
+                cluster=cluster,
+                last_n=last_n,
+                segment_id=segment_id,
+                direction=direction,
+            ),
+        )
         return r, f"{r['n_with_value']} of {r['selection']['n_included']} runs"
+
     return _call("segment_effort_drift", go)
 
 
 @mcp.tool()
-def efficiency_factor(run_type: str = "", start_date: str = "",
-                      end_date: str = "", cluster: str = "",
-                      last_n: int = 0, segment_id: str = "",
-                      direction: str = "") -> str:
+def efficiency_factor(
+    run_type: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    cluster: str = "",
+    last_n: int = 0,
+    segment_id: str = "",
+    direction: str = "",
+) -> str:
     """§6.8 speed per heartbeat on segment-matched terrain, over a selection.
 
     Matched by segment identity, NOT by GAP — GAP is unvalidated (§12.2).
     """
+
     def go(con):
         from trail_factors.analysis.over import efficiency
-        r = efficiency(con, **_selection("efficiency_factor", run_type=run_type, start_date=start_date,
-                        end_date=end_date, cluster=cluster, last_n=last_n,
-                        segment_id=segment_id, direction=direction))
+
+        r = efficiency(
+            con,
+            **_selection(
+                "efficiency_factor",
+                run_type=run_type,
+                start_date=start_date,
+                end_date=end_date,
+                cluster=cluster,
+                last_n=last_n,
+                segment_id=segment_id,
+                direction=direction,
+            ),
+        )
         return r, f"{r['n_with_value']} of {r['selection']['n_included']} runs"
+
     return _call("efficiency_factor", go)
 
 
 @mcp.tool()
-def delta_hr(direction: str = "", segment_id: str = "", run_type: str = "",
-             start_date: str = "", end_date: str = "", cluster: str = "",
-             last_n: int = 0) -> str:
+def delta_hr(
+    direction: str = "",
+    segment_id: str = "",
+    run_type: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    cluster: str = "",
+    last_n: int = 0,
+) -> str:
     """§6.3 HR excursion across an effort, by direction, over a selection.
 
     Ascent and descent are NOT comparable on this metric: the excursion
     differs systematically by direction. Tau is never returned by this tool;
     whether it is reportable at all is §6.3's corpus-level gate.
     """
+
     def go(con):
         from trail_factors.analysis.over import delta_hr as q
-        r = q(con, **_selection(
-            "delta_hr", run_type=run_type, start_date=start_date,
-            end_date=end_date, cluster=cluster, last_n=last_n,
-            segment_id=segment_id, direction=direction))
+
+        r = q(
+            con,
+            **_selection(
+                "delta_hr",
+                run_type=run_type,
+                start_date=start_date,
+                end_date=end_date,
+                cluster=cluster,
+                last_n=last_n,
+                segment_id=segment_id,
+                direction=direction,
+            ),
+        )
         return r, f"{r['n_with_value']} of {r['selection']['n_included']} runs"
+
     return _call("delta_hr", go)
 
 
 @mcp.tool()
-def grade_binned_pace(run_type: str = "", start_date: str = "",
-                      end_date: str = "", cluster: str = "",
-                      last_n: int = 0, segment_id: str = "",
-                      direction: str = "") -> str:
+def grade_binned_pace(
+    run_type: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    cluster: str = "",
+    last_n: int = 0,
+    segment_id: str = "",
+    direction: str = "",
+) -> str:
     """§6.2 pace by grade bin, split by split_type, over a selection.
 
     Run and walk are never pooled: pooling reads as "pace does not vary with
     grade" purely because each bin mixes the two modes.
     """
+
     def go(con):
         from trail_factors.analysis.over import grade_table
-        r = grade_table(con, **_selection("grade_binned_pace", run_type=run_type, start_date=start_date,
-                        end_date=end_date, cluster=cluster, last_n=last_n,
-                        segment_id=segment_id, direction=direction))
+
+        r = grade_table(
+            con,
+            **_selection(
+                "grade_binned_pace",
+                run_type=run_type,
+                start_date=start_date,
+                end_date=end_date,
+                cluster=cluster,
+                last_n=last_n,
+                segment_id=segment_id,
+                direction=direction,
+            ),
+        )
         return r, f"{len(r['table'])} bins over {r['selection']['n_included']} runs"
+
     return _call("grade_binned_pace", go)
 
 
 @mcp.tool()
-def segment_history(segment_id: str, direction: str = "", run_type: str = "",
-                    start_date: str = "", end_date: str = "",
-                    cluster: str = "", last_n: int = 0) -> str:
+def segment_history(
+    segment_id: str,
+    direction: str = "",
+    run_type: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    cluster: str = "",
+    last_n: int = 0,
+) -> str:
     """§6.6 one slope, every traversal, over time — the trending primitive.
 
     Use `report` to find segment ids; they are unrecognisable on their own, so
     the report lists them in the order the reference run meets them.
     """
+
     def go(con):
         from trail_factors.analysis.over import segment_history as q
+
         _reject_run_type("segment_history", run_type)
-        r = q(con, segment_id, _opt(direction),
-              **_filters(run_type, start_date, end_date, cluster, last_n))
+        r = q(
+            con,
+            segment_id,
+            _opt(direction),
+            **_filters(run_type, start_date, end_date, cluster, last_n),
+        )
         return r, f"{r['n_efforts_in_selection']} efforts on {segment_id}"
+
     return _call("segment_history", go)
 
 
 @mcp.tool()
 def list_segments() -> str:
     """The slope library: every segment, with where the reference run meets it."""
+
     def go(con):
         from trail_factors.analysis.queries import segment_library
+
         rows = segment_library(con)
         return rows, f"{len(rows)} slopes"
+
     return _call("list_segments", go)
 
 
@@ -1432,13 +1952,17 @@ def ride_blocks(run: str = "") -> str:
     An unannotated ride returns `unavailable` WITH A REASON, never an empty
     list -- nothing logged is a different fact from a ride with no structure.
     """
+
     def go(con):
         from trail_factors.analysis.rides import ride_blocks as rb
+
         r = rb(con, _activity_for(con, run))
         if r["status"] != "ok":
             return r, r["reason"]
-        return r, (f"{r['n_blocks']} blocks on {r['run_id']} "
-                   f"(revision {r['revision']})")
+        return r, (
+            f"{r['n_blocks']} blocks on {r['run_id']} (revision {r['revision']})"
+        )
+
     return _call("ride_blocks", go)
 
 
@@ -1456,13 +1980,20 @@ def resistance_history(resistance: float = 0.0, match_rpm: bool = True) -> str:
     Blocks with no stated RPM are grouped SEPARATELY from blocks that have one:
     no stated cadence is not a cadence that happens to match.
     """
+
     def go(con):
         from trail_factors.analysis.rides import resistance_history as rh
+
         # 0.0 IS THE NOT-SUPPLIED SENTINEL (a closed knob is not a load).
-        r = rh(con, resistance=(resistance if resistance != 0 else None),
-               match_rpm=match_rpm)
-        return r, (f"{r['n_groups']} resistance groups over "
-                   f"{r['n_sessions']} logged rides")
+        r = rh(
+            con,
+            resistance=(resistance if resistance != 0 else None),
+            match_rpm=match_rpm,
+        )
+        return r, (
+            f"{r['n_groups']} resistance groups over {r['n_sessions']} logged rides"
+        )
+
     return _call("resistance_history", go)
 
 
@@ -1474,10 +2005,13 @@ def time_in_resistance() -> str:
     assumption beyond the blocks having been logged correctly. Pure
     aggregation of stored blocks.
     """
+
     def go(con):
         from trail_factors.analysis.rides import time_in_resistance as tir
+
         r = tir(con)
         return r, f"{r['n_weeks']} weeks with logged resistance blocks"
+
     return _call("time_in_resistance", go)
 
 
@@ -1506,7 +2040,8 @@ def save_ride_blocks(payload: str, supersede: bool = False) -> str:
     statements to disagree. Storage is explicit [start_min, end_min).
 
     resistance is DECIMAL knob-turns from closed (quarter turns such as 4.25,
-    4.5, 4.75 are ordinary values), validated against [0, MAX]. That ceiling is DECLARED, not
+    4.5, 4.75 are ordinary values), validated against [0, MAX]. That ceiling is
+    DECLARED, not
     measured, until the athlete tests where the knob stops.
 
     rpm is a number or [low, high] and is stored as [low, high], NEVER
@@ -1524,16 +2059,25 @@ def save_ride_blocks(payload: str, supersede: bool = False) -> str:
     Athlete-recalled average HR is NOT a field here -- the watch's HR is
     authoritative and already in the corpus. It survives in raw_text only.
     """
+
     def go(con):
         import json as _json
 
         from trail_factors.ingest.ride_blocks import save_ride_blocks as save
+
         body = _json.loads(payload) if isinstance(payload, str) else payload
         if not isinstance(body, dict):
             raise RideBlockError("payload must be a JSON object")
         from trail_factors.analysis.queries import activity_timing
-        ref = next((v for v in (body.get("run_id"), body.get("activity_id"))
-                    if v is not None and v != ""), "")
+
+        ref = next(
+            (
+                v
+                for v in (body.get("run_id"), body.get("activity_id"))
+                if v is not None and v != ""
+            ),
+            "",
+        )
         aid = _activity_for(con, ref)
         run_id, duration_min = activity_timing(con, aid)
         body.setdefault("run_id", run_id)
@@ -1543,18 +2087,25 @@ def save_ride_blocks(payload: str, supersede: bool = False) -> str:
         # is the outage this project already had once, when saves landed in a
         # file while every read answered from a stale projection.
         from trail_factors.analysis.rides import ride_blocks as rb
+
         back = rb(con, aid)
         if back["status"] != "ok" or back["revision"] != entry["revision"]:
             raise ReadBackFailed(
                 f"{run_id} was WRITTEN to data/athlete/ride_blocks.json "
                 f"(revision {entry['revision']}) but the read path does not "
                 f"return it. The file is the record and is intact; do not "
-                f"re-send the payload.")
-        entry["visible_to_read"] = {"confirmed": True,
-                                    "revision": back["revision"],
-                                    "n_blocks": back["n_blocks"]}
-        return entry, (f"logged {run_id}: {len(entry['blocks'])} blocks, "
-                       f"revision {entry['revision']}")
+                f"re-send the payload."
+            )
+        entry["visible_to_read"] = {
+            "confirmed": True,
+            "revision": back["revision"],
+            "n_blocks": back["n_blocks"],
+        }
+        return entry, (
+            f"logged {run_id}: {len(entry['blocks'])} blocks, "
+            f"revision {entry['revision']}"
+        )
+
     return _call("save_ride_blocks", go)
 
 
@@ -1573,10 +2124,12 @@ REJECTED_FILES_CMD = "uv run trail-factors rejected-files"
 # athlete-input writer this server exposes, and it is followed by a re-ingest
 # that needs the write lock. Said in every rejection so a chat does not go
 # looking for a tool that does not exist.
-CONFIRM_IS_CLI_ONLY = ("Confirming a window is CLI-only: there is no MCP tool "
-                       "for it. Run the command in a terminal in the repo, "
-                       "then sync again -- a confirmed file is re-ingested, "
-                       "trimmed to the window, on the next sync.")
+CONFIRM_IS_CLI_ONLY = (
+    "Confirming a window is CLI-only: there is no MCP tool "
+    "for it. Run the command in a terminal in the repo, "
+    "then sync again -- a confirmed file is re-ingested, "
+    "trimmed to the window, on the next sync."
+)
 
 
 def sync_rejections(ingest: dict, new_ids, raw_dir) -> tuple[list[dict], list[str]]:
@@ -1603,8 +2156,7 @@ def sync_rejections(ingest: dict, new_ids, raw_dir) -> tuple[list[dict], list[st
             gid = str(name).split("_")[0]
             if new_ids and gid not in new_ids:
                 continue
-            row = {"garmin_id": gid, "file": name, "kind": kind,
-                   "message": str(msg)}
+            row = {"garmin_id": gid, "file": name, "kind": kind, "message": str(msg)}
             if kind == "rejected":
                 # THE CLI'S OWN ADVICE, so MCP and the terminal cannot word
                 # one rejection differently: the reason in plain words, and
@@ -1614,15 +2166,20 @@ def sync_rejections(ingest: dict, new_ids, raw_dir) -> tuple[list[dict], list[st
                 a = advice_by_file.get(name)
                 if a is None:
                     from trail_factors.cli.athlete import rejection_advice
+
                     a = rejection_advice(raw_dir / name, str(msg))
                 s = a.get("suggestion") or {}
                 row["reason"] = a["reason"]
                 row["suggested_valid_end_utc"] = (
                     str(s["suggested_valid_end"])
-                    if s.get("suggested_valid_end") is not None else None)
+                    if s.get("suggested_valid_end") is not None
+                    else None
+                )
                 row["suggested_valid_start_utc"] = (
                     str(s["suggested_valid_start"])
-                    if s.get("suggested_valid_start") is not None else None)
+                    if s.get("suggested_valid_start") is not None
+                    else None
+                )
                 if a.get("suggest_error"):
                     row["suggest_error"] = a["suggest_error"]
                 row["next_step"] = {
@@ -1633,17 +2190,21 @@ def sync_rejections(ingest: dict, new_ids, raw_dir) -> tuple[list[dict], list[st
                     "then": a["then"] if a["command"] else None,
                     "reachable_from_mcp": False,
                 }
-                run = (f" Run `{a['command']}`, then `{a['then']}`."
-                       if a["command"] else "")
+                run = (
+                    f" Run `{a['command']}`, then `{a['then']}`."
+                    if a["command"]
+                    else ""
+                )
                 problems.append(
                     f"REJECTED: garmin {gid} did not ingest -- {a['reason']}. "
                     f"Next step: {a['next_step']}.{run} "
                     f"`{a['list_command']}` shows the file span and the "
-                    f"detector's suggestion. {CONFIRM_IS_CLI_ONLY}")
+                    f"detector's suggestion. {CONFIRM_IS_CLI_ONLY}"
+                )
             else:
                 row["next_step"] = {
                     "what": "the file could not be read or processed; a "
-                            "window will not fix it",
+                    "window will not fix it",
                     "list_command": REJECTED_FILES_CMD,
                     "reachable_from_mcp": False,
                 }
@@ -1651,13 +2212,15 @@ def sync_rejections(ingest: dict, new_ids, raw_dir) -> tuple[list[dict], list[st
                     f"FAILED: garmin {gid} did not ingest -- {str(msg)[:200]}. "
                     f"This is an error reading or processing the file, not a "
                     f"validation finding, so confirming a window will not "
-                    f"clear it.")
+                    f"clear it."
+                )
             rejected.append(row)
     if problems:
         problems.append(
             "a file that did not ingest is NOT in the corpus: nothing "
             "downstream will mention it again until it is dealt with. "
-            f"`{REJECTED_FILES_CMD}` lists everything still outstanding.")
+            f"`{REJECTED_FILES_CMD}` lists everything still outstanding."
+        )
     return rejected, problems
 
 
@@ -1677,11 +2240,14 @@ STEP_NEEDS = {"silver": "dem", "match": "silver", "recovery": "match"}
 
 def no_tiles_note() -> str:
     from trail_factors.paths import DEM_DIR
-    return (f"no DEM tiles in {display_path(DEM_DIR)}: dem, silver, match "
-            f"and recovery were skipped, so this sync computed no grade, "
-            f"slopes or segment efforts. That is the normal state of a fresh "
-            f"install, not a failure; `uv run trail-factors fetch-tile "
-            f"--missing` fetches the tiles the corpus needs.")
+
+    return (
+        f"no DEM tiles in {display_path(DEM_DIR)}: dem, silver, match "
+        f"and recovery were skipped, so this sync computed no grade, "
+        f"slopes or segment efforts. That is the normal state of a fresh "
+        f"install, not a failure; `uv run trail-factors fetch-tile "
+        f"--missing` fetches the tiles the corpus needs."
+    )
 
 
 def run_sync_steps(steps, progress, tiles_present: bool) -> dict:
@@ -1698,9 +2264,11 @@ def run_sync_steps(steps, progress, tiles_present: bool) -> dict:
         if step in TERRAIN_STEPS and not tiles_present:
             reason = no_tiles_note()
         elif need is not None and status.get(need) != "done":
-            reason = (f"{need} did not complete in this sync "
-                      f"({status.get(need)}), and {step} reads what {need} "
-                      f"writes; running it would build on stale input")
+            reason = (
+                f"{need} did not complete in this sync "
+                f"({status.get(need)}), and {step} reads what {need} "
+                f"writes; running it would build on stale input"
+            )
         else:
             reason = None
         if reason is not None:
@@ -1716,8 +2284,13 @@ def run_sync_steps(steps, progress, tiles_present: bool) -> dict:
             status[step] = "failed"
             errors.append({"step": step, "error": msg})
             problems.append(f"STEP {step} FAILED: {msg[:400]}")
-    return {"outputs": outputs, "steps": status, "skipped_steps": skipped,
-            "step_errors": errors, "problems": problems}
+    return {
+        "outputs": outputs,
+        "steps": status,
+        "skipped_steps": skipped,
+        "step_errors": errors,
+        "problems": problems,
+    }
 
 
 def sync_work(progress) -> dict:
@@ -1746,40 +2319,54 @@ def sync_work(progress) -> dict:
     # delta_hr then reported "no efforts on this run" about a run that had
     # several.
     from trail_factors.cli.analysis import recovery_build
+
     # KEEP ingest_all's RETURN VALUE. `fn()` discarded it, so a file that was
     # REJECTED during a sync was reported nowhere: the job said done, the new
     # activity was simply absent, and the only trace was a validation_results
     # row with activity_id NULL that nothing read. Several files accumulated
     # that way.
     ran = run_sync_steps(
-        (("ingest", ingest_all), ("dem", dem_populate),
-         ("silver", silver_build), ("weather", weather_build),
-         ("match", match_build), ("recovery", recovery_build),
-         ("validate", lambda: validate_cmd(verbose=False))),
-        progress, tiles_present=bool(loaded_tiles()))
+        (
+            ("ingest", ingest_all),
+            ("dem", dem_populate),
+            ("silver", silver_build),
+            ("weather", weather_build),
+            ("match", match_build),
+            ("recovery", recovery_build),
+            ("validate", lambda: validate_cmd(verbose=False)),
+        ),
+        progress,
+        tiles_present=bool(loaded_tiles()),
+    )
 
     # SCOPED TO THIS SYNC'S FILES -- see sync_rejections.
     ingest_result = ran["outputs"].get("ingest")
     ingest = ingest_result if ingest_result is not None else {}
     rejected, problems = sync_rejections(ingest, new_ids, RAW_DIR / "garmin")
     problems = ran["problems"] + problems
-    return {"new_activities": new_ids, "n_new": len(new_ids),
-            # None, not 0, when ingest itself failed: nothing was counted.
-            "n_ingested": (len(ingest.get("ok", []))
-                           if ingest_result is not None else None),
-            "rejected": rejected, "n_rejected": len(rejected),
-            # A FILE RESCUED BY A CONFIRMED WINDOW IS NEWS. The re-sync after
-            # confirm-file downloads nothing, so without this the job would
-            # say nothing about the run it just brought into the corpus.
-            "rescued": ingest.get("rescued", []),
-            "n_rescued": len(ingest.get("rescued", [])),
-            "steps": ran["steps"], "skipped_steps": ran["skipped_steps"],
-            "step_errors": ran["step_errors"],
-            "problems": problems,
-            # A SYNC WITH PROBLEMS IS NOT A CLEAN DONE. A skip for want of
-            # tiles is not a problem; a skip because a step failed is
-            # already counted through that step's own error.
-            "clean": not problems}
+    return {
+        "new_activities": new_ids,
+        "n_new": len(new_ids),
+        # None, not 0, when ingest itself failed: nothing was counted.
+        "n_ingested": (
+            len(ingest.get("ok", [])) if ingest_result is not None else None
+        ),
+        "rejected": rejected,
+        "n_rejected": len(rejected),
+        # A FILE RESCUED BY A CONFIRMED WINDOW IS NEWS. The re-sync after
+        # confirm-file downloads nothing, so without this the job would
+        # say nothing about the run it just brought into the corpus.
+        "rescued": ingest.get("rescued", []),
+        "n_rescued": len(ingest.get("rescued", [])),
+        "steps": ran["steps"],
+        "skipped_steps": ran["skipped_steps"],
+        "step_errors": ran["step_errors"],
+        "problems": problems,
+        # A SYNC WITH PROBLEMS IS NOT A CLEAN DONE. A skip for want of
+        # tiles is not a problem; a skip because a step failed is
+        # already counted through that step's own error.
+        "clean": not problems,
+    }
 
 
 @mcp.tool()
@@ -1808,6 +2395,7 @@ def sync() -> str:
     match, recovery) are SKIPPED with the reason in `skipped_steps` -- the
     normal state of a fresh install, not a failure.
     """
+
     def go(_con):
         from trail_factors.analysis.jobs import start
 
@@ -1817,9 +2405,12 @@ def sync() -> str:
             return sync_work(progress)
 
         job_id = start(work, label="sync")
-        return ({"job_id": job_id, "state": "queued"},
-                f"sync started as {job_id}; poll sync_status(\"{job_id}\"). "
-                f"Other tools will fail with outcome=broken while it writes.")
+        return (
+            {"job_id": job_id, "state": "queued"},
+            f'sync started as {job_id}; poll sync_status("{job_id}"). '
+            f"Other tools will fail with outcome=broken while it writes.",
+        )
+
     return _call("sync", go)
 
 
@@ -1833,11 +2424,14 @@ def sync_status(job_id: str = "") -> str:
     raises is reported inside a `done` job's result, by name, under
     `step_errors` with `clean: false`, so the rejections still arrive.
     """
+
     def go(_con):
         from trail_factors.analysis.jobs import status
+
         s = status(_opt(job_id))
         latest = s["latest"] if s.get("latest") is not None else s
         return s, f"{latest.get('job_id', '?')}: {latest.get('state', 'unknown')}"
+
     return _call("sync_status", go, database=False)
 
 
@@ -1848,21 +2442,24 @@ def ping() -> str:
     NEVER TOUCHES THE DATABASE, so it answers during a sync. A `broken` from
     any other tool while `write_locked` is true is the lock, not the corpus.
     """
+
     def go(_con):
         import datetime as _dt
 
         from trail_factors.analysis.jobs import database_lock_state
         from trail_factors.analysis.versions import PIPELINE_VERSION, digest
+
         lock = database_lock_state(DB_FILE)
         payload = {
-            "server_time_utc": _dt.datetime.now(_dt.timezone.utc)
-                                  .replace(tzinfo=None).isoformat(),
-            "pipeline": {"pipeline_version": PIPELINE_VERSION,
-                         "digest": digest()},
+            "server_time_utc": _dt.datetime.now(_dt.UTC)
+            .replace(tzinfo=None)
+            .isoformat(),
+            "pipeline": {"pipeline_version": PIPELINE_VERSION, "digest": digest()},
             "database": lock,
         }
         state = {True: "write-locked", False: "free", None: "lock unknown"}
         return payload, f"alive; database {state[lock['write_locked']]}"
+
     return _call("ping", go, database=False)
 
 

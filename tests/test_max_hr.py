@@ -15,14 +15,15 @@ Every negative has a positive twin.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import unittest
 
+from tests.corpus import CorpusTestCase, corpus_path, isolated, one
 from trail_factors.analysis import cycles as CY
 from trail_factors.analysis.basic import MAX_HR_WINDOW_S, average_hr, max_hr
 from trail_factors.analysis.over import max_hr_over
 from trail_factors.analysis.zones import HR_LAG_S
-from tests.corpus import CorpusTestCase, corpus_path, one, isolated
 
 
 class TestTheRecoveryGate(unittest.TestCase):
@@ -31,31 +32,46 @@ class TestTheRecoveryGate(unittest.TestCase):
     def test_the_threshold_is_DERIVED_from_the_lag(self):
         """Not picked. A better lag estimate must re-gate the corpus without
         anyone remembering to change a second number."""
-        self.assertEqual(CY.MIN_WALK_FOR_RECOVERY_S,
-                         HR_LAG_S + CY.HR_RECOVERY_MARGIN_S)
+        self.assertEqual(CY.MIN_WALK_FOR_RECOVERY_S, HR_LAG_S + CY.HR_RECOVERY_MARGIN_S)
         self.assertGreater(CY.MIN_WALK_FOR_RECOVERY_S, HR_LAG_S)
 
     def test_it_is_registered_in_the_digest(self):
         from trail_factors.analysis.versions import calc_params, digest
+
         params = calc_params()
-        self.assertEqual(params["cycles_min_walk_for_recovery_s"],
-                         CY.MIN_WALK_FOR_RECOVERY_S)
-        self.assertNotEqual(digest(dict(params, cycles_min_walk_for_recovery_s=15.0)),
-                            digest(params))
+        self.assertEqual(
+            params["cycles_min_walk_for_recovery_s"], CY.MIN_WALK_FOR_RECOVERY_S
+        )
+        self.assertNotEqual(
+            digest(dict(params, cycles_min_walk_for_recovery_s=15.0)), digest(params)
+        )
 
 
 # --- isolation: never the real athlete state or config ----------------------
+# Entered in setUpModule, CLOSED in tearDownModule -- see tests/corpus.py
+# isolated() for why this is not unittest.enterModuleContext.
+_ISOLATION = contextlib.ExitStack()
+
+
 def setUpModule():
     if corpus_path() is not None:
-        unittest.enterModuleContext(isolated())
+        _ISOLATION.enter_context(isolated())
+
+
+def tearDownModule():
+    _ISOLATION.close()
 
 
 def _garmin_running(con, where: str = "TRUE", what: str = "a qualifying run"):
     """First garmin_watch running activity (newest first) matching `where`."""
-    return one(con, f"""
+    return one(
+        con,
+        f"""
         SELECT a.activity_id FROM activities a
         WHERE a.source = 'garmin_watch' AND a.sport = 'running' AND ({where})
-        ORDER BY a.start_time_utc DESC LIMIT 1""", what=what)[0]
+        ORDER BY a.start_time_utc DESC LIMIT 1""",
+        what=what,
+    )[0]
 
 
 class TestTheGateOnRealWalks(CorpusTestCase):
@@ -68,20 +84,25 @@ class TestTheGateOnRealWalks(CorpusTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        aid = _garmin_running(cls.con, """
+        aid = _garmin_running(
+            cls.con,
+            """
             EXISTS (SELECT 1 FROM splits s WHERE s.activity_id = a.activity_id
                     AND s.split_type = 'rwd_walk' AND s.total_timer_time < 20)
             AND EXISTS (SELECT 1 FROM splits s WHERE s.activity_id = a.activity_id
                     AND s.split_type = 'rwd_walk' AND s.total_timer_time >= 120)
             AND EXISTS (SELECT 1 FROM records r WHERE r.activity_id = a.activity_id
                     AND r.heart_rate > 0)""",
-            what="run with both a sub-20 s walk and a 120 s+ walk")
+            what="run with both a sub-20 s walk and a 120 s+ walk",
+        )
         cls.result = CY.cycles(cls.con, aid)
 
     def _walks(self, lo=0.0, hi=float("inf")):
-        return [c for c in self.result["cycles"]
-                if c["walk_duration_s"] is not None
-                and lo <= c["walk_duration_s"] < hi]
+        return [
+            c
+            for c in self.result["cycles"]
+            if c["walk_duration_s"] is not None and lo <= c["walk_duration_s"] < hi
+        ]
 
     def test_a_SHORT_walk_reports_shorter_than_hr_lag_not_a_number(self):
         short = self._walks(hi=CY.MIN_WALK_FOR_RECOVERY_S)
@@ -110,8 +131,11 @@ class TestTheGateOnRealWalks(CorpusTestCase):
     def test_the_walk_still_counts_as_a_cycle(self):
         """Only the recovery figure is withheld -- the cycle, its durations and
         its paces are all still reported."""
-        short = [c for c in self.result["cycles"]
-                 if c["hr_recovery_status"] == "shorter_than_hr_lag"]
+        short = [
+            c
+            for c in self.result["cycles"]
+            if c["hr_recovery_status"] == "shorter_than_hr_lag"
+        ]
         for c in short:
             self.assertIsNotNone(c["walk_duration_s"])
             self.assertIsNotNone(c["run_duration_s"])
@@ -123,9 +147,10 @@ class TestTheGateOnRealWalks(CorpusTestCase):
         s = self.result["summary"]
         self.assertGreater(s["n_recovery_shorter_than_hr_lag"], 0)
         self.assertGreater(s["n_recovery_measurable"], 0)
-        self.assertEqual(s["n_recovery_measurable"]
-                         + s["n_recovery_shorter_than_hr_lag"],
-                         self.result["n_complete_cycles"])
+        self.assertEqual(
+            s["n_recovery_measurable"] + s["n_recovery_shorter_than_hr_lag"],
+            self.result["n_complete_cycles"],
+        )
 
     def test_the_gate_is_declared_in_the_filters(self):
         f = self.result["filters"]
@@ -135,17 +160,16 @@ class TestTheGateOnRealWalks(CorpusTestCase):
 
 
 class TestMaxHrPerRun(CorpusTestCase):
-
     def test_ACCEPTANCE_recorded_ge_30s_ge_average_on_every_run(self):
         checked = 0
         for (aid,) in self.con.execute("SELECT activity_id FROM activities").fetchall():
             m = max_hr(self.con, aid)
             rec = m["max_hr_recorded"]["value"]
             if rec is None:
-                continue                      # no HR at all
+                continue  # no HR at all
             w30 = m["max_hr_30s"]["value"]
             if w30 is None:
-                continue                      # no 30 s window could fill
+                continue  # no 30 s window could fill
             checked += 1
             avg = average_hr(self.con, aid)["value"]
             self.assertGreaterEqual(rec, w30, aid)
@@ -159,21 +183,39 @@ class TestMaxHrPerRun(CorpusTestCase):
         X -- so the best window can never fall below the best such X. A lower
         figure means the window logic is wrong, not that the run was easier
         than it was."""
-        aid = _garmin_running(self.con, """a.sampling_regime = '1hz' AND EXISTS (
+        aid = _garmin_running(
+            self.con,
+            """a.sampling_regime = '1hz' AND EXISTS (
             SELECT 1 FROM records r WHERE r.activity_id = a.activity_id
-              AND r.heart_rate > 0)""", what="1 Hz watch run with heart rate")
-        flagged = {t for t, in self.con.execute("""
+              AND r.heart_rate > 0)""",
+            what="1 Hz watch run with heart rate",
+        )
+        flagged = {
+            t
+            for (t,) in self.con.execute(
+                """
             SELECT timestamp FROM records_enriched WHERE activity_id = ?
-              AND coalesce(quality_flags, '') <> ''""", [aid]).fetchall()}
-        rows = [r for r in self.con.execute("""
+              AND coalesce(quality_flags, '') <> ''""",
+                [aid],
+            ).fetchall()
+        }
+        rows = [
+            r
+            for r in self.con.execute(
+                """
             SELECT timestamp, heart_rate FROM records WHERE activity_id = ?
-              AND heart_rate > 0 ORDER BY timestamp""", [aid]).fetchall()
-                if r[0] not in flagged]
+              AND heart_rate > 0 ORDER BY timestamp""",
+                [aid],
+            ).fetchall()
+            if r[0] not in flagged
+        ]
         floor = None
         for i in range(len(rows)):
             j = i
-            while (j + 1 < len(rows) and (rows[j + 1][0] - rows[i][0])
-                   .total_seconds() <= MAX_HR_WINDOW_S):
+            while (
+                j + 1 < len(rows)
+                and (rows[j + 1][0] - rows[i][0]).total_seconds() <= MAX_HR_WINDOW_S
+            ):
                 j += 1
             if (rows[j][0] - rows[i][0]).total_seconds() < MAX_HR_WINDOW_S * 0.8:
                 continue
@@ -181,26 +223,33 @@ class TestMaxHrPerRun(CorpusTestCase):
             floor = lo if floor is None else max(floor, lo)
         if floor is None:
             self.skipTest("no 30 s window of unflagged records on the subject")
-        self.assertGreaterEqual(max_hr(self.con, aid)["max_hr_30s"]["value"],
-                                floor - 1e-9)
+        self.assertGreaterEqual(
+            max_hr(self.con, aid)["max_hr_30s"]["value"], floor - 1e-9
+        )
 
     def test_the_series_is_RAW_not_lag_shifted(self):
         """The 40 s shift aligns HR to the effort that caused it, which is what
         MATCHING needs. A ceiling wants the peak as recorded."""
-        aid = _garmin_running(self.con, """EXISTS (SELECT 1 FROM records r
+        aid = _garmin_running(
+            self.con,
+            """EXISTS (SELECT 1 FROM records r
             WHERE r.activity_id = a.activity_id AND r.heart_rate > 0)""",
-            what="watch run with heart rate")
+            what="watch run with heart rate",
+        )
         m = max_hr(self.con, aid)
         self.assertIn("RAW", m["filters"]["hr_series"])
         raw_peak = self.con.execute(
-            "SELECT max(heart_rate) FROM records WHERE activity_id = ?",
-            [aid]).fetchone()[0]
+            "SELECT max(heart_rate) FROM records WHERE activity_id = ?", [aid]
+        ).fetchone()[0]
         self.assertEqual(m["max_hr_recorded"]["value"], float(raw_peak))
 
     def test_the_window_is_time_weighted_and_full(self):
-        aid = _garmin_running(self.con, """EXISTS (SELECT 1 FROM records r
+        aid = _garmin_running(
+            self.con,
+            """EXISTS (SELECT 1 FROM records r
             WHERE r.activity_id = a.activity_id AND r.heart_rate > 0)""",
-            what="watch run with heart rate")
+            what="watch run with heart rate",
+        )
         w = max_hr(self.con, aid)["max_hr_30s"]
         if w["value"] is None:
             self.skipTest(f"no window on the subject: {w['reason']}")
@@ -211,11 +260,14 @@ class TestMaxHrPerRun(CorpusTestCase):
     def test_flagged_records_are_excluded_from_the_window(self):
         """A maximum selects for positive measurement error -- the same rule
         the windowed bests follow."""
-        aid = one(self.con, """
+        aid = one(
+            self.con,
+            """
             SELECT activity_id FROM records_enriched
             WHERE coalesce(quality_flags, '') <> ''
             GROUP BY 1 ORDER BY count(*) DESC LIMIT 1""",
-            what="activity with a quality-flagged record")[0]
+            what="activity with a quality-flagged record",
+        )[0]
         m = max_hr(self.con, aid)
         self.assertTrue(m["filters"]["quality_flags_excluded"])
         if m["max_hr_30s"]["value"] is None:
@@ -224,7 +276,9 @@ class TestMaxHrPerRun(CorpusTestCase):
 
     def test_a_run_with_no_flags_available_says_so(self):
         """THE TWIN: an unfiltered figure must not claim to be §15.4-clean."""
-        aid = one(self.con, """
+        aid = one(
+            self.con,
+            """
             SELECT activity_id FROM activities a
             WHERE NOT EXISTS (SELECT 1 FROM records_enriched e
                               WHERE e.activity_id = a.activity_id)
@@ -232,7 +286,8 @@ class TestMaxHrPerRun(CorpusTestCase):
                           WHERE r.activity_id = a.activity_id
                             AND r.heart_rate IS NOT NULL)
             ORDER BY activity_id LIMIT 1""",
-            what="activity with heart rate and no enriched records")[0]
+            what="activity with heart rate and no enriched records",
+        )[0]
         m = max_hr(self.con, aid)
         self.assertFalse(m["filters"]["quality_flags_excluded"])
         self.assertIn("NOT §15.4-clean", m["filters"]["quality_flags_reason"])
@@ -243,13 +298,16 @@ class TestMaxHrPerRun(CorpusTestCase):
         internal sampling while records are written on the Smart Recording
         schedule, so the stream is a decimated view and can only understate.
         Preferring either would hide that."""
-        aid, sess, rec = one(self.con, """
+        aid, sess, rec = one(
+            self.con,
+            """
             SELECT a.activity_id, a.session_max_hr, max(r.heart_rate)
             FROM activities a JOIN records r USING (activity_id)
             WHERE a.session_max_hr IS NOT NULL AND r.heart_rate > 0
             GROUP BY 1, 2 HAVING a.session_max_hr > max(r.heart_rate)
             ORDER BY 1 LIMIT 1""",
-            what="activity whose session max HR exceeds its records")
+            what="activity whose session max HR exceeds its records",
+        )
         m = max_hr(self.con, aid)
         self.assertFalse(m["session_agrees"])
         self.assertIn("SAME WATCH", m["session_note"])
@@ -261,13 +319,16 @@ class TestMaxHrPerRun(CorpusTestCase):
     def test_agreement_is_reported_too(self):
         """THE TWIN: a cross-check that only ever fires on disagreement cannot
         be distinguished from one that never runs."""
-        aid = one(self.con, """
+        aid = one(
+            self.con,
+            """
             SELECT a.activity_id FROM activities a JOIN records r USING (activity_id)
             WHERE a.session_max_hr IS NOT NULL AND r.heart_rate > 0
             GROUP BY a.activity_id, a.session_max_hr
             HAVING a.session_max_hr = max(r.heart_rate)
             ORDER BY 1 LIMIT 1""",
-            what="activity whose session max HR equals its records")[0]
+            what="activity whose session max HR equals its records",
+        )[0]
         m = max_hr(self.con, aid)
         self.assertTrue(m["session_agrees"])
         self.assertIsNone(m["session_note"])
@@ -290,27 +351,33 @@ class TestMaxHrPerRun(CorpusTestCase):
             by.setdefault(regime, []).append(diff)
         if not by:
             self.skipTest("this corpus has no session max HR beside records")
-        self.assertTrue(all(d >= 0 for v in by.values() for d in v),
-                        "the session summary must never be LOWER than the "
-                        "record stream")
-        self.assertTrue(all(d == 0 for d in by.get("1hz", [])),
-                        "1 Hz writes every sample, so the two must agree exactly")
+        self.assertTrue(
+            all(d >= 0 for v in by.values() for d in v),
+            "the session summary must never be LOWER than the record stream",
+        )
+        self.assertTrue(
+            all(d == 0 for d in by.get("1hz", [])),
+            "1 Hz writes every sample, so the two must agree exactly",
+        )
 
     def test_a_run_with_no_heart_rate_is_unavailable_not_zero(self):
-        aid = one(self.con, """
+        aid = one(
+            self.con,
+            """
             SELECT activity_id FROM activities a
             WHERE NOT EXISTS (SELECT 1 FROM records r
                               WHERE r.activity_id = a.activity_id
                                 AND r.heart_rate IS NOT NULL)
             ORDER BY activity_id LIMIT 1""",
-            what="activity with no heart rate")[0]
+            what="activity with no heart rate",
+        )[0]
         m = max_hr(self.con, aid)
         self.assertIsNone(m["max_hr_recorded"]["value"])
         self.assertEqual(m["max_hr_recorded"]["status_hint"], "unavailable")
 
 
 class TestMaxHrOverTheCorpus(CorpusTestCase):
-    """"Highest ever recorded" is only usable with the run attached."""
+    """ "Highest ever recorded" is only usable with the run attached."""
 
     @classmethod
     def setUpClass(cls):
@@ -324,9 +391,15 @@ class TestMaxHrOverTheCorpus(CorpusTestCase):
         on a hard effort."""
         for key in ("max_hr_recorded", "max_hr_30s"):
             w = self.r[key]
-            for field in ("run_id", "date", "run_type", "run_type_status",
-                          "dew_point_c", "exclude_from_trend",
-                          "exclude_from_trend_status"):
+            for field in (
+                "run_id",
+                "date",
+                "run_type",
+                "run_type_status",
+                "dew_point_c",
+                "exclude_from_trend",
+                "exclude_from_trend_status",
+            ):
                 self.assertIn(field, w, f"{key}.{field}")
 
     def test_absent_context_is_not_FALSE_context(self):
@@ -335,9 +408,10 @@ class TestMaxHrOverTheCorpus(CorpusTestCase):
         so every run carries null WITH THE LABEL, never a bare null and never
         False."""
         from trail_factors.ingest.answers import NOT_COLLECTED
+
         self.assertTrue(self.r["per_run"])
         for r in self.r["per_run"]:
-            self.assertIsNone(r["exclude_from_trend"])      # None, not False
+            self.assertIsNone(r["exclude_from_trend"])  # None, not False
             self.assertEqual(r["exclude_from_trend_status"], NOT_COLLECTED)
             self.assertIsNone(r["run_type"])
             self.assertEqual(r["run_type_status"], NOT_COLLECTED)
@@ -350,18 +424,21 @@ class TestMaxHrOverTheCorpus(CorpusTestCase):
 
     def test_the_two_ceilings_are_ranked_separately(self):
         self.assertIn("same_run", self.r)
-        top30 = max(r["max_hr_30s"] for r in self.r["per_run"]
-                    if r["max_hr_30s"] is not None)
+        top30 = max(
+            r["max_hr_30s"] for r in self.r["per_run"] if r["max_hr_30s"] is not None
+        )
         self.assertEqual(self.r["max_hr_30s"]["value"], top30)
-        self.assertEqual(self.r["same_run"],
-                         self.r["max_hr_recorded"]["run_id"]
-                         == self.r["max_hr_30s"]["run_id"])
+        self.assertEqual(
+            self.r["same_run"],
+            self.r["max_hr_recorded"]["run_id"] == self.r["max_hr_30s"]["run_id"],
+        )
 
     def _declared(self):
         d = self.r["declared_ceiling"]
         if d["status"] != "ok":
-            self.skipTest(f"declared ceiling is {d['status']}: "
-                          f"{str(d.get('reason'))[:60]}")
+            self.skipTest(
+                f"declared ceiling is {d['status']}: {str(d.get('reason'))[:60]}"
+            )
         return d
 
     def test_the_declared_ceiling_is_compared_and_NOT_corrected(self):
@@ -379,10 +456,18 @@ class TestMaxHrOverTheCorpus(CorpusTestCase):
         anchor = d["declared"][-1]
         self.assertEqual(d["gap_bpm"], anchor - d["demonstrated_single_sample"])
         if d["demonstrated_session_summary"] is not None:
-            self.assertEqual(d["gap_vs_session_summary_bpm"],
-                             anchor - d["demonstrated_session_summary"])
-        best = max(v for v in (d["demonstrated_single_sample"],
-                               d["demonstrated_session_summary"]) if v is not None)
+            self.assertEqual(
+                d["gap_vs_session_summary_bpm"],
+                anchor - d["demonstrated_session_summary"],
+            )
+        best = max(
+            v
+            for v in (
+                d["demonstrated_single_sample"],
+                d["demonstrated_session_summary"],
+            )
+            if v is not None
+        )
         if anchor > best:
             self.assertIn("shifts every one of them upward", d["note"])
         else:
@@ -394,8 +479,9 @@ class TestMaxHrOverTheCorpus(CorpusTestCase):
         d = self._declared()
         if d["demonstrated_session_summary"] is None:
             self.skipTest("no session max HR in the selection")
-        self.assertGreaterEqual(d["demonstrated_session_summary"],
-                                d["demonstrated_single_sample"])
+        self.assertGreaterEqual(
+            d["demonstrated_session_summary"], d["demonstrated_single_sample"]
+        )
 
     def test_a_selection_narrows_it(self):
         dates = sorted(r["date"] for r in self.r["per_run"])
@@ -403,10 +489,12 @@ class TestMaxHrOverTheCorpus(CorpusTestCase):
         if mid == dates[0]:
             self.skipTest("too few distinct run dates to narrow")
         narrow = max_hr_over(self.con, start_date=mid)
-        self.assertLess(narrow["selection"]["n_included"],
-                        self.r["selection"]["n_included"])
-        self.assertLessEqual(narrow["max_hr_recorded"]["value"],
-                             self.r["max_hr_recorded"]["value"])
+        self.assertLess(
+            narrow["selection"]["n_included"], self.r["selection"]["n_included"]
+        )
+        self.assertLessEqual(
+            narrow["max_hr_recorded"]["value"], self.r["max_hr_recorded"]["value"]
+        )
 
 
 class TestDeclaredAsOfTheSelection(CorpusTestCase):
@@ -419,11 +507,13 @@ class TestDeclaredAsOfTheSelection(CorpusTestCase):
         super().setUpClass()
         # RUNNING FILES ONLY: the selection is running, and Garmin keeps a
         # separate max per sport.
-        cls.first = dict(cls.con.execute("""
+        cls.first = dict(
+            cls.con.execute("""
             SELECT declared_max_hr, min(CAST(start_time_utc AS DATE))
             FROM activities WHERE declared_max_hr IS NOT NULL
               AND sport = 'running' AND source = 'garmin_watch'
-            GROUP BY 1""").fetchall())
+            GROUP BY 1""").fetchall()
+        )
         if not cls.first:
             raise unittest.SkipTest("this corpus has no declared running max HR")
 
@@ -448,11 +538,14 @@ class TestDeclaredAsOfTheSelection(CorpusTestCase):
     def test_another_sports_declaration_never_reaches_a_running_selection(self):
         """Garmin keeps a max per sport; a ride's must not sit beside running
         HR."""
-        other = {v for v, in self.con.execute("""
+        other = {
+            v
+            for (v,) in self.con.execute("""
             SELECT DISTINCT declared_max_hr FROM activities
             WHERE declared_max_hr IS NOT NULL AND sport <> 'running'
             EXCEPT SELECT declared_max_hr FROM activities
-            WHERE sport = 'running'""").fetchall()}
+            WHERE sport = 'running'""").fetchall()
+        }
         if not other:
             self.skipTest("this corpus has no value only another sport declared")
         d = self.declared()

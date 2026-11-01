@@ -1,7 +1,8 @@
 """Per-run context this build does not collect is LABELLED, never defaulted.
 
 run_type, exclude_from_trend, walk_protocol and sun_exposure have no source
-in this build (src/trail_factors/ingest/answers.py). Every reader takes the same path: the
+in this build (src/trail_factors/ingest/answers.py). Every reader takes the same path:
+the
 value is null and a sibling field says "not collected". A bare null would read
 as "an untyped run" or "a run nobody excluded", which are claims about the
 athlete; the label makes it a claim about the build.
@@ -21,21 +22,22 @@ EMPTY -- the state every reader must handle.
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import unittest
 from unittest import mock
 
 import duckdb
 
+from tests.corpus import CorpusTestCase, corpus_path, isolated, use_config
 from trail_factors.analysis import over as O
 from trail_factors.analysis import queries as Q
 from trail_factors.analysis import report as REP
 from trail_factors.analysis import select as S
 from trail_factors.ingest.answers import NO_RUN_TYPE_SOURCE, NOT_COLLECTED, load_answers
-from tests.corpus import CorpusTestCase, corpus_path, isolated, use_config
 
-T0 = datetime.datetime(2025, 3, 1, 7, 0, 0)       # synthetic
-CLUSTER = "CLUSTER_A"                             # synthetic cluster name
+T0 = datetime.datetime(2025, 3, 1, 7, 0, 0)  # synthetic
+CLUSTER = "CLUSTER_A"  # synthetic cluster name
 
 
 def corpus(n=4):
@@ -46,16 +48,21 @@ def corpus(n=4):
         duration_s DOUBLE, moving_time_s DOUBLE, sampling_regime VARCHAR,
         coverage_fraction DOUBLE)""")
     for i in range(n):
-        con.execute("INSERT INTO activities VALUES (?, ?, ?, 0.0, 'running', "
-                    "'garmin_watch', 5000.0, 1800.0, 1700.0, '1hz', 1.0)",
-                    [f"a{i}", f"run-a{i}", T0 - datetime.timedelta(days=i)])
+        con.execute(
+            "INSERT INTO activities VALUES (?, ?, ?, 0.0, 'running', "
+            "'garmin_watch', 5000.0, 1800.0, 1700.0, '1hz', 1.0)",
+            [f"a{i}", f"run-a{i}", T0 - datetime.timedelta(days=i)],
+        )
     return con
 
 
 def stubs():
-    return (mock.patch.object(REP, "cluster_of", lambda con, aid: CLUSTER),
-            mock.patch("trail_factors.analysis.venues.assign_all",
-                       lambda con: {"by_run": {}}))
+    return (
+        mock.patch.object(REP, "cluster_of", lambda con, aid: CLUSTER),
+        mock.patch(
+            "trail_factors.analysis.venues.assign_all", lambda con: {"by_run": {}}
+        ),
+    )
 
 
 class TestTheSourceIsEmpty(unittest.TestCase):
@@ -99,13 +106,20 @@ class TestARunTypeFilterIsRejectedByName(unittest.TestCase):
             self.assertRejects(Q.list_runs, con, run_type="easy")
 
     def test_every_over_primitive(self):
-        con = duckdb.connect(":memory:")     # rejected before any read
-        calls = [(O.drift, ()), (O.segment_effort_drift, ()),
-                 (O.efficiency, ()), (O.delta_hr, ()),
-                 (O.cadence_table, ()), (O.grade_table, ()),
-                 (O.max_hr_over, ()), (O.hr_above, (180.0,)),
-                 (O.time_above_hr, ((170.0,),)), (O.zone_by_gait, ()),
-                 (O.segment_history, ("seg",))]
+        con = duckdb.connect(":memory:")  # rejected before any read
+        calls = [
+            (O.drift, ()),
+            (O.segment_effort_drift, ()),
+            (O.efficiency, ()),
+            (O.delta_hr, ()),
+            (O.cadence_table, ()),
+            (O.grade_table, ()),
+            (O.max_hr_over, ()),
+            (O.hr_above, (180.0,)),
+            (O.time_above_hr, ((170.0,),)),
+            (O.zone_by_gait, ()),
+            (O.segment_history, ("seg",)),
+        ]
         with use_config():
             for fn, args in calls:
                 with self.subTest(fn=fn.__name__):
@@ -140,7 +154,6 @@ class TestPositiveTwinEmptyRunTypeWorks(unittest.TestCase):
 
 
 class TestEveryRowIsLabelled(unittest.TestCase):
-
     def test_select_runs(self):
         con = corpus()
         a, v = stubs()
@@ -182,15 +195,18 @@ class TestEveryRowIsLabelled(unittest.TestCase):
         a, v = stubs()
         with a, v:
             c = REP.comparison_set(con, "a0", "run-a0")
-        self.assertIn(f"run_type {NOT_COLLECTED} in this build, so no "
-                      f"run_type step", c["rule"])
-        self.assertIn("no run excluded from the trend on the athlete's "
-                      "say-so", c["rule"])
+        self.assertIn(
+            f"run_type {NOT_COLLECTED} in this build, so no run_type step", c["rule"]
+        )
+        self.assertIn(
+            "no run excluded from the trend on the athlete's say-so", c["rule"]
+        )
         self.assertNotIn("same run_type", c["rule"])
         self.assertFalse(hasattr(REP, "run_type_of"))
 
     def test_the_walk_protocol_gate_is_a_labelled_constant(self):
         from trail_factors.analysis import cycles as CY
+
         g = CY._walk_protocol_gate()
         self.assertIsNone(g["walk_protocol"])
         self.assertEqual(g["walk_protocol_status"], NOT_COLLECTED)
@@ -205,13 +221,21 @@ class TestEveryRowIsLabelled(unittest.TestCase):
 
 
 # --- the corpus, with an EMPTY athlete-state directory -----------------------
+# Entered in setUpModule, CLOSED in tearDownModule -- see tests/corpus.py
+# isolated() for why this is not unittest.enterModuleContext.
+_ISOLATION = contextlib.ExitStack()
+
+
 def setUpModule():
     if corpus_path() is not None:
-        unittest.enterModuleContext(isolated())
+        _ISOLATION.enter_context(isolated())
+
+
+def tearDownModule():
+    _ISOLATION.close()
 
 
 class TestOnTheCorpus(CorpusTestCase):
-
     def test_max_hr_over_labels_every_run(self):
         r = O.max_hr_over(self.con, last_n=5)
         if not r["per_run"]:
@@ -232,6 +256,7 @@ class TestOnTheCorpus(CorpusTestCase):
 
     def test_run_walk_cycles_on_a_run_that_walks(self):
         from trail_factors.analysis import cycles as CY
+
         aid = self.con.execute("""
             SELECT activity_id FROM splits WHERE split_type = 'rwd_walk'
             GROUP BY 1 ORDER BY 1 LIMIT 1""").fetchone()
@@ -260,9 +285,10 @@ class TestOnTheCorpus(CorpusTestCase):
         if "sun_exposure" in wbgt:
             self.assertEqual(wbgt["sun_exposure"]["status"], NOT_COLLECTED)
         self.assertIn("session_load", rep)
-        self.assertEqual(set(rep["athlete"]),
-                         {"garmin_self_evaluation", "notes", "notes_status",
-                          "notes_projection"})
+        self.assertEqual(
+            set(rep["athlete"]),
+            {"garmin_self_evaluation", "notes", "notes_status", "notes_projection"},
+        )
         text = REP.render(rep).lower()
         for asked in ("needs a", "please answer", "missing answer"):
             self.assertNotIn(asked, text)
@@ -272,8 +298,8 @@ class TestOnTheCorpus(CorpusTestCase):
             O.max_hr_over(self.con, run_type="easy")
         # Positive twin on the same corpus.
         self.assertGreaterEqual(
-            O.max_hr_over(self.con, run_type="", last_n=1)
-            ["selection"]["n_included"], 0)
+            O.max_hr_over(self.con, run_type="", last_n=1)["selection"]["n_included"], 0
+        )
 
 
 if __name__ == "__main__":

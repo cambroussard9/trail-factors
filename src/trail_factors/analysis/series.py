@@ -91,8 +91,9 @@ def _dynamics_by_bin(con, activity_id: str, t0, bin_s: float, weights: dict):
     """
     dyn = B._dynamics_filters(con, activity_id)
     cols = sorted(DYNAMICS_FIELDS)
-    rows = con.execute(f"""
-        SELECT r.timestamp, {', '.join('r.' + c for c in cols)}
+    rows = con.execute(
+        f"""
+        SELECT r.timestamp, {", ".join("r." + c for c in cols)}
         FROM records r
         WHERE r.activity_id = ? AND EXISTS (
             SELECT 1 FROM splits s
@@ -100,15 +101,20 @@ def _dynamics_by_bin(con, activity_id: str, t0, bin_s: float, weights: dict):
               AND r.timestamp BETWEEN s.start_time AND s.end_time)
           {dyn["_flag_clause"]}
         ORDER BY r.timestamp
-    """, [activity_id]).fetchall()
+    """,
+        [activity_id],
+    ).fetchall()
 
     # WHAT THE FILE CARRIES, asked of the WHOLE activity rather than of the
     # running records: a field the device never wrote anywhere is a hardware
     # or activity-type fact, and it must not be confused with a field that is
     # simply absent from the bins that happen to contain running.
-    present = con.execute(f"""
-        SELECT {', '.join(f'count(r.{c})' for c in cols)}
-        FROM records r WHERE r.activity_id = ?""", [activity_id]).fetchone()
+    present = con.execute(
+        f"""
+        SELECT {", ".join(f"count(r.{c})" for c in cols)}
+        FROM records r WHERE r.activity_id = ?""",
+        [activity_id],
+    ).fetchone()
     available = {c: (present[i] or 0) > 0 for i, c in enumerate(cols)}
 
     buckets: dict[int, dict] = {}
@@ -149,11 +155,11 @@ def _dynamics_for_bin(bucket, available) -> dict:
     """
     out = {}
     if not any(available.values()):
-        for field, (unit, key) in sorted(DYNAMICS_FIELDS.items()):
+        for _field, (unit, key) in sorted(DYNAMICS_FIELDS.items()):
             out[key] = {"value": None, "n": 0, "unit": unit}
         return {"dynamics": out, "dynamics_reason": "no_device_channel"}
     if bucket is None or bucket["n_run"] == 0:
-        for field, (unit, key) in sorted(DYNAMICS_FIELDS.items()):
+        for _field, (unit, key) in sorted(DYNAMICS_FIELDS.items()):
             out[key] = {"value": None, "n": 0, "unit": unit}
         return {"dynamics": out, "dynamics_reason": "no_running_in_bin"}
     for field, (unit, key) in sorted(DYNAMICS_FIELDS.items()):
@@ -166,17 +172,24 @@ def _dynamics_for_bin(bucket, available) -> dict:
         if not samples:
             out[key] = {"value": None, "n": 0, "unit": unit}
         elif den > 0:
-            out[key] = {"value": sum(v * w for v, w in samples) / den,
-                        "n": len(samples), "unit": unit}
+            out[key] = {
+                "value": sum(v * w for v, w in samples) / den,
+                "n": len(samples),
+                "unit": unit,
+            }
         else:
-            out[key] = {"value": sum(v for v, _ in samples) / len(samples),
-                        "n": len(samples), "unit": unit,
-                        "weighting": "unweighted (all samples inside a stop)"}
+            out[key] = {
+                "value": sum(v for v, _ in samples) / len(samples),
+                "n": len(samples),
+                "unit": unit,
+                "weighting": "unweighted (all samples inside a stop)",
+            }
     return {"dynamics": out, "dynamics_reason": None}
 
 
-def binned_series(con, activity_id: str, bin_s: float = BIN_S,
-                  include_dynamics: bool = True) -> dict:
+def binned_series(
+    con, activity_id: str, bin_s: float = BIN_S, include_dynamics: bool = True
+) -> dict:
     """Pace, HR, elevation, cadence and run/walk/stand state, per time bin.
 
     Indexed by BOTH elapsed time and path distance. Elevation is present only
@@ -190,27 +203,37 @@ def binned_series(con, activity_id: str, bin_s: float = BIN_S,
     payload. The payload-level availability fields are still computed, so a
     reader knows whether asking for them would return anything.
     """
-    rows = con.execute("""
+    rows = con.execute(
+        """
         SELECT r.timestamp, r.elapsed_s, r.distance_m, r.heart_rate,
                r.cadence_raw_rpm, r.fractional_cadence, e.altitude_dem_m
         FROM records r
         LEFT JOIN records_enriched e USING (activity_id, timestamp)
         WHERE r.activity_id = ? ORDER BY r.timestamp
-    """, [activity_id]).fetchall()
+    """,
+        [activity_id],
+    ).fetchall()
     if len(rows) < 3:
-        return {"bins": [], "status_hint": "unavailable",
-                "reason": "fewer than three records",
-                "filters": _filters(con, activity_id, bin_s, False)}
+        return {
+            "bins": [],
+            "status_hint": "unavailable",
+            "reason": "fewer than three records",
+            "filters": _filters(con, activity_id, bin_s, False),
+        }
 
     t0 = rows[0][0]
     weights = B.record_weights(con, activity_id)
-    splits = con.execute("""
+    splits = con.execute(
+        """
         SELECT split_type, start_time, end_time FROM splits
         WHERE activity_id = ? AND split_type LIKE 'rwd_%' ORDER BY start_time
-    """, [activity_id]).fetchall()
+    """,
+        [activity_id],
+    ).fetchall()
 
     dyn_buckets, dyn_available, dyn_filters = _dynamics_by_bin(
-        con, activity_id, t0, bin_s, weights)
+        con, activity_id, t0, bin_s, weights
+    )
     have_elev = any(r[6] is not None for r in rows)
     # THE FINGERPRINT GATE, read now so a test (or a config change) applies to
     # this call. Elevation is dropped at the bucket, so no bin can carry it.
@@ -220,8 +243,9 @@ def binned_series(con, activity_id: str, bin_s: float = BIN_S,
     buckets: dict[int, dict] = {}
     for ts, _elapsed, dist, hr, cad, frac, elev in rows:
         k = int((ts - t0).total_seconds() // bin_s)
-        b = buckets.setdefault(k, {"d": [], "hr": [], "cad": [], "elev": [],
-                                   "w": 0.0, "t": []})
+        b = buckets.setdefault(
+            k, {"d": [], "hr": [], "cad": [], "elev": [], "w": 0.0, "t": []}
+        )
         w = weights.get(ts, 0.0)
         b["t"].append(ts)
         b["w"] += w
@@ -241,20 +265,28 @@ def binned_series(con, activity_id: str, bin_s: float = BIN_S,
         b = buckets.get(k)
         start = t0 + datetime.timedelta(seconds=k * bin_s)
         end = start + datetime.timedelta(seconds=bin_s)
-        row = {"bin": k,
-               "elapsed_start_s": k * bin_s, "elapsed_end_s": (k + 1) * bin_s}
+        row = {"bin": k, "elapsed_start_s": k * bin_s, "elapsed_end_s": (k + 1) * bin_s}
         # STATE AS SECONDS, NEVER A MAJORITY LABEL -- most short walks fit
         # inside one bin, so a label would erase them.
-        for cls, key in (("rwd_run", "run_s"), ("rwd_walk", "walk_s"),
-                         ("rwd_stand", "stand_s")):
+        for cls, key in (
+            ("rwd_run", "run_s"),
+            ("rwd_walk", "walk_s"),
+            ("rwd_stand", "stand_s"),
+        ):
             # float() because sum() over an empty generator returns int 0,
             # and a payload field whose type depends on the data is a contract
             # a reader has to guess at.
-            row[key] = float(sum(
-                max(0.0, (min(end, e) - max(start, s)).total_seconds())
-                for st, s, e in splits
-                if st == cls and s is not None and e is not None
-                and e > start and s < end))
+            row[key] = float(
+                sum(
+                    max(0.0, (min(end, e) - max(start, s)).total_seconds())
+                    for st, s, e in splits
+                    if st == cls
+                    and s is not None
+                    and e is not None
+                    and e > start
+                    and s < end
+                )
+            )
         # THE DYNAMICS BLOCK IS ADDED TO EVERY BIN, INCLUDING THIS EMPTY-BIN
         # PATH. A key that appears on some bins and not others makes every
         # consumer write a .get() and guess what its absence meant. When it is
@@ -262,10 +294,19 @@ def binned_series(con, activity_id: str, bin_s: float = BIN_S,
         if include_dynamics:
             row.update(_dynamics_for_bin(dyn_buckets.get(k), dyn_available))
         if not b:
-            row.update({"distance_start_m": None, "distance_end_m": None,
-                        "mps": None, "pace_per_mile": None, "avg_hr": None,
-                        "steps_per_min": None, "elevation_m": None,
-                        "coverage": 0.0, "n_records": 0})
+            row.update(
+                {
+                    "distance_start_m": None,
+                    "distance_end_m": None,
+                    "mps": None,
+                    "pace_per_mile": None,
+                    "avg_hr": None,
+                    "steps_per_min": None,
+                    "elevation_m": None,
+                    "coverage": 0.0,
+                    "n_records": 0,
+                }
+            )
             out.append(row)
             continue
         covered = (b["t"][-1] - b["t"][0]).total_seconds()
@@ -275,69 +316,97 @@ def binned_series(con, activity_id: str, bin_s: float = BIN_S,
         # records and fewer than two distance records used to report every
         # field null -- avg_hr included -- and n_records 0, discarding HR
         # that was measured. Only the distance-derived fields go null now.
-        row.update({
-            "n_records": len(b["t"]), "coverage": coverage,
-            "avg_hr": (sum(h * w for h, w in b["hr"]) / sum(w for _, w in b["hr"]))
-            if sum(w for _, w in b["hr"]) > 0 else None,
-            "steps_per_min": (sum(c * w for c, w in b["cad"])
-                              / sum(w for _, w in b["cad"]))
-            if sum(w for _, w in b["cad"]) > 0 else None,
-            "elevation_m": (sum(b["elev"]) / len(b["elev"])) if b["elev"] else None,
-        })
+        row.update(
+            {
+                "n_records": len(b["t"]),
+                "coverage": coverage,
+                "avg_hr": (sum(h * w for h, w in b["hr"]) / sum(w for _, w in b["hr"]))
+                if sum(w for _, w in b["hr"]) > 0
+                else None,
+                "steps_per_min": (
+                    sum(c * w for c, w in b["cad"]) / sum(w for _, w in b["cad"])
+                )
+                if sum(w for _, w in b["cad"]) > 0
+                else None,
+                "elevation_m": (sum(b["elev"]) / len(b["elev"])) if b["elev"] else None,
+            }
+        )
         if len(b["d"]) < 2:
-            row.update({"distance_start_m": None, "distance_end_m": None,
-                        "mps": None, "pace_per_mile": None,
-                        "distance_reason": (
-                            f"{len(b['d'])} record(s) in this bin carry a "
-                            f"distance; two are needed for distance or pace")})
+            row.update(
+                {
+                    "distance_start_m": None,
+                    "distance_end_m": None,
+                    "mps": None,
+                    "pace_per_mile": None,
+                    "distance_reason": (
+                        f"{len(b['d'])} record(s) in this bin carry a "
+                        f"distance; two are needed for distance or pace"
+                    ),
+                }
+            )
             out.append(row)
             continue
         d0, d1 = b["d"][0], b["d"][-1]
-        row.update({
-            "distance_start_m": d0, "distance_end_m": d1,
-            "distance_start_mi": d0 / METERS_PER_MILE,
-            # Pace over MOVING seconds in the bin, so a bin containing a stop
-            # is not reported as slow running.
-            "mps": ((d1 - d0) / moving) if moving > 0 and coverage >= MIN_BIN_COVERAGE
-            else None,
-        })
+        row.update(
+            {
+                "distance_start_m": d0,
+                "distance_end_m": d1,
+                "distance_start_mi": d0 / METERS_PER_MILE,
+                # Pace over MOVING seconds in the bin, so a bin containing a stop
+                # is not reported as slow running.
+                "mps": ((d1 - d0) / moving)
+                if moving > 0 and coverage >= MIN_BIN_COVERAGE
+                else None,
+            }
+        )
         row["pace_per_mile"] = pace_per_mile(row["mps"])
         out.append(row)
 
-    return {"bins": out, "n_bins": len(out), "bin_s": bin_s,
-            "elevation_available": have_elev,
-            "elevation_emitted": have_elev and emit_elev,
-            "elevation_withheld_reason": (
-                None if (emit_elev or not have_elev) else _WITHHELD_NOTE),
-            "dynamics_included": include_dynamics,
-            "dynamics_included_note": (
-                None if include_dynamics else
-                "per-bin running dynamics were NOT requested and are absent "
-                "from every bin; call session_series(include_dynamics=true) "
-                "for them. dynamics_available below says whether they exist."),
-            # PAYLOAD-LEVEL, so a reader knows before walking 150 bins whether
-            # the nulls mean "this watch cannot" or "this bin did not".
-            "dynamics_available": any(dyn_available.values()),
-            "dynamics_fields_available": {
-                DYNAMICS_FIELDS[f][1]: v for f, v in sorted(dyn_available.items())},
-            "dynamics_reason": (
-                None if any(dyn_available.values()) else
-                "no record in this activity carries running dynamics. The "
-                "FR245 records none of them (no accessory), and an FR265 "
-                "writes none on a non-running activity. This is the device "
-                "and the activity type, not a gap in the run."),
-            # THE SAME FIGURE WITH AND WITHOUT §15.4 FLAGS IS NOT THE SAME
-            # QUANTITY, so the payload says which one it is rather than
-            # leaving a reader to assume the stricter one.
-            "flags_available": dyn_filters["quality_flags_available"],
-            "filters": _filters(con, activity_id, bin_s, have_elev, dyn_filters)}
+    return {
+        "bins": out,
+        "n_bins": len(out),
+        "bin_s": bin_s,
+        "elevation_available": have_elev,
+        "elevation_emitted": have_elev and emit_elev,
+        "elevation_withheld_reason": (
+            None if (emit_elev or not have_elev) else _WITHHELD_NOTE
+        ),
+        "dynamics_included": include_dynamics,
+        "dynamics_included_note": (
+            None
+            if include_dynamics
+            else "per-bin running dynamics were NOT requested and are absent "
+            "from every bin; call session_series(include_dynamics=true) "
+            "for them. dynamics_available below says whether they exist."
+        ),
+        # PAYLOAD-LEVEL, so a reader knows before walking 150 bins whether
+        # the nulls mean "this watch cannot" or "this bin did not".
+        "dynamics_available": any(dyn_available.values()),
+        "dynamics_fields_available": {
+            DYNAMICS_FIELDS[f][1]: v for f, v in sorted(dyn_available.items())
+        },
+        "dynamics_reason": (
+            None
+            if any(dyn_available.values())
+            else "no record in this activity carries running dynamics. The "
+            "FR245 records none of them (no accessory), and an FR265 "
+            "writes none on a non-running activity. This is the device "
+            "and the activity type, not a gap in the run."
+        ),
+        # THE SAME FIGURE WITH AND WITHOUT §15.4 FLAGS IS NOT THE SAME
+        # QUANTITY, so the payload says which one it is rather than
+        # leaving a reader to assume the stricter one.
+        "flags_available": dyn_filters["quality_flags_available"],
+        "filters": _filters(con, activity_id, bin_s, have_elev, dyn_filters),
+    }
 
 
 _WITHHELD_NOTE = (
     "a DEM covers this run, but elevation indexed by distance is a route "
     "fingerprint and route_fingerprint_accepted is false in the athlete "
     "config, so every bin's elevation_m is null. Set "
-    "route_fingerprint_accepted: true in config/athlete.yaml to include it.")
+    "route_fingerprint_accepted: true in config/athlete.yaml to include it."
+)
 
 
 def _elevation_note(con) -> str:
@@ -350,24 +419,29 @@ def _elevation_note(con) -> str:
         ).fetchone()
         return f"DEM-gated: present on {n_enr} of {n_act} garmin activities"
     except Exception:
-        return ("DEM-gated: present only where a tile covers the run "
-                "(the corpus count could not be read here)")
+        return (
+            "DEM-gated: present only where a tile covers the run "
+            "(the corpus count could not be read here)"
+        )
 
 
-def _filters(con, activity_id: str, bin_s: float, have_elev: bool,
-             dyn: dict | None = None) -> dict:
+def _filters(
+    con, activity_id: str, bin_s: float, have_elev: bool, dyn: dict | None = None
+) -> dict:
     regime = con.execute(
         "SELECT sampling_regime, coverage_fraction FROM activities "
-        "WHERE activity_id = ?", [activity_id]).fetchone()
+        "WHERE activity_id = ?",
+        [activity_id],
+    ).fetchone()
     return {
         "bin_s": bin_s,
         "bin_width_rationale": "chosen from the walk-split distribution: in a "
-                               "run/walk practice most walks can be shorter "
-                               "than a 30 s bin",
+        "run/walk practice most walks can be shorter "
+        "than a 30 s bin",
         "state_representation": "SECONDS per state (run_s/walk_s/stand_s)",
         "state_is_majority_label": False,
         "state_note": "a majority label would erase most walks; the seconds "
-                      "preserve the run/walk alternation",
+        "preserve the run/walk alternation",
         "indexed_by": ["elapsed_s", "distance_m"],
         "pace_denominator": "moving seconds in the bin",
         "hr_weighting": "time",
@@ -385,18 +459,21 @@ def _filters(con, activity_id: str, bin_s: float, have_elev: bool,
         "elevation_note": _elevation_note(con),
         "grain": "time bins, not records",
         "grain_note": "a bin is an aggregate, which is what keeps §3's "
-                      "no-bronze-row invariant intact",
+        "no-bronze-row invariant intact",
         "sampling_regime": regime[0] if regime else None,
         "gps_coverage_fraction": regime[1] if regime else None,
         "position_emitted": False,
         "route_fingerprint_accepted": config.get().route_fingerprint_accepted,
-        "route_fingerprint_note":
-            "elevation indexed by distance IS a route fingerprint against a "
-            "known trail. It is emitted only when route_fingerprint_accepted "
-            "is true in the athlete config (currently "
-            + ("true" if config.get().route_fingerprint_accepted else
-               "false, so elevation_m is null in every bin")
-            + "). No latitude or longitude is ever emitted either way.",
+        "route_fingerprint_note": "elevation indexed by distance IS a route "
+        "fingerprint against a "
+        "known trail. It is emitted only when route_fingerprint_accepted "
+        "is true in the athlete config (currently "
+        + (
+            "true"
+            if config.get().route_fingerprint_accepted
+            else "false, so elevation_m is null in every bin"
+        )
+        + "). No latitude or longitude is ever emitted either way.",
         "quality_flags_excluded": False,
         # GAIT CONVENTIONS DIFFER BETWEEN FIELDS IN THIS PAYLOAD, AND SAYING
         # SO IS THE POINT. `steps_per_min` is computed over ALL records in the
@@ -408,42 +485,47 @@ def _filters(con, activity_id: str, bin_s: float, have_elev: bool,
         # number every existing consumer already reads.
         "gait_conventions": {
             "steps_per_min": "ALL records in the bin with cadence > 0 "
-                             "(running, walking and standing steps pooled); "
-                             "§15.4 flags NOT applied",
+            "(running, walking and standing steps pooled); "
+            "§15.4 flags NOT applied",
             "avg_hr": "all records in the bin; §15.4 flags NOT applied",
             "mps": "bin distance over MOVING seconds; flags NOT applied",
-            **{DYNAMICS_FIELDS[f][1]:
-               "rwd_run records ONLY; §15.4 flags applied where "
-               "records_enriched covers the run (see flags_available)"
-               for f in sorted(DYNAMICS_FIELDS)},
+            **{
+                DYNAMICS_FIELDS[f][
+                    1
+                ]: "rwd_run records ONLY; §15.4 flags applied where "
+                "records_enriched covers the run (see flags_available)"
+                for f in sorted(DYNAMICS_FIELDS)
+            },
         },
-        "dynamics_units": {DYNAMICS_FIELDS[f][1]: DYNAMICS_FIELDS[f][0]
-                           for f in sorted(DYNAMICS_FIELDS)},
-        "dynamics_units_note":
-            "Garmin's units, unchanged: vertical oscillation and step length "
-            "are MILLIMETRES, ground contact time MILLISECONDS, vertical "
-            "ratio a PERCENT. vertical_ratio is the DEVICE'S OWN field and is "
-            "never recomputed from the other two.",
+        "dynamics_units": {
+            DYNAMICS_FIELDS[f][1]: DYNAMICS_FIELDS[f][0]
+            for f in sorted(DYNAMICS_FIELDS)
+        },
+        "dynamics_units_note": "Garmin's units, unchanged: vertical oscillation and "
+        "step length "
+        "are MILLIMETRES, ground contact time MILLISECONDS, vertical "
+        "ratio a PERCENT. vertical_ratio is the DEVICE'S OWN field and is "
+        "never recomputed from the other two.",
         "dynamics_split_type": "rwd_run",
         "dynamics_weighting": "time",
         "dynamics_n_is_per_field": True,
-        "dynamics_n_note":
-            "n counts the rwd_run records that carried THAT field, not the "
-            "bin's running records. The device drops the four independently "
-            "-- one field can be on a handful of records where another is on "
-            "thousands -- so a per-bin n could misstate the evidence behind a "
-            "field by orders of magnitude.",
+        "dynamics_n_note": "n counts the rwd_run records that carried THAT field, not "
+        "the "
+        "bin's running records. The device drops the four independently "
+        "-- one field can be on a handful of records where another is on "
+        "thousands -- so a per-bin n could misstate the evidence behind a "
+        "field by orders of magnitude.",
         "dynamics_flags_excluded": bool(dyn and dyn["quality_flags_available"]),
         "dynamics_flags_reason": (dyn or {}).get("quality_flags_reason"),
         "dynamics_absence_vocabulary": {
             "no_device_channel": "no record in this ACTIVITY carries these "
-                                 "fields (FR245, phone file, or a non-running "
-                                 "sport on an FR265)",
+            "fields (FR245, phone file, or a non-running "
+            "sport on an FR265)",
             "no_running_in_bin": "the device records them; this bin has no "
-                                 "rwd_run records (walking, standing, a gap)",
+            "rwd_run records (walking, standing, a gap)",
             "null_reason_with_n_0": "running present and the device records "
-                                    "the field, but it wrote none in this "
-                                    "bin -- the device dropping a field "
-                                    "mid-run",
+            "the field, but it wrote none in this "
+            "bin -- the device dropping a field "
+            "mid-run",
         },
     }

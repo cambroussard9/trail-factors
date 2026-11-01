@@ -45,9 +45,11 @@ def ingest_all(src: Path | None = None) -> dict:
         except Exception as exc:
             failed.append((path.name, f"{type(exc).__name__}: {exc}"))
             print(f"  FAIL   {path.name}: {type(exc).__name__}: {exc}")
-    print(f"\ningested {len(ok)}, rejected {len(rejected)}, failed {len(failed)}, "
-          f"warnings {len(warned)}")
-    for (name, exc), a in zip(rejected, advice):
+    print(
+        f"\ningested {len(ok)}, rejected {len(rejected)}, failed {len(failed)}, "
+        f"warnings {len(warned)}"
+    )
+    for (name, _exc), a in zip(rejected, advice, strict=False):
         print(f"  REJECTED {name}")
         print("\n".join(advice_lines(a, indent="           ")))
     for name, exc in failed:
@@ -55,14 +57,18 @@ def ingest_all(src: Path | None = None) -> dict:
     for r in rescued:
         print(f"  RESCUED  {r['file']}: {rescue_line(r)}")
     if prior_error is not None:
-        print(f"  (could not read the earlier rejections, so a rescued file "
-              f"is not announced: {prior_error})")
+        print(
+            f"  (could not read the earlier rejections, so a rescued file "
+            f"is not announced: {prior_error})"
+        )
     # The four keys are the sync job's contract and are pinned by a test;
     # `advice` and `rescued` are ADDED beside them, never folded into
     # `rejected`, whose (name, message) pairs the job unpacks.
     return {"ok": ok, "rejected": rejected, "failed": failed, "warned": warned} | {
-        "advice": advice, "rescued": rescued,
-        "rescued_unknown": prior_error}
+        "advice": advice,
+        "rescued": rescued,
+        "rescued_unknown": prior_error,
+    }
 
 
 def _rejected_before() -> tuple[set, str | None]:
@@ -78,7 +84,7 @@ def _rejected_before() -> tuple[set, str | None]:
 
     from trail_factors.ingest import load
 
-    db = load.DB_PATH                 # at call time, as ingest() resolves it
+    db = load.DB_PATH  # at call time, as ingest() resolves it
     if not Path(db).exists():
         return set(), None
     try:
@@ -86,11 +92,15 @@ def _rejected_before() -> tuple[set, str | None]:
     except duckdb.Error as exc:
         return set(), f"{type(exc).__name__}: {exc}"
     try:
-        return {r[0] for r in con.execute(
-            "SELECT DISTINCT file_sha256 FROM validation_results "
-            "WHERE activity_id IS NULL").fetchall()}, None
+        return {
+            r[0]
+            for r in con.execute(
+                "SELECT DISTINCT file_sha256 FROM validation_results "
+                "WHERE activity_id IS NULL"
+            ).fetchall()
+        }, None
     except duckdb.CatalogException:
-        return set(), None            # no table yet: nothing was rejected
+        return set(), None  # no table yet: nothing was rejected
     finally:
         con.close()
 
@@ -99,24 +109,32 @@ def _rescue(path: Path, rows: dict, ref: str) -> dict:
     """What a rescued file became: the confirmed window and the trimmed
     totals, beside the whole-file figures the window removed."""
     a = rows["activity"]
-    return {"file": path.name, "ref": ref, "file_sha256": rows["file_sha256"],
-            "activity_id": a["activity_id"],
-            "valid_start_utc": a["valid_start_utc"],
-            "valid_end_utc": a["valid_end_utc"],
-            "duration_s": a["duration_s"],
-            "total_distance_m": a["total_distance_m"],
-            "duration_s_whole_file": a.get("duration_s_whole_file"),
-            "distance_m_whole_file": a.get("session_distance_m_whole_file")}
+    return {
+        "file": path.name,
+        "ref": ref,
+        "file_sha256": rows["file_sha256"],
+        "activity_id": a["activity_id"],
+        "valid_start_utc": a["valid_start_utc"],
+        "valid_end_utc": a["valid_end_utc"],
+        "duration_s": a["duration_s"],
+        "total_distance_m": a["total_distance_m"],
+        "duration_s_whole_file": a.get("duration_s_whole_file"),
+        "distance_m_whole_file": a.get("session_distance_m_whole_file"),
+    }
 
 
 def rescue_line(r: dict) -> str:
     """One rescued file in words, shared by ingest-all and sync."""
+
     def fig(dist, dur):
         km = f"{dist / 1000.0:.2f} km" if dist is not None else "- km"
         mins = f"{dur / 60.0:.0f} min" if dur is not None else "- min"
         return f"{km} in {mins}"
-    return (f"now ingested at the confirmed window {r['valid_start_utc']} .. "
-            f"{r['valid_end_utc']} UTC: "
-            f"{fig(r['total_distance_m'], r['duration_s'])} "
-            f"(the whole file was "
-            f"{fig(r['distance_m_whole_file'], r['duration_s_whole_file'])})")
+
+    return (
+        f"now ingested at the confirmed window {r['valid_start_utc']} .. "
+        f"{r['valid_end_utc']} UTC: "
+        f"{fig(r['total_distance_m'], r['duration_s'])} "
+        f"(the whole file was "
+        f"{fig(r['distance_m_whole_file'], r['duration_s_whole_file'])})"
+    )

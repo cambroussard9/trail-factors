@@ -86,8 +86,11 @@ def configured_zones() -> dict:
     try:
         zones, label = _configured_zones()
     except (OSError, ValueError, KeyError, TypeError) as e:
-        return {"status": "unreadable", "zones": [],
-                "source": f"{ZONE_CONFIG.name}: {type(e).__name__}"}
+        return {
+            "status": "unreadable",
+            "zones": [],
+            "source": f"{ZONE_CONFIG.name}: {type(e).__name__}",
+        }
     if not zones:
         return {"status": "unconfigured", "zones": [], "source": label}
     return {"status": "ok", "zones": zones, "source": label}
@@ -95,65 +98,97 @@ def configured_zones() -> dict:
 
 def zone_boundaries(con, activity_id: str, run_date: str | None = None) -> dict:
     """This activity's zones — from ITS OWN file where possible (§14e)."""
-    rows = con.execute("""
+    rows = con.execute(
+        """
         SELECT zone, low_bpm, high_bpm, hr_calc_type FROM activity_hr_zones
-        WHERE activity_id = ? ORDER BY zone""", [activity_id]).fetchall()
+        WHERE activity_id = ? ORDER BY zone""",
+        [activity_id],
+    ).fetchall()
     if rows and all(r[1] is not None and r[2] is not None for r in rows):
-        return {"zones": [(r[0], r[1], r[2]) for r in rows],
-                "boundary_source": "the activity's own FIT file",
-                "hr_calc_type": rows[0][3],
-                "boundary_set": [(r[1], r[2]) for r in rows]}
+        return {
+            "zones": [(r[0], r[1], r[2]) for r in rows],
+            "boundary_source": "the activity's own FIT file",
+            "hr_calc_type": rows[0][3],
+            "boundary_set": [(r[1], r[2]) for r in rows],
+        }
     zones, label = _configured_zones(run_date)
-    return {"zones": zones,
-            "boundary_source": f"FALLBACK: {label} (this file recorded none)",
-            "hr_calc_type": None,
-            "boundary_set": [(lo, hi) for _, lo, hi in zones]}
+    return {
+        "zones": zones,
+        "boundary_source": f"FALLBACK: {label} (this file recorded none)",
+        "hr_calc_type": None,
+        "boundary_set": [(lo, hi) for _, lo, hi in zones],
+    }
 
 
 def time_in_zone_by_gait(con, activity_id: str) -> dict:
     """Seconds in each HR zone, split by gait, for one activity."""
     import numpy as np
 
-    meta = con.execute("""
+    meta = con.execute(
+        """
         SELECT run_id, strftime(start_time_utc, '%Y-%m-%d'), sampling_regime
-        FROM activities WHERE activity_id = ?""", [activity_id]).fetchone()
+        FROM activities WHERE activity_id = ?""",
+        [activity_id],
+    ).fetchone()
     if meta is None:
         raise LookupError(f"no activity {activity_id}")
     run_id, run_date, regime = meta
     bounds = zone_boundaries(con, activity_id, run_date)
     if not bounds["zones"]:
-        return {"run_id": run_id, "status": "unavailable",
-                "reason": "no zone boundaries: the file carries none and no "
-                          "athlete configuration is effective at this date",
-                "by_gait": {}, "filters": _filters(con, activity_id, bounds, regime)}
+        return {
+            "run_id": run_id,
+            "status": "unavailable",
+            "reason": "no zone boundaries: the file carries none and no "
+            "athlete configuration is effective at this date",
+            "by_gait": {},
+            "filters": _filters(con, activity_id, bounds, regime),
+        }
 
-    hr_rows = con.execute("""
+    hr_rows = con.execute(
+        """
         SELECT timestamp, heart_rate FROM records
         WHERE activity_id = ? AND heart_rate IS NOT NULL ORDER BY timestamp
-    """, [activity_id]).fetchall()
+    """,
+        [activity_id],
+    ).fetchall()
     if len(hr_rows) < 2:
-        return {"run_id": run_id, "status": "unavailable",
-                "reason": "this activity has no heart rate",
-                "by_gait": {}, "filters": _filters(con, activity_id, bounds, regime)}
+        return {
+            "run_id": run_id,
+            "status": "unavailable",
+            "reason": "this activity has no heart rate",
+            "by_gait": {},
+            "filters": _filters(con, activity_id, bounds, regime),
+        }
     t_arr = np.array([t.timestamp() for t, _ in hr_rows])
     h_arr = np.array([h for _, h in hr_rows], dtype=float)
 
     # STOPS ONLY, so standing stays measurable as its own gait.
-    stops = [(a, b) for a, b in con.execute(
-        "SELECT start_utc, end_utc FROM stops WHERE activity_id = ?",
-        [activity_id]).fetchall() if a is not None and b is not None and b > a]
+    stops = [
+        (a, b)
+        for a, b in con.execute(
+            "SELECT start_utc, end_utc FROM stops WHERE activity_id = ?", [activity_id]
+        ).fetchall()
+        if a is not None and b is not None and b > a
+    ]
     weights = record_weights(con, activity_id, paused=stops)
 
-    flagged = {r[0] for r in con.execute("""
+    flagged = {
+        r[0]
+        for r in con.execute(
+            """
         SELECT timestamp FROM records_enriched
         WHERE activity_id = ? AND coalesce(quality_flags, '') <> ''
-    """, [activity_id]).fetchall()}
+    """,
+            [activity_id],
+        ).fetchall()
+    }
     n_enriched = con.execute(
-        "SELECT count(*) FROM records_enriched WHERE activity_id = ?",
-        [activity_id]).fetchone()[0]
+        "SELECT count(*) FROM records_enriched WHERE activity_id = ?", [activity_id]
+    ).fetchone()[0]
 
-    by_gait = {GAIT_LABEL[g]: {f"zone_{z}": 0.0 for z, _, _ in bounds["zones"]}
-               for g in GAITS}
+    by_gait = {
+        GAIT_LABEL[g]: {f"zone_{z}": 0.0 for z, _, _ in bounds["zones"]} for g in GAITS
+    }
     for g in GAITS:
         by_gait[GAIT_LABEL[g]]["unclassified_s"] = 0.0
         by_gait[GAIT_LABEL[g]]["total_s"] = 0.0
@@ -161,12 +196,15 @@ def time_in_zone_by_gait(con, activity_id: str) -> dict:
     no_hr_s = 0.0
 
     for gait in GAITS:
-        rows = con.execute("""
+        rows = con.execute(
+            """
             SELECT r.timestamp FROM records r
             JOIN splits s ON s.activity_id = r.activity_id
                  AND r.timestamp BETWEEN s.start_time AND s.end_time
             WHERE r.activity_id = ? AND s.split_type = ?
-        """, [activity_id, gait]).fetchall()
+        """,
+            [activity_id, gait],
+        ).fetchall()
         label = GAIT_LABEL[gait]
         for (ts,) in rows:
             w = weights.get(ts, 0.0)
@@ -195,7 +233,10 @@ def time_in_zone_by_gait(con, activity_id: str) -> dict:
 
     zone2 = {g: v.get("zone_2", 0.0) / 60.0 for g, v in by_gait.items()}
     return {
-        "run_id": run_id, "date": run_date, "status": "ok", "reason": None,
+        "run_id": run_id,
+        "date": run_date,
+        "status": "ok",
+        "reason": None,
         "by_gait": by_gait,
         # THE HEADLINE the metric was asked for.
         "zone2_minutes": zone2,
@@ -214,14 +255,14 @@ def _filters(con, activity_id: str, bounds: dict, regime: str | None) -> dict:
         "split_types_pooled": False,
         "hr_lag_s": HR_LAG_S,
         "hr_lag_note": "the HR answering the gait at time t is the HR at "
-                       "t + 40 s; attributing HR(t) credits the previous "
-                       "gait's cost to this one at every transition",
+        "t + 40 s; attributing HR(t) credits the previous "
+        "gait's cost to this one at every transition",
         "weighting": "time, via the pipeline's shared record weight map",
         "max_weight_gap_s": MAX_WEIGHT_GAP_S,
         "stopped_time_excluded": True,
         "stopped_time_source": "the `stops` table ONLY -- rwd_stand is a GAIT "
-                               "here, not paused time, or standing zone time "
-                               "would be unmeasurable",
+        "here, not paused time, or standing zone time "
+        "would be unmeasurable",
         "quality_flags_excluded": True,
         "quality_flags_available": bounds is not None,
         "boundary_source": bounds["boundary_source"],
@@ -230,8 +271,8 @@ def _filters(con, activity_id: str, bounds: dict, regime: str | None) -> dict:
         "dual_source_rule": "one activity per run_id, garmin_watch preferred",
         "grain": "records, aggregated to (gait, zone) seconds",
         "note": "a corpus can hold several distinct boundary sets. Zone "
-                "time is comparable only within one set -- `boundary_set` "
-                "says which ruler this run was measured with. And where an "
-                "athlete's habitual HR band straddles a zone line, small HR "
-                "differences move large amounts of time across it (§6.2).",
+        "time is comparable only within one set -- `boundary_set` "
+        "says which ruler this run was measured with. And where an "
+        "athlete's habitual HR band straddles a zone line, small HR "
+        "differences move large amounts of time across it (§6.2).",
     }

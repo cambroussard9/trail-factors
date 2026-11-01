@@ -25,13 +25,14 @@ import json
 import os
 import threading
 import traceback
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from trail_factors.paths import JOBS_FILE, REPO_ROOT, display_path
 
 # KEPT OUT OF the athlete directory on purpose. It is operational and
 # regenerable; that directory is for state that cannot be rebuilt from
-# anything. See src/trail_factors/paths.py for the reasoning. The atomic-write rule below still applies --
+# anything. See src/trail_factors/paths.py for the reasoning. The atomic-write rule
+# below still applies --
 # a poll landing mid-write is what made this a file in the first place.
 
 QUEUED, RUNNING, DONE, FAILED = "queued", "running", "done", "failed"
@@ -40,7 +41,7 @@ _lock = threading.Lock()
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    return datetime.now(UTC).replace(tzinfo=None).isoformat()
 
 
 def _load() -> dict:
@@ -72,8 +73,9 @@ def _save(jobs: dict) -> None:
     JOBS_FILE.parent.mkdir(parents=True, exist_ok=True)
     # Keep the file bounded: the last 20 jobs is far more history than anyone
     # needs and stops an unattended server growing a file forever.
-    trimmed = dict(sorted(jobs.items(),
-                          key=lambda kv: kv[1].get("started_at", ""))[-20:])
+    trimmed = dict(
+        sorted(jobs.items(), key=lambda kv: kv[1].get("started_at", ""))[-20:]
+    )
     tmp = JOBS_FILE.with_name(JOBS_FILE.name + f".{os.getpid()}.tmp")
     tmp.write_text(json.dumps(trimmed, indent=2))
     os.replace(tmp, JOBS_FILE)
@@ -130,9 +132,15 @@ def start(fn, label: str = "sync") -> str:
     with _lock:
         jobs = _load()
         job_id = new_job_id(jobs)
-        jobs[job_id] = {"label": label, "state": QUEUED, "step": None,
-                        "started_at": _now(), "finished_at": None,
-                        "steps_done": [], "error": None}
+        jobs[job_id] = {
+            "label": label,
+            "state": QUEUED,
+            "step": None,
+            "started_at": _now(),
+            "finished_at": None,
+            "steps_done": [],
+            "error": None,
+        }
         _save(jobs)
 
     def progress(step: str) -> None:
@@ -140,19 +148,23 @@ def start(fn, label: str = "sync") -> str:
             jobs = _load()
             done = jobs.get(job_id, {}).get("steps_done", [])
             jobs.setdefault(job_id, {})
-            jobs[job_id].update({"state": RUNNING, "step": step,
-                                 "steps_done": done + [step]})
+            jobs[job_id].update(
+                {"state": RUNNING, "step": step, "steps_done": done + [step]}
+            )
             _save(jobs)
 
     def run() -> None:
         try:
             result = fn(progress)
-            _update(job_id, state=DONE, step=None, finished_at=_now(),
-                    result=result)
+            _update(job_id, state=DONE, step=None, finished_at=_now(), result=result)
         except Exception as exc:
-            _update(job_id, state=FAILED, finished_at=_now(),
-                    error=_scrub_paths(f"{type(exc).__name__}: {exc}"),
-                    traceback=_scrub_paths(traceback.format_exc())[-1500:])
+            _update(
+                job_id,
+                state=FAILED,
+                finished_at=_now(),
+                error=_scrub_paths(f"{type(exc).__name__}: {exc}"),
+                traceback=_scrub_paths(traceback.format_exc())[-1500:],
+            )
 
     threading.Thread(target=run, name=f"job-{job_id}", daemon=True).start()
     return job_id
@@ -198,29 +210,47 @@ def database_lock_state(db_file) -> dict:
     import sys as _sys
 
     if not db_file.exists():
-        return {"write_locked": False, "holder_pid": None,
-                "basis": f"no database file at {display_path(db_file)}"}
+        return {
+            "write_locked": False,
+            "holder_pid": None,
+            "basis": f"no database file at {display_path(db_file)}",
+        }
     try:
         out = subprocess.run(
             [_sys.executable, "-I", "-c", _LOCK_PROBE, str(db_file)],
-            capture_output=True, text=True, timeout=LOCK_PROBE_TIMEOUT_S)
+            capture_output=True,
+            text=True,
+            timeout=LOCK_PROBE_TIMEOUT_S,
+        )
     except subprocess.TimeoutExpired:
-        return {"write_locked": None, "holder_pid": None,
-                "basis": f"lock probe did not answer within "
-                         f"{LOCK_PROBE_TIMEOUT_S:.0f}s"}
+        return {
+            "write_locked": None,
+            "holder_pid": None,
+            "basis": f"lock probe did not answer within {LOCK_PROBE_TIMEOUT_S:.0f}s",
+        }
     line = out.stdout.strip()
     if out.returncode != 0 or not line or line == "unsupported":
         # The probe's stderr can quote the file it was handed; that is an
         # absolute path, so it goes out as a display path.
         err = out.stderr.strip().replace(str(db_file), display_path(db_file))
         detail = _scrub_paths(err if err else line)
-        return {"write_locked": None, "holder_pid": None,
-                "basis": f"lock probe could not run: {detail[:200]}"}
+        return {
+            "write_locked": None,
+            "holder_pid": None,
+            "basis": f"lock probe could not run: {detail[:200]}",
+        }
     if line == "free":
-        return {"write_locked": False, "holder_pid": None,
-                "basis": "F_GETLK from a child process: no writer"}
+        return {
+            "write_locked": False,
+            "holder_pid": None,
+            "basis": "F_GETLK from a child process: no writer",
+        }
     pid = int(line.split()[1])
-    return {"write_locked": True, "holder_pid": pid,
-            "basis": ("F_GETLK from a child process: a writer holds it"
-                      + (" -- THIS server (a sync job is writing)"
-                         if pid == os.getpid() else ""))}
+    return {
+        "write_locked": True,
+        "holder_pid": pid,
+        "basis": (
+            "F_GETLK from a child process: a writer holds it"
+            + (" -- THIS server (a sync job is writing)" if pid == os.getpid() else "")
+        ),
+    }

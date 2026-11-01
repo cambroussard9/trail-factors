@@ -20,18 +20,19 @@ import time
 import unittest
 from unittest import mock
 
+from tests.corpus import CorpusTestCase, one, require_corpus, use_config
+from tests.isolation import fingerprint, git_ignores, state_sandbox
 from trail_factors import mcp_server as M
 from trail_factors.analysis import over, select, versions
 from trail_factors.analysis.select import FilterUnavailable
 from trail_factors.ingest.answers import NO_RUN_TYPE_SOURCE, NOT_COLLECTED
-from trail_factors.paths import REPO_ROOT, DATA_DIR
+
 # Bound at import, BEFORE any sandbox patches trail_factors.paths: the configured
 # locations, for the tests that are about where things live.
 from trail_factors.paths import ATHLETE_DIR as CONFIGURED_ATHLETE_DIR
+from trail_factors.paths import DATA_DIR, REPO_ROOT
 from trail_factors.paths import JOBS_FILE as CONFIGURED_JOBS_FILE
 from trail_factors.paths import RAW_DIR as CONFIGURED_RAW_DIR
-from tests.corpus import CorpusTestCase, one, require_corpus, use_config
-from tests.isolation import fingerprint, git_ignores, state_sandbox
 
 SERVER = REPO_ROOT / "src" / "trail_factors" / "mcp_server.py"
 
@@ -49,10 +50,12 @@ LATEST_RUN = """
 # nothing stores. SPELLED BACKWARDS here, so that a repo-wide search for the
 # removed features finds no test that mentions them -- the guard still
 # searches for the words the right way round.
-_REMOVED_WORDS = tuple(w[::-1] for w in (
-    "eriannoitseuq", "noitirtun", "lack", "eirolac", "weivretni"))
+_REMOVED_WORDS = tuple(
+    w[::-1] for w in ("eriannoitseuq", "noitirtun", "lack", "eirolac", "weivretni")
+)
 REMOVED_FEATURE_WORDS = re.compile(
-    "|".join(_REMOVED_WORDS) + "|§ ?" + "16" + r"\.4", re.I)
+    "|".join(_REMOVED_WORDS) + "|§ ?" + "16" + r"\.4", re.I
+)
 
 # `sync` starts a job that DOWNLOADS from Garmin; it is never called in a
 # sweep. Every other registered tool is.
@@ -80,11 +83,13 @@ def owner_projection() -> str:
     and they skip by name when it is unset.
     """
     from trail_factors import config
+
     crs = config.get().projection_crs
     if crs is None:
         raise unittest.SkipTest(
             "projection_crs is not set in config/athlete.yaml: matched-terrain "
-            "drift needs the projection this corpus was built in")
+            "drift needs the projection this corpus was built in"
+        )
     return crs
 
 
@@ -97,7 +102,7 @@ class _Isolated(unittest.TestCase):
 
     def setUp(self):
         super().setUp()
-        fields = self.config_fields()           # before any patch is taken
+        fields = self.config_fields()  # before any patch is taken
         stack = contextlib.ExitStack()
         self.addCleanup(stack.close)
         self.state = stack.enter_context(state_sandbox())
@@ -114,8 +119,7 @@ class _CorpusTools(_Isolated, CorpusTestCase):
         self.addCleanup(p.stop)
 
     def latest_run(self) -> str:
-        return one(self.con, LATEST_RUN,
-                   what="garmin_watch running activity")[0]
+        return one(self.con, LATEST_RUN, what="garmin_watch running activity")[0]
 
 
 class TestThinWrapper(unittest.TestCase):
@@ -128,13 +132,18 @@ class TestThinWrapper(unittest.TestCase):
         # SQL actually present -- the server held three queries while this
         # test passed. Same family as §4.2's "a check that cannot fire".
         for banned in ("SELECT ", " FROM ", "GROUP BY", "JOIN ", "median(", "avg("):
-            self.assertNotIn(banned, body,
-                             f"{banned} is analysis and belongs in src/trail_factors/analysis/")
+            self.assertNotIn(
+                banned,
+                body,
+                f"{banned} is analysis and belongs in src/trail_factors/analysis/",
+            )
 
     def test_that_check_would_fire_on_real_sql(self):
         """The presence twin: a banned-substring test is worthless unless the
         substrings actually occur in the SQL this project writes."""
-        sample = (REPO_ROOT / "src" / "trail_factors" / "analysis" / "queries.py").read_text()
+        sample = (
+            REPO_ROOT / "src" / "trail_factors" / "analysis" / "queries.py"
+        ).read_text()
         self.assertIn("SELECT ", sample)
         self.assertIn(" FROM ", sample)
 
@@ -150,14 +159,16 @@ class TestThinWrapper(unittest.TestCase):
         self.assertNotIn("write=True", src, "no tool needs a writable database")
         from trail_factors.ingest.ride_blocks import RIDE_BLOCKS
         from trail_factors.paths import ATHLETE_DIR
+
         self.assertIn("save_ride_blocks", src)
         self.assertTrue(RIDE_BLOCKS.is_relative_to(ATHLETE_DIR))
 
     def test_the_writers_are_the_ONLY_tools_whose_name_says_save(self):
         """A third writer must be a deliberate act, not something that arrives
         because a tool was named save_* and nobody noticed."""
-        writers = {n for n in dir(M) if n.startswith(("save_", "write_",
-                                                      "set_", "delete_"))}
+        writers = {
+            n for n in dir(M) if n.startswith(("save_", "write_", "set_", "delete_"))
+        }
         # save_ride_blocks IS that deliberate act. The watch cannot record
         # resistance or RPM and nothing else in this system does, so it
         # competes with no existing channel. Perceived effort is Garmin's own
@@ -170,8 +181,10 @@ class TestThinWrapper(unittest.TestCase):
         tools. A writer registered under another name would slip past the
         check above."""
         names = {t.name for t in registered_tools()}
-        self.assertEqual({n for n in names if n.startswith(
-            ("save_", "write_", "set_", "delete_"))}, {"save_ride_blocks"})
+        self.assertEqual(
+            {n for n in names if n.startswith(("save_", "write_", "set_", "delete_"))},
+            {"save_ride_blocks"},
+        )
 
 
 class TestFilterVocabulary(unittest.TestCase):
@@ -185,10 +198,20 @@ class TestFilterVocabulary(unittest.TestCase):
     def test_positive_twin_every_documented_filter_is_accepted(self):
         """run_type is documented and accepted EMPTY: a caller forwarding every
         parameter with its default is not rejected."""
-        self.assertEqual(select.validate_filter({
-            "run_type": "", "start_date": "2025-01-01",
-            "end_date": "2025-06-30", "cluster": "CLUSTER_A", "last_n": 5,
-            "segment_id": "seg000000001", "direction": "ascent"}), [])
+        self.assertEqual(
+            select.validate_filter(
+                {
+                    "run_type": "",
+                    "start_date": "2025-01-01",
+                    "end_date": "2025-06-30",
+                    "cluster": "CLUSTER_A",
+                    "last_n": 5,
+                    "segment_id": "seg000000001",
+                    "direction": "ascent",
+                }
+            ),
+            [],
+        )
         self.assertEqual(select.validate_filter({"run_type": None}), [])
 
     def test_a_non_empty_run_type_is_rejected_by_name(self):
@@ -215,12 +238,13 @@ class TestFilterVocabulary(unittest.TestCase):
 
 
 class TestSelectionStatesExclusions(_Isolated, CorpusTestCase):
-
     def _all_runs(self) -> dict:
         """Every garmin_watch running activity -> coverage, read directly."""
-        return dict(self.con.execute("""
+        return dict(
+            self.con.execute("""
             SELECT activity_id, coverage_fraction FROM activities
-            WHERE source = 'garmin_watch' AND sport = 'running'""").fetchall())
+            WHERE source = 'garmin_watch' AND sport = 'running'""").fetchall()
+        )
 
     def test_low_coverage_runs_are_excluded_with_a_reason(self):
         """Exactly the runs below the coverage gate are excluded, each with a
@@ -230,8 +254,11 @@ class TestSelectionStatesExclusions(_Isolated, CorpusTestCase):
         cov = [e for e in sel["excluded"] if e["kind"] == "coverage"]
         for e in cov:
             self.assertIn("coverage", e["reason"])
-        low = {aid for aid, c in self._all_runs().items()
-               if c is None or c < select.MIN_COVERAGE_FOR_TERRAIN}
+        low = {
+            aid
+            for aid, c in self._all_runs().items()
+            if c is None or c < select.MIN_COVERAGE_FOR_TERRAIN
+        }
         self.assertEqual({e["activity_id"] for e in cov}, low)
         # Every exclusion is one of the stated kinds, never an unlabelled drop.
         # Coverage is the only kind: nothing is excluded on the athlete's
@@ -241,13 +268,16 @@ class TestSelectionStatesExclusions(_Isolated, CorpusTestCase):
     def test_positive_twin_usable_runs_are_included(self):
         sel = select.select_runs(self.con, {})
         runs = self._all_runs()
-        if not any(c is not None and c >= select.MIN_COVERAGE_FOR_TERRAIN
-                   for c in runs.values()):
+        if not any(
+            c is not None and c >= select.MIN_COVERAGE_FOR_TERRAIN
+            for c in runs.values()
+        ):
             self.skipTest("this corpus has no run above the coverage gate")
         self.assertGreater(sel["n_included"], 0)
         for r in sel["included"]:
-            self.assertGreaterEqual(r["coverage_fraction"],
-                                    select.MIN_COVERAGE_FOR_TERRAIN)
+            self.assertGreaterEqual(
+                r["coverage_fraction"], select.MIN_COVERAGE_FOR_TERRAIN
+            )
         # run_type is null AND labelled on every included row.
         for r in sel["included"]:
             self.assertIsNone(r["run_type"])
@@ -266,26 +296,25 @@ class TestSelectionStatesExclusions(_Isolated, CorpusTestCase):
         self.assertEqual(sel["n_included"], min(3, full["n_included"]))
         self.assertEqual(sel["included"], full["included"][:3])
         for r in sel["included"]:
-            self.assertGreaterEqual(r["coverage_fraction"],
-                                    select.MIN_COVERAGE_FOR_TERRAIN)
+            self.assertGreaterEqual(
+                r["coverage_fraction"], select.MIN_COVERAGE_FOR_TERRAIN
+            )
 
     def test_the_rule_is_always_stated(self):
-        sel = select.select_runs(self.con, {"cluster": ANY_CLUSTER,
-                                            "last_n": 5})
+        sel = select.select_runs(self.con, {"cluster": ANY_CLUSTER, "last_n": 5})
         self.assertIn("cluster", sel["rule"])
         self.assertIn("last_n", sel["rule"])
 
     def test_a_run_type_selection_is_refused_not_emptied(self):
         with self.assertRaises(FilterUnavailable):
-            select.select_runs(self.con, {"run_type": "continuous",
-                                          "last_n": 5})
+            select.select_runs(self.con, {"run_type": "continuous", "last_n": 5})
         # THE TWIN: the same selection without it answers.
-        self.assertIn("rule", select.select_runs(self.con, {"run_type": "",
-                                                            "last_n": 5}))
+        self.assertIn(
+            "rule", select.select_runs(self.con, {"run_type": "", "last_n": 5})
+        )
 
 
 class TestParameterisedPrimitives(_Isolated, CorpusTestCase):
-
     def config_fields(self) -> dict:
         return {"projection_crs": owner_projection()}
 
@@ -312,8 +341,7 @@ class TestParameterisedPrimitives(_Isolated, CorpusTestCase):
         nothing in `excluded` is also reported with a value."""
         r = over.segment_effort_drift(self.con, cluster=ANY_CLUSTER)
         no_value = {p["run_id"] for p in r["per_run"] if p["value"] is None}
-        gated = {e["run_id"] for e in r["excluded"]
-                 if "no two efforts" in e["reason"]}
+        gated = {e["run_id"] for e in r["excluded"] if "no two efforts" in e["reason"]}
         self.assertEqual(no_value, gated, "runs with no usable pair must be named")
         valued = {p["run_id"] for p in r["per_run"] if p["value"] is not None}
         self.assertEqual(valued & {e["run_id"] for e in r["excluded"]}, set())
@@ -321,8 +349,12 @@ class TestParameterisedPrimitives(_Isolated, CorpusTestCase):
     def test_every_primitive_states_the_filters_it_applied(self):
         """A chat reading a number with no visible filters cannot know what it
         is looking at, and correctly refuses to lean on it."""
-        for fn in (over.drift, over.segment_effort_drift, over.efficiency,
-                   over.delta_hr):
+        for fn in (
+            over.drift,
+            over.segment_effort_drift,
+            over.efficiency,
+            over.delta_hr,
+        ):
             r = fn(self.con, cluster=ANY_CLUSTER, last_n=3)
             f = r["applied_filters"]
             self.assertIsInstance(f, dict, r["primitive"])
@@ -334,8 +366,9 @@ class TestParameterisedPrimitives(_Isolated, CorpusTestCase):
         a = over.drift(self.con, cluster=ANY_CLUSTER, last_n=5)
         b = over.segment_effort_drift(self.con, cluster=ANY_CLUSTER, last_n=5)
         self.assertNotEqual(a["primitive"], b["primitive"])
-        self.assertNotEqual(a["applied_filters"]["grain"],
-                            b["applied_filters"]["grain"])
+        self.assertNotEqual(
+            a["applied_filters"]["grain"], b["applied_filters"]["grain"]
+        )
 
     def test_section_6_7_is_record_grain_and_agrees_across_paths(self):
         """§6.7 pairs RECORDS, so on a well-covered run it has many more pairs
@@ -346,20 +379,26 @@ class TestParameterisedPrimitives(_Isolated, CorpusTestCase):
         The subject is the running activity with the most enriched records:
         the run with the most ground to pair."""
         from trail_factors.analysis import primitives as P
-        aid, rid, day = one(self.con, """
+
+        aid, rid, day = one(
+            self.con,
+            """
             SELECT a.activity_id, a.run_id,
                    strftime(a.start_time_utc, '%Y-%m-%d')
             FROM activities a JOIN records_enriched e USING (activity_id)
             WHERE a.source = 'garmin_watch' AND a.sport = 'running'
             GROUP BY ALL ORDER BY count(*) DESC LIMIT 1""",
-            what="running activity with enriched records")
+            what="running activity with enriched records",
+        )
         v = P.matched_terrain_drift(self.con, aid)
         if not v["n"]:
             self.skipTest("the best-covered run has no §6.7 record pairs")
         seg = P.segment_effort_drift(self.con, aid)
-        self.assertGreater(v["n"], seg.get("n") or 0,
-                           "record pairing should give many more pairs than "
-                           "effort pairing")
+        self.assertGreater(
+            v["n"],
+            seg.get("n") or 0,
+            "record pairing should give many more pairs than effort pairing",
+        )
         r = over.drift(self.con, start_date=day, end_date=day)
         [row] = [p for p in r["per_run"] if p["run_id"] == rid] or [None]
         if row is None:
@@ -387,6 +426,7 @@ class TestTheTwoDriftsStateTheirFilters(unittest.TestCase):
     def test_section_6_7_excludes_walking_and_matches_speed(self):
         """The two filters the earlier implementation dropped."""
         from trail_factors.analysis import primitives as P
+
         f = P.drift_filters()
         self.assertEqual(f["split_type"], "rwd_run")
         self.assertFalse(f["walking_paired"])
@@ -395,6 +435,7 @@ class TestTheTwoDriftsStateTheirFilters(unittest.TestCase):
     def test_the_segment_measure_admits_it_does_neither(self):
         """Positive twin: the other measure must state the opposite honestly."""
         from trail_factors.analysis import primitives as P
+
         f = P.segment_drift_filters()
         self.assertTrue(f["walking_paired"])
         self.assertIsNone(f["speed_matched_within_mps"])
@@ -405,6 +446,7 @@ class TestCalcVersion(unittest.TestCase):
 
     def test_the_digest_changes_when_a_parameter_changes(self):
         from trail_factors.transform import silver as S
+
         before = versions.digest()
         original = S.GRADE_WINDOW_M
         try:
@@ -418,10 +460,16 @@ class TestCalcVersion(unittest.TestCase):
         # `dem_tile` was one of these and was removed deliberately: it named
         # one athlete's home tile. Tiles are now whatever is on disk.
         p = versions.calc_params()
-        for key in ("grade_window_m", "speed_source", "dem_resolution_m",
-                    "segment_unit", "gap_curve",
-                    "stopped_time_excluded_from_rates",
-                    "session_load_formula", "session_load_feel_used"):
+        for key in (
+            "grade_window_m",
+            "speed_source",
+            "dem_resolution_m",
+            "segment_unit",
+            "gap_curve",
+            "stopped_time_excluded_from_rates",
+            "session_load_formula",
+            "session_load_feel_used",
+        ):
             self.assertIn(key, p)
         self.assertIs(p["session_load_feel_used"], False)
 
@@ -429,12 +477,15 @@ class TestCalcVersion(unittest.TestCase):
         """A digest entry for code that no longer exists would move the
         digest for nothing, and read as if the feature were still live."""
         p = versions.calc_params()
-        stale = [k for k in p if REMOVED_FEATURE_WORDS.search(k)
-                 or k.startswith(("rpe_", "capacity_"))
-                 or k == "cycles_structured_protocols"]
+        stale = [
+            k
+            for k in p
+            if REMOVED_FEATURE_WORDS.search(k)
+            or k.startswith(("rpe_", "capacity_"))
+            or k == "cycles_structured_protocols"
+        ]
         self.assertEqual(stale, [])
-        self.assertIsNone(REMOVED_FEATURE_WORDS.search(json.dumps(p,
-                                                                  default=str)))
+        self.assertIsNone(REMOVED_FEATURE_WORDS.search(json.dumps(p, default=str)))
 
     def test_the_version_carries_the_params_not_just_a_hash(self):
         """An opaque difference is nearly as bad as a hidden one."""
@@ -460,8 +511,9 @@ class TestEnvelopeWithoutCorpus(_Isolated):
     def test_positive_twin_spec_context_carries_the_params_for_that_digest(self):
         full = self._out(M.spec_context())["payload"]["calc_version"]
         self.assertGreater(len(full["params"]), 15)
-        self.assertEqual(full["digest"],
-                         self._out(M.sync_status())["calc_version"]["digest"])
+        self.assertEqual(
+            full["digest"], self._out(M.sync_status())["calc_version"]["digest"]
+        )
         self.assertEqual(full["digest"], versions.digest(full["params"]))
 
 
@@ -488,8 +540,11 @@ class TestEnvelope(_CorpusTools):
         self.assertTrue(r["problems"])
 
     def test_a_bad_payload_is_rejected_with_every_problem(self):
-        r = self._out(M.save_ride_blocks(payload=json.dumps(
-            {"run_id": self.latest_run(), "nonsense": 1})))
+        r = self._out(
+            M.save_ride_blocks(
+                payload=json.dumps({"run_id": self.latest_run(), "nonsense": 1})
+            )
+        )
         self.assertEqual(r["outcome"], "rejected")
         self.assertGreaterEqual(len(r["problems"]), 2)
         self.assertIn("nothing was written", r["remedy"])
@@ -502,11 +557,13 @@ class TestEnvelope(_CorpusTools):
     def _sweep_args(self, name: str) -> dict:
         """The smallest arguments each registered tool needs to answer."""
         if name == "segment_history":
-            return {"segment_id": one(
-                self.con, "SELECT segment_id FROM segments LIMIT 1",
-                what="segment")[0]}
+            return {
+                "segment_id": one(
+                    self.con, "SELECT segment_id FROM segments LIMIT 1", what="segment"
+                )[0]
+            }
         if name == "save_ride_blocks":
-            return {"payload": "{}"}         # rejected: a sweep writes nothing
+            return {"payload": "{}"}  # rejected: a sweep writes nothing
         return {}
 
     def test_every_registered_tool_answers_without_error(self):
@@ -514,7 +571,7 @@ class TestEnvelope(_CorpusTools):
         than a list someone has to keep in step. Every tool but the writer
         (handed an empty payload on purpose) returns a RESULT on a corpus
         with a run; none returns `broken`."""
-        self.latest_run()                    # skips on a corpus with no run
+        self.latest_run()  # skips on a corpus with no run
         tools = registered_tools()
         self.assertGreater(len(tools), 20, "the sweep found the tools")
         for t in tools:
@@ -523,15 +580,15 @@ class TestEnvelope(_CorpusTools):
             with self.subTest(tool=t.name):
                 r = call_tool(t.name, self._sweep_args(t.name))
                 want = "rejected" if t.name == "save_ride_blocks" else "result"
-                self.assertEqual(r["outcome"], want,
-                                 f"{t.name}: {r['text'][:300]}")
+                self.assertEqual(r["outcome"], want, f"{t.name}: {r['text'][:300]}")
 
     def test_no_registered_tool_names_a_removed_feature(self):
         """Names, descriptions and argument schemas: what a chat reads before
         it calls anything."""
         for t in registered_tools():
-            blob = json.dumps({"name": t.name, "description": t.description,
-                               "schema": t.input_schema})
+            blob = json.dumps(
+                {"name": t.name, "description": t.description, "schema": t.input_schema}
+            )
             self.assertIsNone(REMOVED_FEATURE_WORDS.search(blob), t.name)
 
     def test_the_fingerprint_carries_no_answers_count(self):
@@ -548,6 +605,7 @@ class TestRawLayerIsUntouchableStructurally(_Isolated):
         sandbox, not the real one."""
         from trail_factors import paths
         from trail_factors.cli import garmin
+
         self.assertEqual(paths.RAW_DIR, self.state / "raw")
         self.assertTrue(garmin.RAW_GARMIN.is_relative_to(self.state))
 
@@ -557,20 +615,33 @@ class TestRawLayerIsUntouchableStructurally(_Isolated):
         self.assertIn("read_only=True", src)
         self.assertNotIn("read_only=False", src)
         self.assertNotIn("read_only=not", src)
-        self.assertEqual(src.count("duckdb.connect"), 1,
-                         "one connection site, so the flag cannot be missed")
+        self.assertEqual(
+            src.count("duckdb.connect"),
+            1,
+            "one connection site, so the flag cannot be missed",
+        )
 
     def test_the_server_module_opens_no_files_for_writing(self):
         src = SERVER.read_text()
-        for banned in ("write_text", "write_bytes", "open(", "unlink",
-                       "shutil", "os.remove", "os.rename", ".rename(",
-                       "mkdir", "rmtree"):
+        for banned in (
+            "write_text",
+            "write_bytes",
+            "open(",
+            "unlink",
+            "shutil",
+            "os.remove",
+            "os.rename",
+            ".rename(",
+            "mkdir",
+            "rmtree",
+        ):
             self.assertNotIn(banned, src, f"{banned} must not appear")
 
     def test_no_reachable_write_path_targets_data_raw(self):
         """The only write reachable from a tool is athlete state."""
         from trail_factors import paths
         from trail_factors.ingest import ride_blocks as RB
+
         self.assertTrue(RB.RIDE_BLOCKS.is_relative_to(paths.ATHLETE_DIR))
         self.assertFalse(RB.RIDE_BLOCKS.is_relative_to(paths.RAW_DIR))
 
@@ -590,7 +661,8 @@ class TestRawLayerIsUntouchable(_CorpusTools):
         raw = self.state / "raw"
         (raw / "garmin").mkdir()
         (raw / "garmin" / "10000000001_ACTIVITY.fit").write_bytes(
-            b"synthetic: not a FIT file")
+            b"synthetic: not a FIT file"
+        )
         (raw / "weather").mkdir()
         (raw / "weather" / "cache.json").write_text("{}")
         return raw
@@ -603,19 +675,41 @@ class TestRawLayerIsUntouchable(_CorpusTools):
         before = fingerprint(raw)
         self.assertEqual(len(before), 2, "the seeded raw layer is in place")
         athlete_before = fingerprint(athlete)
-        calls = [(t.name, {"segment_id": "no-such-segment"}
-                  if t.name == "segment_history" else
-                  {"payload": "{}"} if t.name == "save_ride_blocks" else {})
-                 for t in registered_tools() if t.name not in NOT_SWEPT]
-        calls += [("report", {"run": "no-such-run"}),
-                  ("save_ride_blocks", {"payload": json.dumps(
-                      {"run_id": "nope", "raw_text": "x", "blocks": []})})]
+        calls = [
+            (
+                t.name,
+                {"segment_id": "no-such-segment"}
+                if t.name == "segment_history"
+                else {"payload": "{}"}
+                if t.name == "save_ride_blocks"
+                else {},
+            )
+            for t in registered_tools()
+            if t.name not in NOT_SWEPT
+        ]
+        calls += [
+            ("report", {"run": "no-such-run"}),
+            (
+                "save_ride_blocks",
+                {
+                    "payload": json.dumps(
+                        {"run_id": "nope", "raw_text": "x", "blocks": []}
+                    )
+                },
+            ),
+        ]
         for name, args in calls:
             call_tool(name, args)
-        self.assertEqual(fingerprint(raw), before,
-                         "a tool call changed something under the raw layer")
-        self.assertEqual(fingerprint(athlete), athlete_before,
-                         "a read or a rejected save changed athlete state")
+        self.assertEqual(
+            fingerprint(raw),
+            before,
+            "a tool call changed something under the raw layer",
+        )
+        self.assertEqual(
+            fingerprint(athlete),
+            athlete_before,
+            "a read or a rejected save changed athlete state",
+        )
 
     def _junk(self) -> str:
         return json.dumps({"run_id": self.latest_run(), "junk": True})
@@ -625,6 +719,7 @@ class TestRawLayerIsUntouchable(_CorpusTools):
         a refused payload must leave no file behind -- an empty or partial
         log is indistinguishable from a real one."""
         from trail_factors.ingest import ride_blocks as RB
+
         log = RB.RIDE_BLOCKS
         self.assertTrue(log.is_relative_to(self.state))
         out = json.loads(M.save_ride_blocks(payload=self._junk()))
@@ -636,6 +731,7 @@ class TestRawLayerIsUntouchable(_CorpusTools):
         """THE TWIN: with a log already present, the rejection neither
         replaces nor removes it."""
         from trail_factors.ingest import ride_blocks as RB
+
         log = RB.RIDE_BLOCKS
         log.parent.mkdir(parents=True, exist_ok=True)
         log.write_text("{}\n")
@@ -652,12 +748,16 @@ class TestSelectionSupportTable(unittest.TestCase):
         """The signature and the support table must not drift apart -- that
         drift is what produced the bug."""
         import inspect
+
         for tool, supported in M.SELECTION_SUPPORT.items():
             params = set(inspect.signature(getattr(M, tool)).parameters)
             for f in M.SELECTION_FILTERS:
-                self.assertIn(f, params,
-                              f"{tool} must ACCEPT {f} so it can reject it "
-                              f"by name rather than have it dropped")
+                self.assertIn(
+                    f,
+                    params,
+                    f"{tool} must ACCEPT {f} so it can reject it "
+                    f"by name rather than have it dropped",
+                )
             for f in supported:
                 self.assertIn(f, params, f"{tool} claims to support {f}")
 
@@ -676,12 +776,14 @@ class TestNoFilterIsEverSilentlyDropped(_CorpusTools):
 
     def _call(self, name, args):
         import asyncio
+
         r = asyncio.run(M.mcp.call_tool(name, args))
         return json.loads(r.content[0].text)
 
     def test_an_unsupported_filter_is_rejected_not_ignored(self):
-        r = self._call("grade_binned_pace",
-                       {"segment_id": "seg000000001", "direction": "descent"})
+        r = self._call(
+            "grade_binned_pace", {"segment_id": "seg000000001", "direction": "descent"}
+        )
         self.assertEqual(r["outcome"], "rejected")
         self.assertIn("segment_id", r["text"])
         self.assertIn("direction", r["text"])
@@ -705,16 +807,16 @@ class TestNoFilterIsEverSilentlyDropped(_CorpusTools):
         self.assertEqual(wide["outcome"], "result")
         if wide["payload"]["selection"]["n_included"] < 2:
             self.skipTest("this corpus has fewer than two usable runs")
-        narrow = self._call("grade_binned_pace",
-                            {"cluster": ANY_CLUSTER, "last_n": 1})
+        narrow = self._call("grade_binned_pace", {"cluster": ANY_CLUSTER, "last_n": 1})
         self.assertEqual(narrow["outcome"], "result")
         self.assertEqual(narrow["payload"]["selection"]["n_included"], 1)
-        self.assertGreater(wide["payload"]["selection"]["n_included"],
-                           narrow["payload"]["selection"]["n_included"])
+        self.assertGreater(
+            wide["payload"]["selection"]["n_included"],
+            narrow["payload"]["selection"]["n_included"],
+        )
 
     def test_a_segment_filter_still_works_where_it_is_supported(self):
-        r = self._call("delta_hr", {"direction": "ascent",
-                                    "cluster": ANY_CLUSTER})
+        r = self._call("delta_hr", {"direction": "ascent", "cluster": ANY_CLUSTER})
         self.assertEqual(r["outcome"], "result")
         self.assertEqual(r["payload"]["applied_filters"]["direction"], "ascent")
 
@@ -739,7 +841,8 @@ class TestNoFilterIsEverSilentlyDropped(_CorpusTools):
         self.assertLess(n, wide["n_included"])
         # The tool and the selection function agree on what the date kept.
         self.assertEqual(
-            n, select.select_runs(self.con, {"start_date": last})["n_included"])
+            n, select.select_runs(self.con, {"start_date": last})["n_included"]
+        )
 
 
 class TestRunTypeIsRejectedByName(_CorpusTools):
@@ -753,10 +856,18 @@ class TestRunTypeIsRejectedByName(_CorpusTools):
     def test_every_tool_that_takes_it_rejects_it(self):
         """Introspected: every registered tool with a run_type parameter,
         selection tools and per-run tools alike."""
-        takers = [t.name for t in registered_tools()
-                  if "run_type" in t.input_schema.get("properties", {})]
-        for must in ("report", "list_runs", "max_hr_over",
-                     "matched_terrain_drift", "session_load"):
+        takers = [
+            t.name
+            for t in registered_tools()
+            if "run_type" in t.input_schema.get("properties", {})
+        ]
+        for must in (
+            "report",
+            "list_runs",
+            "max_hr_over",
+            "matched_terrain_drift",
+            "session_load",
+        ):
             self.assertIn(must, takers)
         for name in takers:
             args = {"run_type": "continuous"}
@@ -773,8 +884,13 @@ class TestRunTypeIsRejectedByName(_CorpusTools):
 
     def test_positive_twin_an_empty_run_type_answers(self):
         self.latest_run()
-        for name in ("report", "list_runs", "max_hr_over",
-                     "matched_terrain_drift", "session_load"):
+        for name in (
+            "report",
+            "list_runs",
+            "max_hr_over",
+            "matched_terrain_drift",
+            "session_load",
+        ):
             with self.subTest(tool=name):
                 r = self._call(name, {"run_type": ""})
                 self.assertEqual(r["outcome"], "result", r["text"][:300])
@@ -815,14 +931,16 @@ class TestSessionLoad(_CorpusTools):
         [row] = r["payload"]["rows"]
         self.assertEqual(row["status"], "ok")
         self.assertIsNone(row["reason"])
-        self.assertAlmostEqual(row["foster_load_au"],
-                               row["garmin_rpe"] * row["duration_min"])
+        self.assertAlmostEqual(
+            row["foster_load_au"], row["garmin_rpe"] * row["duration_min"]
+        )
         f = r["payload"]["filters"]
         self.assertIs(f["feel_used"], False)
         self.assertIn("timer_time_s", f["duration_basis"])
 
     def test_an_unrated_run_says_so_and_is_never_zero(self):
         from trail_factors.analysis import session_load as SL
+
         _, unrated = self._rated_unrated()
         if unrated is None:
             self.skipTest("this corpus has no run without a self-evaluation")
@@ -838,16 +956,20 @@ class TestSessionLoad(_CorpusTools):
         """Shown, never used: the same RPE and minutes price the same however
         the feel field reads."""
         from trail_factors.analysis import session_load as SL
+
         rated, _ = self._rated_unrated()
         if rated is None:
             self.skipTest("this corpus has no run with a Garmin self-evaluation")
-        aid = self.con.execute("SELECT activity_id FROM activities "
-                               "WHERE run_id = ? AND source = 'garmin_watch'",
-                               [rated]).fetchone()[0]
+        aid = self.con.execute(
+            "SELECT activity_id FROM activities "
+            "WHERE run_id = ? AND source = 'garmin_watch'",
+            [rated],
+        ).fetchone()[0]
         row = SL.session_load(self.con, aid)
         self.assertIn("garmin_feel", row)
-        self.assertEqual(row["foster_load_au"],
-                         float(row["garmin_rpe"]) * row["duration_min"])
+        self.assertEqual(
+            row["foster_load_au"], float(row["garmin_rpe"]) * row["duration_min"]
+        )
 
     def test_a_selection_labels_every_row_and_sums_only_the_rated(self):
         r = json.loads(M.session_load(last_n=20))
@@ -865,12 +987,14 @@ class TestSessionLoad(_CorpusTools):
                 self.assertTrue(x["reason"])
                 self.assertIsNone(x["foster_load_au"])
         if rated:
-            self.assertAlmostEqual(s["sum_foster_load_au_priced"],
-                                   sum(x["foster_load_au"] for x in rated))
+            self.assertAlmostEqual(
+                s["sum_foster_load_au_priced"], sum(x["foster_load_au"] for x in rated)
+            )
         else:
             self.assertIsNone(s["sum_foster_load_au_priced"])
-        self.assertEqual(s["n_unrated"],
-                         sum(1 for x in p["rows"] if x["garmin_rpe"] is None))
+        self.assertEqual(
+            s["n_unrated"], sum(1 for x in p["rows"] if x["garmin_rpe"] is None)
+        )
         self.assertEqual(s["is_lower_bound"], s["n_priced"] < s["n"])
         self.assertEqual("LOWER BOUND" in s["note"], s["is_lower_bound"])
 
@@ -899,9 +1023,10 @@ class TestSessionLoad(_CorpusTools):
         sl = r["payload"]["session_load"]
         self.assertIn(sl["status"], ("ok", "unavailable"))
         self.assertIn("filters", sl)
-        self.assertEqual(set(r["payload"]["athlete"]),
-                         {"garmin_self_evaluation", "notes", "notes_status",
-                          "notes_projection"})
+        self.assertEqual(
+            set(r["payload"]["athlete"]),
+            {"garmin_self_evaluation", "notes", "notes_status", "notes_projection"},
+        )
 
 
 class _SyntheticServer(_Isolated):
@@ -915,13 +1040,18 @@ class _SyntheticServer(_Isolated):
         from pathlib import Path
 
         import duckdb
+
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         db = Path(tmp.name) / "empty.duckdb"
         duckdb.connect(str(db)).close()
-        for p in (mock.patch.object(M, "DB_FILE", db),
-                  mock.patch("trail_factors.analysis.queries.corpus_fingerprint",
-                             return_value={"status": "stub"})):
+        for p in (
+            mock.patch.object(M, "DB_FILE", db),
+            mock.patch(
+                "trail_factors.analysis.queries.corpus_fingerprint",
+                return_value={"status": "stub"},
+            ),
+        ):
             p.start()
             self.addCleanup(p.stop)
 
@@ -954,31 +1084,44 @@ class TestSessionLoadSpansEverySport(_SyntheticServer):
 
     def test_a_selection_asks_for_every_sport_and_counts_the_ride(self):
         from trail_factors.analysis import select as S
-        chosen = {"rule": "every sport (sport=any), last_n=2",
-                  "included": [{"activity_id": "a1", "sport": "running"},
-                               {"activity_id": "a2", "sport": "cycling"}]}
+
+        chosen = {
+            "rule": "every sport (sport=any), last_n=2",
+            "included": [
+                {"activity_id": "a1", "sport": "running"},
+                {"activity_id": "a2", "sport": "cycling"},
+            ],
+        }
         priced = {"a1": 4.0 * 50.0, "a2": 6.0 * 45.0}
 
         def row(_con, aid):
-            return {"activity_id": aid, "run_id": f"run-{aid}",
-                    "garmin_rpe": 1.0, "garmin_feel": None,
-                    "duration_min": 1.0, "status": "ok", "reason": None,
-                    "foster_load_au": priced[aid]}
+            return {
+                "activity_id": aid,
+                "run_id": f"run-{aid}",
+                "garmin_rpe": 1.0,
+                "garmin_feel": None,
+                "duration_min": 1.0,
+                "status": "ok",
+                "reason": None,
+                "foster_load_au": priced[aid],
+            }
 
-        with mock.patch.object(S, "select_runs",
-                               return_value=chosen) as sel, \
-                mock.patch("trail_factors.analysis.session_load.session_load",
-                           side_effect=row):
+        with (
+            mock.patch.object(S, "select_runs", return_value=chosen) as sel,
+            mock.patch(
+                "trail_factors.analysis.session_load.session_load", side_effect=row
+            ),
+        ):
             r = json.loads(M.session_load(last_n=2))
         self.assertEqual(r["outcome"], "result", r["text"])
         self.assertEqual(sel.call_args.kwargs.get("sport"), S.SPORT_ANY)
         s = r["payload"]["summary"]
         self.assertEqual(s["n_by_sport"], {"running": 1, "cycling": 1})
         self.assertIn("every sport", s["sports"])
-        self.assertAlmostEqual(s["sum_foster_load_au_priced"],
-                               sum(priced.values()))
-        self.assertEqual([x["sport"] for x in r["payload"]["rows"]],
-                         ["running", "cycling"])
+        self.assertAlmostEqual(s["sum_foster_load_au_priced"], sum(priced.values()))
+        self.assertEqual(
+            [x["sport"] for x in r["payload"]["rows"]], ["running", "cycling"]
+        )
 
 
 class TestMaxHrOverTextNeverCostsThePayload(_SyntheticServer):
@@ -986,8 +1129,10 @@ class TestMaxHrOverTextNeverCostsThePayload(_SyntheticServer):
     the one-line text must not throw away the computed payload."""
 
     def _result(self, w30):
-        stub = {"max_hr_recorded": {"value": 180.0, "date": "2026-01-01"},
-                "max_hr_30s": w30}
+        stub = {
+            "max_hr_recorded": {"value": 180.0, "date": "2026-01-01"},
+            "max_hr_30s": w30,
+        }
         with mock.patch("trail_factors.analysis.over.max_hr_over", return_value=stub):
             return json.loads(M.max_hr_over(last_n=1))
 
@@ -1017,11 +1162,16 @@ class TestSyncStepsDegradeAlone(_Isolated):
         exception it raises; `reject` makes ingest reject the new file.
         Returns (result, steps that actually ran)."""
         called = []
-        ingest = {"ok": [], "failed": [],
-                  "rejected": ([(f"{self.GID}_ACTIVITY.fit",
-                                 "pace_sustained_impossible: synthetic")]
-                               if reject else []),
-                  "rescued": list(rescued)}
+        ingest = {
+            "ok": [],
+            "failed": [],
+            "rejected": (
+                [(f"{self.GID}_ACTIVITY.fit", "pace_sustained_impossible: synthetic")]
+                if reject
+                else []
+            ),
+            "rescued": list(rescued),
+        }
         fail = fail if fail is not None else {}
 
         def step(name, out=None):
@@ -1030,12 +1180,15 @@ class TestSyncStepsDegradeAlone(_Isolated):
                 if name in fail:
                     raise fail[name]
                 return out
+
             return fn
 
         seen = iter([set(), {self.GID}])
         patches = [
-            mock.patch("trail_factors.cli.garmin.already_downloaded",
-                       side_effect=lambda dest: next(seen)),
+            mock.patch(
+                "trail_factors.cli.garmin.already_downloaded",
+                side_effect=lambda dest: next(seen),
+            ),
             mock.patch("trail_factors.cli.garmin.garmin_download_all"),
             mock.patch("trail_factors.cli.ingest.ingest_all", step("ingest", ingest)),
             mock.patch("trail_factors.cli.terrain.dem_populate", step("dem")),
@@ -1044,8 +1197,10 @@ class TestSyncStepsDegradeAlone(_Isolated):
             mock.patch("trail_factors.cli.terrain.match_build", step("match")),
             mock.patch("trail_factors.cli.analysis.recovery_build", step("recovery")),
             mock.patch("trail_factors.cli.report.validate_cmd", step("validate")),
-            mock.patch("trail_factors.transform.dem.loaded_tiles",
-                       return_value=(["USGS_synthetic.tif"] if tiles else [])),
+            mock.patch(
+                "trail_factors.transform.dem.loaded_tiles",
+                return_value=(["USGS_synthetic.tif"] if tiles else []),
+            ),
         ]
         with contextlib.ExitStack() as stack:
             for p in patches:
@@ -1057,25 +1212,28 @@ class TestSyncStepsDegradeAlone(_Isolated):
         """THE FRESH INSTALL. dem_populate raises on an empty data/dem/, and
         the job used to die there -- after ingest had rejected the file, so
         the rejection and its command were never returned."""
-        r, called = self.run_sync(tiles=False, fail={
-            "dem": FileNotFoundError("no DEM tiles in data/dem")})
+        r, called = self.run_sync(
+            tiles=False, fail={"dem": FileNotFoundError("no DEM tiles in data/dem")}
+        )
         for s in self.TERRAIN:
             self.assertEqual(r["steps"][s], "skipped", s)
             self.assertNotIn(s, called)
-        self.assertEqual([x["step"] for x in r["skipped_steps"]],
-                         list(self.TERRAIN))
+        self.assertEqual([x["step"] for x in r["skipped_steps"]], list(self.TERRAIN))
         self.assertIn("fetch-tile", r["skipped_steps"][0]["reason"])
         self.assertEqual(r["steps"]["weather"], "done")
         self.assertEqual(r["steps"]["validate"], "done")
         self.assertEqual(r["step_errors"], [])
         self.assertEqual([x["garmin_id"] for x in r["rejected"]], [self.GID])
-        self.assertIs(r["clean"], False)        # the rejection, not the skip
+        self.assertIs(r["clean"], False)  # the rejection, not the skip
 
     def test_a_rescued_run_is_announced(self):
         """The re-sync after confirm-file downloads nothing; without this the
         job would say nothing about the run it brought into the corpus."""
-        rescue = {"ref": "10000000009", "file": "10000000009_ACTIVITY.fit",
-                  "window": ["2025-01-15 07:00:00", "2025-01-15 07:30:00"]}
+        rescue = {
+            "ref": "10000000009",
+            "file": "10000000009_ACTIVITY.fit",
+            "window": ["2025-01-15 07:00:00", "2025-01-15 07:30:00"],
+        }
         r, _ = self.run_sync(tiles=False, reject=False, rescued=[rescue])
         self.assertEqual(r["n_rescued"], 1)
         self.assertEqual(r["rescued"][0]["ref"], "10000000009")
@@ -1090,14 +1248,14 @@ class TestSyncStepsDegradeAlone(_Isolated):
         self.assertIs(r["clean"], True)
 
     def test_a_failing_step_is_named_and_the_rejections_still_arrive(self):
-        r, called = self.run_sync(tiles=True, fail={
-            "match": RuntimeError("synthetic matcher failure")})
+        r, called = self.run_sync(
+            tiles=True, fail={"match": RuntimeError("synthetic matcher failure")}
+        )
         self.assertEqual(r["steps"]["match"], "failed")
         [err] = r["step_errors"]
         self.assertEqual(err["step"], "match")
         self.assertIn("synthetic matcher failure", err["error"])
-        self.assertTrue(any(p.startswith("STEP match FAILED")
-                            for p in r["problems"]))
+        self.assertTrue(any(p.startswith("STEP match FAILED") for p in r["problems"]))
         # recovery reads what match writes: skipped, never run over stale
         # efforts. validate is independent and still runs.
         self.assertEqual(r["steps"]["recovery"], "skipped")
@@ -1108,16 +1266,19 @@ class TestSyncStepsDegradeAlone(_Isolated):
         self.assertIs(r["clean"], False)
 
     def test_a_failed_ingest_reports_no_count_rather_than_zero(self):
-        r, _ = self.run_sync(tiles=True, fail={
-            "ingest": RuntimeError("synthetic ingest failure")})
+        r, _ = self.run_sync(
+            tiles=True, fail={"ingest": RuntimeError("synthetic ingest failure")}
+        )
         self.assertIsNone(r["n_ingested"])
         self.assertEqual(r["step_errors"][0]["step"], "ingest")
         self.assertIs(r["clean"], False)
 
     def test_positive_twin_every_step_runs_with_tiles(self):
         r, called = self.run_sync(tiles=True)
-        self.assertEqual(called, ["ingest", "dem", "silver", "weather",
-                                  "match", "recovery", "validate"])
+        self.assertEqual(
+            called,
+            ["ingest", "dem", "silver", "weather", "match", "recovery", "validate"],
+        )
         self.assertEqual(set(r["steps"].values()), {"done"})
         self.assertEqual((r["skipped_steps"], r["step_errors"]), ([], []))
         self.assertEqual(r["n_ingested"], 0)
@@ -1130,13 +1291,16 @@ class TestWalkProtocolIsNotCollected(_CorpusTools):
     "we do not know" is the only state this build has, and it must say so."""
 
     def test_an_unknown_protocol_is_labelled_and_not_poolable(self):
-        aid = one(self.con, """
+        aid = one(
+            self.con,
+            """
             SELECT a.activity_id
             FROM activities a JOIN splits s USING (activity_id)
             WHERE a.source = 'garmin_watch' AND s.split_type = 'rwd_walk'
             GROUP BY 1 HAVING count(*) >= 8
             ORDER BY a.activity_id LIMIT 1""",
-            what="run with 8+ rwd_walk splits")[0]
+            what="run with 8+ rwd_walk splits",
+        )[0]
         r = call_tool("run_walk_cycles", {"run": aid})
         self.assertEqual(r["outcome"], "result", r["text"][:300])
         p = r["payload"]
@@ -1157,21 +1321,24 @@ class TestSyncRejectionsNameTheNextStep(_Isolated):
     suggestion fails -- which must not cost the report."""
 
     GID = "10000000001"
-    INGEST = {"rejected": [(f"{GID}_ACTIVITY.fit",
-                            "pace_sustained_impossible: synthetic")],
-              "failed": [("10000000002_ACTIVITY.fit", "synthetic read error")]}
+    INGEST = {
+        "rejected": [(f"{GID}_ACTIVITY.fit", "pace_sustained_impossible: synthetic")],
+        "failed": [("10000000002_ACTIVITY.fit", "synthetic read error")],
+    }
 
     def rows(self, new_ids=()):
-        return M.sync_rejections(self.INGEST, list(new_ids),
-                                 self.state / "raw" / "garmin")
+        return M.sync_rejections(
+            self.INGEST, list(new_ids), self.state / "raw" / "garmin"
+        )
 
     def test_a_rejection_carries_the_exact_command(self):
         rows, problems = self.rows()
         [rej] = [r for r in rows if r["kind"] == "rejected"]
         self.assertEqual(rej["garmin_id"], self.GID)
         step = rej["next_step"]
-        self.assertIn(f"uv run trail-factors confirm-file {self.GID}",
-                      step["confirm_command"])
+        self.assertIn(
+            f"uv run trail-factors confirm-file {self.GID}", step["confirm_command"]
+        )
         self.assertIn("--end", step["confirm_command"])
         self.assertIn("rejected-files", step["list_command"])
         self.assertIn("sync", step["then"])
@@ -1207,6 +1374,7 @@ class TestSyncIsFireAndForget(_Isolated):
 
     def _wait(self, jid, state):
         from trail_factors.analysis import jobs
+
         for _ in range(250):
             if jobs.status(jid)["state"] in (jobs.DONE, jobs.FAILED):
                 break
@@ -1225,6 +1393,7 @@ class TestSyncIsFireAndForget(_Isolated):
 
     def test_a_job_returns_immediately_and_reports_its_steps(self):
         from trail_factors.analysis import jobs
+
         seen = []
 
         def work(progress):
@@ -1243,6 +1412,7 @@ class TestSyncIsFireAndForget(_Isolated):
         """THE TWIN for every job test here: they write the sandbox's job
         file, and a test that wrote the real one would be caught."""
         from trail_factors.analysis import jobs
+
         jid = jobs.start(lambda progress: None, label="where")
         self._wait(jid, jobs.DONE)
         self.assertTrue(jobs.JOBS_FILE.is_relative_to(self.state))
@@ -1280,7 +1450,7 @@ class TestSyncIsFireAndForget(_Isolated):
             for _ in range(400):
                 try:
                     self.assertIn("state", jobs.status(jid))
-                except LookupError as exc:      # the bug, if it returns
+                except LookupError as exc:  # the bug, if it returns
                     errors.append(str(exc))
                     break
         finally:
@@ -1308,6 +1478,7 @@ class TestSyncIsFireAndForget(_Isolated):
         source -- and outside the raw layer. Read from trail_factors.paths, the
         CONFIGURED location, not the sandbox."""
         import os
+
         self.assertFalse(CONFIGURED_JOBS_FILE.is_relative_to(CONFIGURED_RAW_DIR))
         self.assertFalse(CONFIGURED_JOBS_FILE.is_relative_to(CONFIGURED_ATHLETE_DIR))
         if not os.environ.get("TRAIL_FACTORS_JOBS_FILE", "").strip():
@@ -1332,60 +1503,85 @@ class TestSpecContext(_Isolated):
     """The standing brief. It carries METHOD, never one athlete's numbers:
     the only athlete-specific lines come from configuration at call time."""
 
-    HEADINGS = ("=== HOW TO READ A TOOL RESULT ===",
-                "=== THE LAYERS, BY THEIR REAL NAMES ===",
-                "=== THE FINDINGS THAT MAKE NUMBERS INTERPRETABLE ===",
-                "=== WHAT THIS BUILD DOES NOT COLLECT ===",
-                "=== ASKING FOR A QUANTITY ===",
-                "=== HOW TO BEHAVE ===")
+    HEADINGS = (
+        "=== HOW TO READ A TOOL RESULT ===",
+        "=== THE LAYERS, BY THEIR REAL NAMES ===",
+        "=== THE FINDINGS THAT MAKE NUMBERS INTERPRETABLE ===",
+        "=== WHAT THIS BUILD DOES NOT COLLECT ===",
+        "=== ASKING FOR A QUANTITY ===",
+        "=== HOW TO BEHAVE ===",
+    )
 
     def brief(self, **config):
         from trail_factors.analysis.context import spec_context
+
         with use_config(**config):
             return spec_context()
 
     def write_zones(self):
         """A synthetic running zone set in the SANDBOXED athlete directory."""
         from trail_factors.analysis import zones
+
         self.assertTrue(zones.ZONE_CONFIG.is_relative_to(self.state))
-        zones.ZONE_CONFIG.write_text(json.dumps([{
-            "sport": "RUNNING", "effective_from": "2025-01-01",
-            "zone_floors": {"1": 100, "2": 120, "3": 140, "4": 160, "5": 175},
-            "max_hr": 190}]))
+        zones.ZONE_CONFIG.write_text(
+            json.dumps(
+                [
+                    {
+                        "sport": "RUNNING",
+                        "effective_from": "2025-01-01",
+                        "zone_floors": {
+                            "1": 100,
+                            "2": 120,
+                            "3": 140,
+                            "4": 160,
+                            "5": 175,
+                        },
+                        "max_hr": 190,
+                    }
+                ]
+            )
+        )
 
     def test_it_names_the_layers_correctly(self):
         """A chat reasoning from convention assumes gold is safe to ask for."""
         b = self.brief()
-        for token in ("BRONZE", "SILVER", "GOLD", "records_enriched",
-                      "terrain_usable"):
+        for token in ("BRONZE", "SILVER", "GOLD", "records_enriched", "terrain_usable"):
             self.assertIn(token, b)
 
     def test_its_sections_come_in_order(self):
         b = self.brief()
         at = [b.find(h) for h in self.HEADINGS]
-        self.assertNotIn(-1, at, dict(zip(self.HEADINGS, at)))
+        self.assertNotIn(-1, at, dict(zip(self.HEADINGS, at, strict=False)))
         self.assertEqual(at, sorted(at))
 
     def test_it_carries_method_findings_not_only_caveats(self):
         b = self.brief()
-        for finding in ("NEARLY FLAT ACROSS GRADE", "BOUNDARY SET", "delta-HR",
-                        "2.08x"):
+        for finding in (
+            "NEARLY FLAT ACROSS GRADE",
+            "BOUNDARY SET",
+            "delta-HR",
+            "2.08x",
+        ):
             self.assertIn(finding, b)
 
     def test_the_goal_comes_from_config_and_only_from_config(self):
         bare = self.brief(goal_event=None)
         self.assertIn("Single athlete.", bare)
         self.assertNotIn("training for", bare)
-        self.assertIn("training for a test event",
-                      self.brief(goal_event="a test event"))
+        self.assertIn(
+            "training for a test event", self.brief(goal_event="a test event")
+        )
 
     def test_unconfigured_zones_are_stated_as_absent(self):
         b = self.brief()
         self.assertIn("NOT CONFIGURED", b)
         # No bpm range at all: the brief carries no measured physiology.
         import re
-        self.assertIsNone(re.search(r"\b1\d\d-1\d\d\b", b),
-                          "a bpm-like range appeared with no zones configured")
+
+        self.assertIsNone(
+            re.search(r"\b1\d\d-1\d\d\b", b),
+            "a bpm-like range appeared with no zones configured",
+        )
 
     def test_positive_twin_configured_zones_are_rendered(self):
         self.write_zones()
@@ -1402,8 +1598,9 @@ class TestSpecContext(_Isolated):
         feature and says the uncollected values are not to be asked for."""
         self.write_zones()
         b = self.brief(goal_event="a test event")
-        self.assertIsNone(REMOVED_FEATURE_WORDS.search(b),
-                          REMOVED_FEATURE_WORDS.search(b))
+        self.assertIsNone(
+            REMOVED_FEATURE_WORDS.search(b), REMOVED_FEATURE_WORDS.search(b)
+        )
         self.assertIn(NOT_COLLECTED, b)
         self.assertIn("Do not\nask the athlete for them", b)
 

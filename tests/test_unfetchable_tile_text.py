@@ -11,16 +11,28 @@ from trail_factors.analysis import report as R
 
 
 def _rep(cells):
-    return {"terrain_coverage": {
-        "status": "outside_loaded_tiles", "n_uncovered": 10, "n_points": 10,
-        "fraction_covered": 0.0, "missing_tiles": cells},
-        "flags": [], "primitives": []}
+    return {
+        "terrain_coverage": {
+            "status": "outside_loaded_tiles",
+            "n_uncovered": 10,
+            "n_points": 10,
+            "fraction_covered": 0.0,
+            "missing_tiles": cells,
+        },
+        "flags": [],
+        "primitives": [],
+    }
 
 
 def _cell(cmd, reason=None):
-    return {"usgs_cell": "x38y516", "easting_range": [380000, 390000],
-            "northing_range": [5150000, 5160000], "n_points": 10,
-            "fetch_command": cmd, "fetch_unavailable_reason": reason}
+    return {
+        "usgs_cell": "x38y516",
+        "easting_range": [380000, 390000],
+        "northing_range": [5150000, 5160000],
+        "n_points": 10,
+        "fetch_command": cmd,
+        "fetch_unavailable_reason": reason,
+    }
 
 
 def _gap_text(rep):

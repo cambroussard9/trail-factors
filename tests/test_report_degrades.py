@@ -25,9 +25,9 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
+from tests.corpus import CorpusTestCase, one
 from trail_factors.analysis import basic as B
 from trail_factors.analysis import report as R
-from tests.corpus import CorpusTestCase, one
 
 # The shape that crashed: a rwd_stand split with no distance, on an activity
 # whose rwd_walk class is only PARTLY measured (some walk splits have a
@@ -52,13 +52,15 @@ CRASHER = """
 
 
 class TestTheReportSurvivesTheRunThatBrokeIt(CorpusTestCase):
-
     @property
     def aid(self):
-        return one(self.con, CRASHER,
-                   what="watch activity whose rwd_stand splits carry no "
-                        "distance and whose rwd_walk class is partly "
-                        "measured")[0]
+        return one(
+            self.con,
+            CRASHER,
+            what="watch activity whose rwd_stand splits carry no "
+            "distance and whose rwd_walk class is partly "
+            "measured",
+        )[0]
 
     def test_1_the_report_returns_a_payload(self):
         rep = R.build(self.con, self.aid)
@@ -111,18 +113,24 @@ class TestReintroducingTheNoneStillReturns(CorpusTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.aid = one(cls.con, "SELECT activity_id FROM activities "
-                               "WHERE sport = 'running' AND source = "
-                               "'garmin_watch' ORDER BY start_time_utc LIMIT 1",
-                      what="watch running activity")[0]
+        cls.aid = one(
+            cls.con,
+            "SELECT activity_id FROM activities "
+            "WHERE sport = 'running' AND source = "
+            "'garmin_watch' ORDER BY start_time_utc LIMIT 1",
+            what="watch running activity",
+        )[0]
 
     def test_2_a_section_that_raises_degrades_and_the_report_still_returns(self):
-        boom = mock.Mock(side_effect=TypeError(
-            "float() argument must be a string or a real number, not 'NoneType'"))
+        boom = mock.Mock(
+            side_effect=TypeError(
+                "float() argument must be a string or a real number, not 'NoneType'"
+            )
+        )
         with mock.patch.object(B, "basic_metrics", boom):
             rep = R.build(self.con, self.aid)
         self.assertIsInstance(rep, dict)
-        self.assertIn("measured", rep)                  # the rest survived
+        self.assertIn("measured", rep)  # the rest survived
         self.assertIn("primitives", rep)
         self.assertEqual(rep["basic"]["status"], R.UNAVAILABLE)
         self.assertIn("TypeError", rep["basic"]["error"])
@@ -132,17 +140,18 @@ class TestReintroducingTheNoneStillReturns(CorpusTestCase):
     def test_the_degraded_status_is_one_of_the_FOUR(self):
         """No fifth status. `broken` for a whole report because one section
         failed is exactly the collapse §16.2 forbids."""
-        with mock.patch.object(B, "basic_metrics",
-                               mock.Mock(side_effect=ValueError("x"))):
+        with mock.patch.object(
+            B, "basic_metrics", mock.Mock(side_effect=ValueError("x"))
+        ):
             rep = R.build(self.con, self.aid)
-        self.assertIn(rep["basic"]["status"],
-                      (R.OK, R.GATED, R.REFUSED, R.UNAVAILABLE))
+        self.assertIn(rep["basic"]["status"], (R.OK, R.GATED, R.REFUSED, R.UNAVAILABLE))
 
     def test_3_a_missing_field_entirely_gives_the_SAME_degraded_section(self):
         """Not a different crash: KeyError is the shape a missing field takes,
         and it must land in the same place as the TypeError."""
-        with mock.patch.object(B, "basic_metrics",
-                               mock.Mock(side_effect=KeyError("stand_distance_m"))):
+        with mock.patch.object(
+            B, "basic_metrics", mock.Mock(side_effect=KeyError("stand_distance_m"))
+        ):
             rep = R.build(self.con, self.aid)
         self.assertEqual(rep["basic"]["status"], R.UNAVAILABLE)
         self.assertIn("KeyError", rep["basic"]["error"])
@@ -155,11 +164,11 @@ class TestReintroducingTheNoneStillReturns(CorpusTestCase):
 
 
 class TestTheEnvelopeNeverEmitsABareNullFingerprint(unittest.TestCase):
-
     def test_a_broken_envelope_says_why_there_is_no_fingerprint(self):
         import json
 
         import trail_factors.mcp_server as M
+
         env = json.loads(M._envelope("t", M.BROKEN, text="boom"))
         fp = env["corpus_fingerprint"]
         self.assertIsNotNone(fp)
@@ -171,6 +180,7 @@ class TestTheEnvelopeNeverEmitsABareNullFingerprint(unittest.TestCase):
         import json
 
         import trail_factors.mcp_server as M
+
         env = json.loads(M._envelope("t", M.RESULT, fingerprint={"n_runs": 3}))
         self.assertEqual(env["corpus_fingerprint"], {"n_runs": 3})
 

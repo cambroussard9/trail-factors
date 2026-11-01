@@ -52,6 +52,7 @@ def golden_dir() -> Path:
     default `data/golden/`, which .gitignore covers with the rest of data/.
     """
     from trail_factors.paths import DATA_DIR, REPO_ROOT
+
     raw = os.environ.get(GOLDEN_ENV, "").strip()
     if not raw:
         return DATA_DIR / "golden"
@@ -82,9 +83,12 @@ def scope(sql: str, activity_ids: list[str]) -> str:
     activity and timestamp).
     """
     ids = ", ".join(f"'{a}'" for a in activity_ids)
-    return sql.replace("/* PIN */", f"AND activity_id IN ({ids})") \
-              .replace("/* PIN_E */", f"AND e.activity_id IN ({ids})") \
-              .replace("/* PIN_A */", f"AND a.activity_id IN ({ids})")
+    return (
+        sql.replace("/* PIN */", f"AND activity_id IN ({ids})")
+        .replace("/* PIN_E */", f"AND e.activity_id IN ({ids})")
+        .replace("/* PIN_A */", f"AND a.activity_id IN ({ids})")
+    )
+
 
 QUERIES = {
     # §6.2's deliverable: grade-binned pace, split by split_type. Never pooled.
@@ -105,7 +109,6 @@ QUERIES = {
         WHERE d.dt BETWEEN 1 AND 20 AND d.dx >= 0
           AND s.split_type IN ('rwd_run','rwd_walk')
         GROUP BY 1,2 HAVING count(*) > 50 ORDER BY 1,2""",
-
     # §6.3: delta-HR and tau together, per slope per direction.
     "recovery_by_slope": """
         SELECT segment_id, direction, count(*) AS n,
@@ -114,7 +117,6 @@ QUERIES = {
         FROM segment_recovery WHERE 1=1 /* PIN */
         GROUP BY 1,2 HAVING count(*) >= 3
         ORDER BY count(*) DESC, 1, 2""",
-
     # §6.7: matched-terrain drift within one run, on the same slope.
     "matched_terrain_drift": """
         SELECT a.activity_id, a.segment_id, a.direction,
@@ -144,6 +146,7 @@ def _database(db) -> Path:
     if db is not None:
         return Path(db)
     from trail_factors.paths import DB_FILE
+
     return DB_FILE
 
 
@@ -154,11 +157,15 @@ def pin(db=None, directory: Path | None = None) -> int:
     .tsv files re-captured beside it -- never a way to make a diff go away.
     """
     import duckdb
+
     from trail_factors.paths import display_path
+
     out = pinned_file(directory)
     if out.exists():
-        print(f"{display_path(out)} already exists; delete it deliberately "
-              f"to re-pin (and re-capture in the same step).")
+        print(
+            f"{display_path(out)} already exists; delete it deliberately "
+            f"to re-pin (and re-capture in the same step)."
+        )
         return 1
     path = _database(db)
     if not path.exists():
@@ -166,25 +173,32 @@ def pin(db=None, directory: Path | None = None) -> int:
         return 1
     con = duckdb.connect(str(path), read_only=True)
     try:
-        rows = con.execute("SELECT activity_id FROM activities "
-                           "ORDER BY activity_id").fetchall()
+        rows = con.execute(
+            "SELECT activity_id FROM activities ORDER BY activity_id"
+        ).fetchall()
     finally:
         con.close()
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text("# The fixed corpus the golden queries are scoped to.\n"
-                   "# One activity_id per line. Never edit to make a diff "
-                   "pass.\n" + "".join(f"{r[0]}\n" for r in rows))
+    out.write_text(
+        "# The fixed corpus the golden queries are scoped to.\n"
+        "# One activity_id per line. Never edit to make a diff "
+        "pass.\n" + "".join(f"{r[0]}\n" for r in rows)
+    )
     print(f"pinned {len(rows)} activities to {display_path(out)}")
     return 0
 
 
 def main(check: bool = False, db=None, directory: Path | None = None) -> int:
     import duckdb
+
     from trail_factors.paths import display_path
+
     out_dir = directory if directory is not None else golden_dir()
     if not pinned_file(out_dir).exists():
-        print(f"no {PINNED_NAME} in {display_path(out_dir)}: nothing is "
-              f"pinned. Run with --pin first (see the module docstring).")
+        print(
+            f"no {PINNED_NAME} in {display_path(out_dir)}: nothing is "
+            f"pinned. Run with --pin first (see the module docstring)."
+        )
         return 1
     path = _database(db)
     if not path.exists():
@@ -196,15 +210,18 @@ def main(check: bool = False, db=None, directory: Path | None = None) -> int:
     failed = []
     try:
         ids = pinned_activities(out_dir)
-        have = {r[0] for r in con.execute(
-            "SELECT activity_id FROM activities").fetchall()}
+        have = {
+            r[0] for r in con.execute("SELECT activity_id FROM activities").fetchall()
+        }
         missing = [a for a in ids if a not in have]
         if missing:
-            print(f"PINNED ACTIVITIES MISSING FROM THE CORPUS: "
-                  f"{', '.join(missing)}\n"
-                  f"These queries are pinned to a fixed set (see "
-                  f"{PINNED_NAME}). A missing one means the corpus lost data, "
-                  f"not that the comparison should shrink.")
+            print(
+                f"PINNED ACTIVITIES MISSING FROM THE CORPUS: "
+                f"{', '.join(missing)}\n"
+                f"These queries are pinned to a fixed set (see "
+                f"{PINNED_NAME}). A missing one means the corpus lost data, "
+                f"not that the comparison should shrink."
+            )
             return 1
         for name, sql in QUERIES.items():
             got = render(con, scope(sql, ids))
@@ -222,8 +239,10 @@ def main(check: bool = False, db=None, directory: Path | None = None) -> int:
         print("GOLDEN DIFF: " + ", ".join(failed))
         return 1
     if check:
-        print(f"all {len(QUERIES)} golden queries byte-identical "
-              f"({len(ids)} pinned activities)")
+        print(
+            f"all {len(QUERIES)} golden queries byte-identical "
+            f"({len(ids)} pinned activities)"
+        )
     return 0
 
 

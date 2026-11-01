@@ -28,11 +28,14 @@ def corpus_fingerprint(con) -> dict:
     the number changed.
     """
     n, latest = con.execute(
-        "SELECT count(*), max(start_time_utc) FROM activities").fetchone()
+        "SELECT count(*), max(start_time_utc) FROM activities"
+    ).fetchone()
     notes = con.execute("SELECT count(*) FROM annotations").fetchone()[0]
-    return {"activities": n,
-            "latest_start_utc": str(latest) if latest is not None else None,
-            "notes": notes}
+    return {
+        "activities": n,
+        "latest_start_utc": str(latest) if latest is not None else None,
+        "notes": notes,
+    }
 
 
 # THE SPORT FILTER (A3). "Runs" listings defaulted to EVERY sport, so rides
@@ -60,13 +63,20 @@ def local_date_of(start_utc, tz_hours):
     calls this, so there is one definition of "what day was this run".
     """
     import datetime
+
     tz = tz_hours if tz_hours is not None else 0.0
     return (start_utc + datetime.timedelta(hours=tz)).date()
 
 
-def list_runs(con, start_date: str | None = None, end_date: str | None = None,
-              run_type: str | None = None, cluster: str | None = None,
-              limit: int = 50, sport: str | None = None) -> list[dict]:
+def list_runs(
+    con,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    run_type: str | None = None,
+    cluster: str | None = None,
+    limit: int = 50,
+    sport: str | None = None,
+) -> list[dict]:
     """Corpus listing. Filters are AND-ed; any of them may be omitted.
 
     `cluster` is resolved from the TRACE, not the start point (§14g), so it is
@@ -89,7 +99,8 @@ def list_runs(con, start_date: str | None = None, end_date: str | None = None,
     check_available({"run_type": run_type})
 
     where_sport, sport_params = sport_clause(sport, "a.sport")
-    rows = con.execute(f"""
+    rows = con.execute(
+        f"""
         SELECT a.activity_id, a.run_id, a.start_time_utc, a.local_tz, a.sport,
                a.total_distance_m, a.duration_s, a.moving_time_s,
                a.sampling_regime, a.coverage_fraction
@@ -98,23 +109,35 @@ def list_runs(con, start_date: str | None = None, end_date: str | None = None,
           AND (? IS NULL OR a.start_time_utc >= CAST(? AS TIMESTAMP))
           AND (? IS NULL OR a.start_time_utc < CAST(? AS TIMESTAMP) + INTERVAL 1 DAY)
         ORDER BY a.start_time_utc DESC
-    """, [*sport_params, start_date, start_date, end_date, end_date]).fetchall()
+    """,
+        [*sport_params, start_date, start_date, end_date, end_date],
+    ).fetchall()
 
     out = []
-    for (aid, rid, start, tz, sport_, dist, dur, moving, regime, cov) in rows:
+    for aid, rid, start, tz, sport_, dist, dur, moving, regime, cov in rows:
         if len(out) >= limit:
             break
         cl = cluster_of(con, aid)
         if cluster and cl != cluster:
             continue
-        out.append({
-            "activity_id": aid, "run_id": rid, "start_utc": str(start),
-            "local_date": str(local_date_of(start, tz)),
-            "local_tz": tz, "sport": sport_, "cluster": cl,
-            "run_type": None, "run_type_status": NOT_COLLECTED,
-            "distance_m": dist, "elapsed_s": dur, "moving_s": moving,
-            "sampling_regime": regime, "coverage_fraction": cov,
-        })
+        out.append(
+            {
+                "activity_id": aid,
+                "run_id": rid,
+                "start_utc": str(start),
+                "local_date": str(local_date_of(start, tz)),
+                "local_tz": tz,
+                "sport": sport_,
+                "cluster": cl,
+                "run_type": None,
+                "run_type_status": NOT_COLLECTED,
+                "distance_m": dist,
+                "elapsed_s": dur,
+                "moving_s": moving,
+                "sampling_regime": regime,
+                "coverage_fraction": cov,
+            }
+        )
     return out
 
 
@@ -134,14 +157,18 @@ def resolve_run_id(con, run_ref: str) -> tuple[str, str]:
     means. Two implementations of that is the drift the thin-wrapper rule
     exists to prevent.
     """
-    row = con.execute("SELECT run_id, start_time_utc FROM runs WHERE run_id = ?",
-                      [run_ref]).fetchone()
+    row = con.execute(
+        "SELECT run_id, start_time_utc FROM runs WHERE run_id = ?", [run_ref]
+    ).fetchone()
     if row is None:
-        row = con.execute("""
+        row = con.execute(
+            """
             SELECT r.run_id, r.start_time_utc FROM runs r
             JOIN activities a USING (run_id)
             WHERE a.activity_id = ? OR a.source_file LIKE ?
-            LIMIT 1""", [run_ref, f"%{run_ref}%"]).fetchone()
+            LIMIT 1""",
+            [run_ref, f"%{run_ref}%"],
+        ).fetchone()
     if row is None and re.fullmatch(r"\d{4}-\d{2}-\d{2}", run_ref or ""):
         # A DATE IS A REFERENCE A HUMAN ACTUALLY USES, and it resolved to
         # "no run matches" for every activity in the corpus -- `absent`
@@ -151,13 +178,16 @@ def resolve_run_id(con, run_ref: str) -> tuple[str, str]:
         # THE DATE IS LOCAL (CLAUDE.md): a 22:00 run is one UTC date and a
         # different local one, and "the run on the 17th" means the day the
         # athlete lived.
-        hits = con.execute("""
+        hits = con.execute(
+            """
             SELECT DISTINCT r.run_id, r.start_time_utc
             FROM runs r JOIN activities a USING (run_id)
             WHERE CAST(a.start_time_utc
                        + INTERVAL 1 HOUR * coalesce(a.local_tz, 0) AS DATE)
                   = CAST(? AS DATE)
-            ORDER BY r.start_time_utc""", [run_ref]).fetchall()
+            ORDER BY r.start_time_utc""",
+            [run_ref],
+        ).fetchall()
         if len(hits) == 1:
             row = hits[0]
         elif len(hits) > 1:
@@ -167,7 +197,8 @@ def resolve_run_id(con, run_ref: str) -> tuple[str, str]:
             raise AmbiguousRun(
                 f"{run_ref} has {len(hits)} activities: "
                 + ", ".join(r[0] for r in hits)
-                + ". Name one of those run_ids.")
+                + ". Name one of those run_ids."
+            )
     if row is None:
         raise LookupError(f"no run matches {run_ref!r}")
     return row[0], row[1].isoformat()
@@ -182,15 +213,26 @@ def segment_library(con) -> list[dict]:
     the analysis layer where the boundary is testable, rather than an ad-hoc
     SELECT in the server.
     """
-    cols = ("segment_id", "vertical_m", "length_m", "mean_grade_pct",
-            "n_efforts", "n_ascents", "n_descents", "low_elevation_m",
-            "high_elevation_m")
-    return [dict(zip(cols, row)) for row in con.execute("""
+    cols = (
+        "segment_id",
+        "vertical_m",
+        "length_m",
+        "mean_grade_pct",
+        "n_efforts",
+        "n_ascents",
+        "n_descents",
+        "low_elevation_m",
+        "high_elevation_m",
+    )
+    return [
+        dict(zip(cols, row, strict=False))
+        for row in con.execute("""
         SELECT segment_id, vertical_m, length_m, mean_grade_pct,
                n_efforts, n_ascents, n_descents, low_elevation_m,
                high_elevation_m
         FROM segments ORDER BY n_efforts DESC, segment_id
-    """).fetchall()]
+    """).fetchall()
+    ]
 
 
 def activity_timing(con, activity_id: str) -> tuple:
@@ -207,7 +249,8 @@ def activity_timing(con, activity_id: str) -> tuple:
     """
     row = con.execute(
         "SELECT run_id, timer_time_s FROM activities WHERE activity_id = ?",
-        [activity_id]).fetchone()
+        [activity_id],
+    ).fetchone()
     if row is None:
         raise LookupError(f"no activity {activity_id}")
     return row[0], (row[1] if row[1] is not None else 0.0) / 60.0
@@ -223,8 +266,9 @@ def sport_of(con, activity_id: str | None) -> str | None:
     if not activity_id:
         return None
     try:
-        row = con.execute("SELECT sport FROM activities WHERE activity_id = ?",
-                          [activity_id]).fetchone()
+        row = con.execute(
+            "SELECT sport FROM activities WHERE activity_id = ?", [activity_id]
+        ).fetchone()
         return row[0] if row else None
     except Exception:
         return None
@@ -240,7 +284,9 @@ def activity_for_run(con, run: str = "") -> str:
         run_id, _ = resolve_run_id(con, run)
         row = con.execute(
             "SELECT activity_id FROM activities WHERE run_id = ? "
-            "AND source = 'garmin_watch' LIMIT 1", [run_id]).fetchone()
+            "AND source = 'garmin_watch' LIMIT 1",
+            [run_id],
+        ).fetchone()
         if row is None:
             raise LookupError(f"no garmin activity for run {run_id}")
         return row[0]
@@ -252,11 +298,13 @@ def activity_for_run(con, run: str = "") -> str:
     # default reference should span is part of the deferred decision.
     row = con.execute(
         "SELECT activity_id FROM activities WHERE source = 'garmin_watch' "
-        "AND sport = 'running' ORDER BY start_time_utc DESC LIMIT 1").fetchone()
+        "AND sport = 'running' ORDER BY start_time_utc DESC LIMIT 1"
+    ).fetchone()
     if row is None:
         row = con.execute(
             "SELECT activity_id FROM activities WHERE source = 'garmin_watch' "
-            "ORDER BY start_time_utc DESC LIMIT 1").fetchone()
+            "ORDER BY start_time_utc DESC LIMIT 1"
+        ).fetchone()
     if row is None:
         raise LookupError("no activities in the corpus")
     return row[0]
@@ -299,17 +347,18 @@ def projection_status(con, table: str) -> dict:
     expected = len(getattr(athlete_state, loader)())
     actual = con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
     if actual == expected:
-        return {"status": "ok", "table": table, "rows": actual,
-                "source_file": path}
+        return {"status": "ok", "table": table, "rows": actual, "source_file": path}
     return {
         "status": "stale_projection",
-        "table": table, "rows": actual, "source_file": path,
+        "table": table,
+        "rows": actual,
+        "source_file": path,
         "source_rows": expected,
         "reason": f"`{table}` holds {actual} row(s) and {path} holds "
-                  f"{expected}. The file is the record; the table is a "
-                  f"projection rebuilt only by a WRITE connection, so a "
-                  f"read-only reader sees whatever the last CLI command left.",
+        f"{expected}. The file is the record; the table is a "
+        f"projection rebuilt only by a WRITE connection, so a "
+        f"read-only reader sees whatever the last CLI command left.",
         "rebuild": PROJECTION_REBUILD_CMD,
         "do_not": "do not read this as an absence -- an unrefreshed projection "
-                  "and an empty file are different facts",
+        "and an empty file are different facts",
     }

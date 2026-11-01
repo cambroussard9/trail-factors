@@ -28,13 +28,13 @@ from unittest import mock
 
 import duckdb
 
+from tests.corpus import CorpusTestCase, one
 from trail_factors.analysis import rides as RD
 from trail_factors.ingest import ride_blocks as RB
 from trail_factors.ingest.schema import DDL
 from trail_factors.paths import REPO_ROOT
-from tests.corpus import CorpusTestCase, one
 
-RIDE = "2025-01-15T0700Z"          # synthetic run_id
+RIDE = "2025-01-15T0700Z"  # synthetic run_id
 
 
 class _Store:
@@ -42,8 +42,10 @@ class _Store:
         self._tmp = tempfile.TemporaryDirectory()
         d = Path(self._tmp.name)
         self.path = d / "rb.json"
-        self._p = [mock.patch.object(RB, "RIDE_BLOCKS", self.path),
-                   mock.patch.object(RB, "BIKE_CONFIG", d / "bc.json")]
+        self._p = [
+            mock.patch.object(RB, "RIDE_BLOCKS", self.path),
+            mock.patch.object(RB, "BIKE_CONFIG", d / "bc.json"),
+        ]
         for p in self._p:
             p.start()
         return self
@@ -60,8 +62,14 @@ def _save(blocks, avg_rpm=None, dur=50.0, run_id=RIDE):
     if avg_rpm is not None:
         mt["avg_rpm"] = avg_rpm
     return RB.save_ride_blocks(
-        {"run_id": run_id, "raw_text": "fixture", "blocks": blocks,
-         "machine_totals": mt}, duration_min=dur)
+        {
+            "run_id": run_id,
+            "raw_text": "fixture",
+            "blocks": blocks,
+            "machine_totals": mt,
+        },
+        duration_min=dur,
+    )
 
 
 class TestTheIndexIsInvariantToBlockSplitting(unittest.TestCase):
@@ -70,18 +78,26 @@ class TestTheIndexIsInvariantToBlockSplitting(unittest.TestCase):
 
     def test_two_five_minute_blocks_equal_one_ten_minute_block(self):
         with _Store():
-            whole = _save([{"resistance": 6.0, "rpm": [80, 90], "end_min": 10},
-                           {"resistance": 7.0, "rpm": [75, 85], "end_min": 20}],
-                          avg_rpm=82.0, dur=20.0)
-            a = RD.load_index(whole["blocks"],
-                              RD.reconcile_rpm(whole["blocks"], 82.0))
+            whole = _save(
+                [
+                    {"resistance": 6.0, "rpm": [80, 90], "end_min": 10},
+                    {"resistance": 7.0, "rpm": [75, 85], "end_min": 20},
+                ],
+                avg_rpm=82.0,
+                dur=20.0,
+            )
+            a = RD.load_index(whole["blocks"], RD.reconcile_rpm(whole["blocks"], 82.0))
         with _Store():
-            two = _save([{"resistance": 6.0, "rpm": [80, 90], "end_min": 5},
-                         {"resistance": 6.0, "rpm": [80, 90], "end_min": 10},
-                         {"resistance": 7.0, "rpm": [75, 85], "end_min": 20}],
-                        avg_rpm=82.0, dur=20.0)
-            b = RD.load_index(two["blocks"],
-                              RD.reconcile_rpm(two["blocks"], 82.0))
+            two = _save(
+                [
+                    {"resistance": 6.0, "rpm": [80, 90], "end_min": 5},
+                    {"resistance": 6.0, "rpm": [80, 90], "end_min": 10},
+                    {"resistance": 7.0, "rpm": [75, 85], "end_min": 20},
+                ],
+                avg_rpm=82.0,
+                dur=20.0,
+            )
+            b = RD.load_index(two["blocks"], RD.reconcile_rpm(two["blocks"], 82.0))
         self.assertEqual(a["status"], "ok")
         self.assertEqual(b["status"], "ok")
         self.assertAlmostEqual(a["index"], b["index"], places=9)
@@ -92,43 +108,49 @@ class TestTheIndexIsInvariantToBlockSplitting(unittest.TestCase):
     def test_the_reconciled_rpm_itself_is_unchanged_by_the_split(self):
         """THE MECHANISM: t is a weighted-sum solution, so splitting leaves it
         alone. If it moved, the index could not be invariant."""
-        blocks_1 = [{"start_min": 0.0, "end_min": 10.0, "resistance": 6.0,
-                     "rpm": [80, 90]}]
-        blocks_2 = [{"start_min": 0.0, "end_min": 5.0, "resistance": 6.0,
-                     "rpm": [80, 90]},
-                    {"start_min": 5.0, "end_min": 10.0, "resistance": 6.0,
-                     "rpm": [80, 90]}]
+        blocks_1 = [
+            {"start_min": 0.0, "end_min": 10.0, "resistance": 6.0, "rpm": [80, 90]}
+        ]
+        blocks_2 = [
+            {"start_min": 0.0, "end_min": 5.0, "resistance": 6.0, "rpm": [80, 90]},
+            {"start_min": 5.0, "end_min": 10.0, "resistance": 6.0, "rpm": [80, 90]},
+        ]
         a = RD.reconcile_rpm(blocks_1, 85.0)
         b = RD.reconcile_rpm(blocks_2, 85.0)
         self.assertAlmostEqual(a["t"], b["t"], places=12)
-        self.assertAlmostEqual(a["blocks"][0]["reconciled_rpm"],
-                               b["blocks"][0]["reconciled_rpm"], places=12)
+        self.assertAlmostEqual(
+            a["blocks"][0]["reconciled_rpm"],
+            b["blocks"][0]["reconciled_rpm"],
+            places=12,
+        )
 
     def test_a_REAL_difference_does_move_the_index(self):
         """THE TWIN: an index invariant to everything would pass above and
         measure nothing."""
-        blocks = [{"start_min": 0.0, "end_min": 10.0, "resistance": 6.0,
-                   "rpm": [80, 90]}]
-        harder = [{"start_min": 0.0, "end_min": 10.0, "resistance": 8.0,
-                   "rpm": [80, 90]}]
+        blocks = [
+            {"start_min": 0.0, "end_min": 10.0, "resistance": 6.0, "rpm": [80, 90]}
+        ]
+        harder = [
+            {"start_min": 0.0, "end_min": 10.0, "resistance": 8.0, "rpm": [80, 90]}
+        ]
         a = RD.load_index(blocks, RD.reconcile_rpm(blocks, 85.0))
         b = RD.load_index(harder, RD.reconcile_rpm(harder, 85.0))
         self.assertGreater(b["index"], a["index"])
 
 
 class TestReconciliation(unittest.TestCase):
-
-    BLOCKS = [{"start_min": 0.0, "end_min": 30.0, "resistance": 7.0,
-               "rpm": [90, 95]},
-              {"start_min": 30.0, "end_min": 50.0, "resistance": 8.5,
-               "rpm": [80, 90]}]
-    CONSOLE = 90.0       # inside the achievable 86-93
+    BLOCKS = [
+        {"start_min": 0.0, "end_min": 30.0, "resistance": 7.0, "rpm": [90, 95]},
+        {"start_min": 30.0, "end_min": 50.0, "resistance": 8.5, "rpm": [80, 90]},
+    ]
+    CONSOLE = 90.0  # inside the achievable 86-93
 
     def test_a_solution_inside_the_ranges_reproduces_the_console_total(self):
         r = RD.reconcile_rpm(self.BLOCKS, self.CONSOLE)
         self.assertEqual(r["status"], "ok")
-        num = sum(b["reconciled_rpm"] * (b["end_min"] - b["start_min"])
-                  for b in r["blocks"])
+        num = sum(
+            b["reconciled_rpm"] * (b["end_min"] - b["start_min"]) for b in r["blocks"]
+        )
         den = sum(b["end_min"] - b["start_min"] for b in r["blocks"])
         self.assertAlmostEqual(num / den, self.CONSOLE, places=9)
         for b in r["blocks"]:
@@ -139,8 +161,9 @@ class TestReconciliation(unittest.TestCase):
     def test_a_total_outside_every_range_is_REFUSED_not_clamped(self):
         """Forcing agreement would hide a misremembered range or a misread
         console, which is the whole reason to reconcile at all."""
-        lo_possible, hi_possible = RD.reconcile_rpm(
-            self.BLOCKS, self.CONSOLE)["achievable_range"]
+        lo_possible, hi_possible = RD.reconcile_rpm(self.BLOCKS, self.CONSOLE)[
+            "achievable_range"
+        ]
         for impossible in (lo_possible - 20.0, hi_possible + 20.0):
             r = RD.reconcile_rpm(self.BLOCKS, impossible)
             self.assertEqual(r["status"], "no_solution", impossible)
@@ -156,8 +179,9 @@ class TestReconciliation(unittest.TestCase):
         self.assertIsNone(i["index"])
 
     def test_a_block_with_no_rpm_makes_the_total_unattributable(self):
-        blocks = self.BLOCKS + [{"start_min": 50.0, "end_min": 55.0,
-                                 "resistance": 6.0, "rpm": None}]
+        blocks = self.BLOCKS + [
+            {"start_min": 50.0, "end_min": 55.0, "resistance": 6.0, "rpm": None}
+        ]
         r = RD.reconcile_rpm(blocks, self.CONSOLE)
         self.assertEqual(r["status"], "unavailable")
         self.assertIn("unattributable", r["reason"])
@@ -174,7 +198,8 @@ class TestTheForbiddenVocabularyInARead(CorpusTestCase):
 
     def test_no_output_field_or_value_uses_a_power_unit(self):
         aid, rid, dur = one(
-            self.con, """
+            self.con,
+            """
             SELECT a.activity_id, a.run_id, a.timer_time_s / 60.0
             FROM activities a
             WHERE a.sub_sport = 'indoor_cycling' AND a.timer_time_s >= 1200
@@ -182,10 +207,15 @@ class TestTheForbiddenVocabularyInARead(CorpusTestCase):
                           WHERE r.activity_id = a.activity_id
                             AND r.heart_rate IS NOT NULL)
             ORDER BY a.start_time_utc LIMIT 1""",
-            what="indoor_cycling activity of 20+ min with heart rate")
+            what="indoor_cycling activity of 20+ min with heart rate",
+        )
         with _Store():
-            _save([{"resistance": 6.0, "rpm": [80, 90], "end_min": 20}],
-                  avg_rpm=85.0, dur=dur, run_id=rid)
+            _save(
+                [{"resistance": 6.0, "rpm": [80, 90], "end_min": 20}],
+                avg_rpm=85.0,
+                dur=dur,
+                run_id=rid,
+            )
             payload = RD.ride_blocks(self.con, aid)
             payload["time_in_resistance"] = RD.time_in_resistance(self.con)
         self.assertEqual(payload["status"], "ok")
@@ -197,6 +227,7 @@ class TestTheForbiddenVocabularyInARead(CorpusTestCase):
             self.assertNotIn("power", key)
             self.assertNotIn("watt", key)
 
+
 class TestTheForbiddenVocabulary(unittest.TestCase):
     """The console is a REV COUNTER. A figure in watts would be a fabrication
     wearing a unit, so the words cannot appear at all."""
@@ -205,8 +236,9 @@ class TestTheForbiddenVocabulary(unittest.TestCase):
 
     def test_the_index_declares_itself_unitless_and_states_its_assumption(self):
         """THE TWIN: the ban is worth nothing if the number arrives bare."""
-        blocks = [{"start_min": 0.0, "end_min": 10.0, "resistance": 6.0,
-                   "rpm": [80, 90]}]
+        blocks = [
+            {"start_min": 0.0, "end_min": 10.0, "resistance": 6.0, "rpm": [80, 90]}
+        ]
         i = RD.load_index(blocks, RD.reconcile_rpm(blocks, 85.0))
         self.assertIn("index, not a measurement", i["unit"])
         self.assertIn("UNITLESS", i["assumption"])
@@ -215,17 +247,19 @@ class TestTheForbiddenVocabulary(unittest.TestCase):
 
     def test_machine_distance_is_stored_but_enters_no_derivation(self):
         with _Store():
-            e = _save([{"resistance": 6.0, "rpm": [80, 90], "end_min": 20}],
-                      avg_rpm=85.0, dur=20.0)
+            e = _save(
+                [{"resistance": 6.0, "rpm": [80, 90], "end_min": 20}],
+                avg_rpm=85.0,
+                dur=20.0,
+            )
             self.assertEqual(e["machine_totals"]["distance"], 25.0)
         src = (REPO_ROOT / "src/trail_factors/analysis/rides.py").read_text()
-        body = src[src.index("def reconcile_rpm"):]
+        body = src[src.index("def reconcile_rpm") :]
         self.assertNotIn('["distance"]', body)
         self.assertNotIn('"distance"', body.split("def time_in_resistance")[0])
 
 
 class TestTimeInResistance(unittest.TestCase):
-
     def test_minutes_aggregate_per_value_and_per_band(self):
         # An in-memory database holding one synthetic activity: the read
         # needs only the ride's start time and offset to place it in a week.
@@ -237,11 +271,17 @@ class TestTimeInResistance(unittest.TestCase):
                 "source_file, start_time_utc, local_tz, source, "
                 "sampling_regime, pipeline_version) VALUES "
                 "('a1', ?, 'h1', 'x.fit', TIMESTAMP '2025-01-15 07:00:00', "
-                "1.0, 'garmin_watch', '1hz', 1)", [RIDE])
+                "1.0, 'garmin_watch', '1hz', 1)",
+                [RIDE],
+            )
             with _Store():
-                _save([{"resistance": 7.0, "rpm": [90, 95], "end_min": 30},
-                       {"resistance": 9.25, "rpm": [80, 90], "end_min": 50}],
-                      avg_rpm=90.0)
+                _save(
+                    [
+                        {"resistance": 7.0, "rpm": [90, 95], "end_min": 30},
+                        {"resistance": 9.25, "rpm": [80, 90], "end_min": 50},
+                    ],
+                    avg_rpm=90.0,
+                )
                 t = RD.time_in_resistance(con)
         finally:
             con.close()
@@ -258,8 +298,9 @@ class TestTimeInResistance(unittest.TestCase):
         self.assertEqual(wk["by_band"]["9.0"], 20.0)
         self.assertIn("half-open", t["band_convention"])
         self.assertEqual(wk["total_min"], 50.0)
-        self.assertEqual(t["filters"]["assumptions"],
-                         "none beyond the blocks being logged correctly")
+        self.assertEqual(
+            t["filters"]["assumptions"], "none beyond the blocks being logged correctly"
+        )
 
 
 if __name__ == "__main__":

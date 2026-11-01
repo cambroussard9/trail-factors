@@ -32,9 +32,9 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
+from tests.corpus import CorpusTestCase, connect, one
 from trail_factors.analysis import basic as B
 from trail_factors.analysis import report as R
-from tests.corpus import CorpusTestCase, connect, one
 
 # The verified-crasher shape: the watch running activity with the most
 # slope traversals, where every terrain primitive (tau included) is reached.
@@ -75,14 +75,28 @@ def rich(con):
 def tiles_covering(fraction: float):
     """A TileSet stand-in that answers coverage for exactly the points it is
     given -- so n_points in a reason is the run's own count, not a literal."""
+
     def coverage(lats, lons):
         n = len(lats)
         n_unc = int(round(n * (1 - fraction)))
-        missing = ([] if n_unc == 0 else
-                   [{"usgs_cell": "x40y500", "filename": None,
-                     "fetch_command": "fetch-tile x40y500"}])
-        return {"fraction_covered": fraction, "n_uncovered": n_unc,
-                "n_points": n, "missing_tiles": missing}
+        missing = (
+            []
+            if n_unc == 0
+            else [
+                {
+                    "usgs_cell": "x40y500",
+                    "filename": None,
+                    "fetch_command": "fetch-tile x40y500",
+                }
+            ]
+        )
+        return {
+            "fraction_covered": fraction,
+            "n_uncovered": n_unc,
+            "n_points": n,
+            "missing_tiles": missing,
+        }
+
     ts = mock.MagicMock()
     ts.return_value.coverage.side_effect = coverage
     return mock.patch("trail_factors.transform.dem.TileSet", ts)
@@ -99,8 +113,11 @@ class TestTheVerifiedCrasher(CorpusTestCase):
         self.assertIn("POST-RUN REPORT", text)
 
     def test_tau_carries_a_value_when_it_claims_ok(self):
-        prim = [p for p in R.build(self.con, rich(self.con))["primitives"]
-                if p["name"] == "climb_recovery_tau"][0]
+        prim = [
+            p
+            for p in R.build(self.con, rich(self.con))["primitives"]
+            if p["name"] == "climb_recovery_tau"
+        ][0]
         if prim["status"] == R.OK:
             self.assertIsNotNone(prim["value"])
         else:
@@ -108,11 +125,17 @@ class TestTheVerifiedCrasher(CorpusTestCase):
 
 
 class TestTheStatusContractIsEnforced(unittest.TestCase):
-
     def test_an_injected_ok_null_primitive_is_demoted_with_a_reason(self):
-        out = R.enforce_status_contract([
-            {"name": "injected", "status": R.OK, "value": None,
-             "reason": "its own words"}])
+        out = R.enforce_status_contract(
+            [
+                {
+                    "name": "injected",
+                    "status": R.OK,
+                    "value": None,
+                    "reason": "its own words",
+                }
+            ]
+        )
         self.assertEqual(out[0]["status"], R.UNAVAILABLE)
         self.assertTrue(out[0]["defect"])
         self.assertIn("CONTRACT BREACH", out[0]["reason"])
@@ -137,7 +160,8 @@ class TestTheStatusContractIsEnforced(unittest.TestCase):
             rep = R.build(con, rich(con))
             rep["primitives"] = R.enforce_status_contract(
                 [{**rep["primitives"][0], "status": R.OK, "value": None}]
-                + rep["primitives"][1:])
+                + rep["primitives"][1:]
+            )
             _, err = R.render_safe(rep)
         finally:
             con.close()
@@ -149,8 +173,7 @@ class TestABrokenRendererStillReturnsThePayload(unittest.TestCase):
     that had already been computed correctly."""
 
     def test_render_safe_returns_the_error_rather_than_raising(self):
-        with mock.patch.object(R, "render",
-                               mock.Mock(side_effect=TypeError("boom"))):
+        with mock.patch.object(R, "render", mock.Mock(side_effect=TypeError("boom"))):
             text, err = R.render_safe({"anything": 1})
         self.assertEqual(text, "")
         self.assertIn("TypeError: boom", err)
@@ -159,13 +182,16 @@ class TestABrokenRendererStillReturnsThePayload(unittest.TestCase):
         import json
 
         import trail_factors.mcp_server as M
+
         con = connect()
         try:
             aid = rich(con)
         finally:
             con.close()
-        with mock.patch("trail_factors.analysis.report.render",
-                        mock.Mock(side_effect=ValueError("formatter"))):
+        with mock.patch(
+            "trail_factors.analysis.report.render",
+            mock.Mock(side_effect=ValueError("formatter")),
+        ):
             env = json.loads(M.report(aid))
         self.assertEqual(env["outcome"], "result")
         self.assertIsNotNone(env["payload"])
@@ -188,8 +214,9 @@ class TestReintroducingTheStatusBugFailsTheFixture(unittest.TestCase):
     """Item 1's fourth test: the fix must be load-bearing."""
 
     def test_an_unwired_value_under_an_ok_status_is_caught(self):
-        prims = [{"name": "climb_recovery_tau", "status": R.OK, "value": None,
-                  "unit": "s"}]
+        prims = [
+            {"name": "climb_recovery_tau", "status": R.OK, "value": None, "unit": "s"}
+        ]
         # WITHOUT the enforcer this is what shipped, and render dies on it.
         with self.assertRaises(TypeError):
             abs(prims[0]["value"])
@@ -206,8 +233,10 @@ class TestTerrainAbsenceResolvesToOneOfFourStates(CorpusTestCase):
     def setUpClass(cls):
         super().setUpClass()
         cls.other, cls.sport = one(
-            cls.con, NON_RUNNING,
-            what="positioned non-running watch activity without splits")
+            cls.con,
+            NON_RUNNING,
+            what="positioned non-running watch activity without splits",
+        )
 
     def test_held_by_sport_and_outside_tiles_are_different_answers(self):
         """BOTH IN ONE TEST, because the bug was that they were the same
@@ -241,34 +270,40 @@ class TestTerrainAbsenceResolvesToOneOfFourStates(CorpusTestCase):
         """The number in the reason is THIS run's position count, computed at
         call time -- and a different count changes it."""
         n = self.con.execute(
-            "SELECT count(*) FROM records WHERE activity_id = ? "
-            "AND lat IS NOT NULL", [self.other]).fetchone()[0]
+            "SELECT count(*) FROM records WHERE activity_id = ? AND lat IS NOT NULL",
+            [self.other],
+        ).fetchone()[0]
         with tiles_covering(1.0):
             real = B.terrain_state(self.con, self.other)["reason"]
-        self.assertIn(f"{n:,}", real)          # computed from this run
+        self.assertIn(f"{n:,}", real)  # computed from this run
         with mock.patch("trail_factors.transform.dem.TileSet") as TS:
             TS.return_value.coverage.return_value = {
-                "fraction_covered": 1.0, "n_uncovered": 0, "n_points": 7,
-                "missing_tiles": []}
+                "fraction_covered": 1.0,
+                "n_uncovered": 0,
+                "n_points": 7,
+                "missing_tiles": [],
+            }
             small = B.terrain_state(self.con, self.other)["reason"]
         self.assertIn("7", small)
         self.assertNotEqual(real, small)
 
     def test_an_ok_activity_reports_ok(self):
         """THE TWIN."""
-        aid = one(self.con, ENRICHED_RUN, what="running activity with "
-                                               "enriched records")[0]
+        aid = one(
+            self.con, ENRICHED_RUN, what="running activity with enriched records"
+        )[0]
         self.assertEqual(B.terrain_state(self.con, aid)["state"], "ok")
 
 
 class TestTheNoSplitsReasonNamesWhatItChecked(CorpusTestCase):
-
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
         cls.other, cls.sport = one(
-            cls.con, NON_RUNNING,
-            what="positioned non-running watch activity without splits")
+            cls.con,
+            NON_RUNNING,
+            what="positioned non-running watch activity without splits",
+        )
 
     def test_a_non_running_activity_blames_its_sport_not_Strava(self):
         d = B.durations(self.con, self.other)
@@ -279,8 +314,8 @@ class TestTheNoSplitsReasonNamesWhatItChecked(CorpusTestCase):
     def test_the_actual_strava_file_DOES_blame_the_phone(self):
         """THE TWIN: the cause must still be named where it is the real one."""
         row = self.con.execute(
-            "SELECT activity_id FROM activities WHERE source = 'strava_phone' "
-            "LIMIT 1").fetchone()
+            "SELECT activity_id FROM activities WHERE source = 'strava_phone' LIMIT 1"
+        ).fetchone()
         if row is None:
             self.skipTest("no strava_phone activity in the corpus")
         why = B.no_splits_reason(self.con, row[0])
@@ -289,6 +324,7 @@ class TestTheNoSplitsReasonNamesWhatItChecked(CorpusTestCase):
 
     def test_run_walk_cycles_gives_the_same_derived_cause(self):
         from trail_factors.analysis.cycles import cycles
+
         c = cycles(self.con, self.other)
         self.assertEqual(c["no_splits_cause"], "non_running_sport")
         self.assertNotIn("Strava", c["reason"])
@@ -307,10 +343,12 @@ class TestTheCeilingIsGatedOnTheSelection(CorpusTestCase):
     def setUpClass(cls):
         super().setUpClass()
         from trail_factors.analysis.over import max_hr_over
+
         cls.whole = max_hr_over(cls.con)
         if cls.whole["declared_ceiling"]["status"] == "unavailable":
-            raise unittest.SkipTest("this corpus has no declared max HR to "
-                                    "compare a ceiling against")
+            raise unittest.SkipTest(
+                "this corpus has no declared max HR to compare a ceiling against"
+            )
         cls.refused = None
         days = sorted({r["date"] for r in cls.whole["per_run"]}, reverse=True)
         for day in days[:20]:
@@ -319,8 +357,9 @@ class TestTheCeilingIsGatedOnTheSelection(CorpusTestCase):
                 cls.refused, cls.day = r, day
                 break
         if cls.refused is None:
-            raise unittest.SkipTest("no recent run date in this corpus sits "
-                                    "outside its own ceiling band")
+            raise unittest.SkipTest(
+                "no recent run date in this corpus sits outside its own ceiling band"
+            )
 
     def test_a_selection_that_never_reached_the_band_refuses_and_names_it(self):
         dc = self.refused["declared_ceiling"]
@@ -328,8 +367,7 @@ class TestTheCeilingIsGatedOnTheSelection(CorpusTestCase):
         self.assertEqual(dc["status"], "refused")
         self.assertIsNone(dc["gap_bpm"])
         self.assertFalse(reach["reaches"])
-        self.assertEqual(reach["n_runs"],
-                         self.refused["selection"]["n_included"])
+        self.assertEqual(reach["n_runs"], self.refused["selection"]["n_included"])
         self.assertIn("SELECTION", dc["reason"])
         if reach["best_30s_bpm"] is not None:
             self.assertIn(f"{reach['best_30s_bpm']:.1f} bpm", dc["reason"])

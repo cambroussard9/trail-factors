@@ -6,14 +6,14 @@ tables."""
 
 from __future__ import annotations
 
+from datetime import UTC
 from pathlib import Path
 
 import duckdb
 
+from trail_factors.cli.common import resolve_activity_id
 from trail_factors.ingest.load import DB_PATH
 from trail_factors.paths import RAW_DIR, display_path
-
-from trail_factors.cli.common import resolve_activity_id
 from trail_factors.units import pace_per_mile
 
 
@@ -28,23 +28,34 @@ def _window_report(con, activity_id, vs, ve, dur, dist, new_start, new_end):
     vdist = con.execute(
         "SELECT max(distance_m) - min(distance_m) FROM records "
         "WHERE activity_id = ? AND timestamp BETWEEN ? AND ?",
-        [activity_id, new_start, new_end]).fetchone()[0]
+        [activity_id, new_start, new_end],
+    ).fetchone()[0]
     vdist = vdist if vdist is not None else 0.0
     rp = dist / dur if dur else 0
     vp = vdist / valid_s if valid_s else 0
-    lines = [f"  window  {vs} .. {ve}", f"       -> {new_start} .. {new_end}", "",
-             f"  {'':<18}{'recorded':>12}{'valid':>12}",
-             f"  {'duration_s':<18}{dur:>12,.0f}{valid_s:>12,.0f}",
-             f"  {'distance_m':<18}{dist:>12,.0f}{vdist:>12,.0f}",
-             f"  {'mean speed m/s':<18}{rp:>12.3f}{vp:>12.3f}"]
+    lines = [
+        f"  window  {vs} .. {ve}",
+        f"       -> {new_start} .. {new_end}",
+        "",
+        f"  {'':<18}{'recorded':>12}{'valid':>12}",
+        f"  {'duration_s':<18}{dur:>12,.0f}{valid_s:>12,.0f}",
+        f"  {'distance_m':<18}{dist:>12,.0f}{vdist:>12,.0f}",
+        f"  {'mean speed m/s':<18}{rp:>12.3f}{vp:>12.3f}",
+    ]
     if rp and vp:
-        lines.append(f"  {'pace /mi':<18}"
-                     f"{pace_per_mile(rp, '--:--'):>12}"
-                     f"{pace_per_mile(vp, '--:--'):>12}")
-    lines += ["", "  mid-run stops are NOT trimmed (§4.3); bronze rows untouched",
-              "  valid = a PREVIEW over the stored records; the window takes "
-              "effect at re-ingest"]
+        lines.append(
+            f"  {'pace /mi':<18}"
+            f"{pace_per_mile(rp, '--:--'):>12}"
+            f"{pace_per_mile(vp, '--:--'):>12}"
+        )
+    lines += [
+        "",
+        "  mid-run stops are NOT trimmed (§4.3); bronze rows untouched",
+        "  valid = a PREVIEW over the stored records; the window takes "
+        "effect at re-ingest",
+    ]
     return lines
+
 
 def confirm_window(activity_id: str) -> None:
     """Confirm the detector's suggested window for an INGESTED activity.
@@ -69,13 +80,17 @@ def confirm_window(activity_id: str) -> None:
         source_file, file_hash, vs, ve, dur, dist = con.execute(
             "SELECT source_file, file_hash, valid_start_utc, valid_end_utc, "
             "duration_s, total_distance_m FROM activities "
-            "WHERE activity_id = ?", [activity_id]).fetchone()
+            "WHERE activity_id = ?",
+            [activity_id],
+        ).fetchone()
         path = Path(source_file)
         s = suggest_window(path)
-        new_end = (s["suggested_valid_end"]
-                   if s["suggested_valid_end"] is not None else ve)
-        new_start = (s["suggested_valid_start"]
-                     if s["suggested_valid_start"] is not None else vs)
+        new_end = (
+            s["suggested_valid_end"] if s["suggested_valid_end"] is not None else ve
+        )
+        new_start = (
+            s["suggested_valid_start"] if s["suggested_valid_start"] is not None else vs
+        )
         if (new_end, new_start) == (ve, vs):
             print("no trailing or leading stop detected; window unchanged")
             return
@@ -85,11 +100,11 @@ def confirm_window(activity_id: str) -> None:
             raise SystemExit(
                 f"{path.name} hashes to {s['file_sha256'][:12]} but activity "
                 f"{activity_id} was ingested from {file_hash[:12]}. Raw files "
-                f"are immutable; nothing was written.")
+                f"are immutable; nothing was written."
+            )
         # Report FIRST. The write is the last thing that happens, so a
         # failure here leaves the stored confirmation untouched (§4.3).
-        lines = _window_report(con, activity_id, vs, ve, dur, dist,
-                               new_start, new_end)
+        lines = _window_report(con, activity_id, vs, ve, dur, dist, new_start, new_end)
     finally:
         con.close()
 
@@ -100,12 +115,17 @@ def confirm_window(activity_id: str) -> None:
         path,
         valid_end=new_end if new_end != s["file_end_utc"] else None,
         valid_start=new_start if new_start != s["file_start_utc"] else None,
-        note="confirmed via confirm-window", source="confirm-window",
-        suggestion=s)
+        note="confirmed via confirm-window",
+        source="confirm-window",
+        suggestion=s,
+    )
     print("\n".join(lines))
-    print(f"  confirmed {out['file']} (revision {out['revision']}); "
-          f"activities is UNCHANGED until re-ingest")
+    print(
+        f"  confirmed {out['file']} (revision {out['revision']}); "
+        f"activities is UNCHANGED until re-ingest"
+    )
     print(f"  next: {out['next']}")
+
 
 def outstanding_confirmations(con) -> list:
     """Flags that need a human decision: a suggested window with no confirmation."""
@@ -118,6 +138,7 @@ def outstanding_confirmations(con) -> list:
           AND w.file_sha256 IS NULL
         ORDER BY v.value_observed DESC
     """).fetchall()
+
 
 def add_note(run_id: str, note: str) -> None:
     """Free-text note on a run (§4 side tables).
@@ -134,8 +155,7 @@ def add_note(run_id: str, note: str) -> None:
 
     con = duckdb.connect(str(DB_PATH), read_only=True)
     try:
-        known = con.execute("SELECT 1 FROM runs WHERE run_id = ?",
-                            [run_id]).fetchone()
+        known = con.execute("SELECT 1 FROM runs WHERE run_id = ?", [run_id]).fetchone()
     finally:
         con.close()
     if known is None:
@@ -180,18 +200,23 @@ def resolve_raw_file(ref: str) -> Path:
     # THE SHA SEARCH COVERS THE WHOLE RAW TREE, not only garmin/: a rejected
     # file outside it has no Garmin id, so its rejection names it by sha, and
     # that command must resolve.
-    hits = [p for p in sorted(RAW_DIR.rglob("*.fit"))
-            if ff.sha256(p).startswith(ref.lower())]
+    hits = [
+        p
+        for p in sorted(RAW_DIR.rglob("*.fit"))
+        if ff.sha256(p).startswith(ref.lower())
+    ]
     if len(hits) == 1:
         return hits[0]
     if len(hits) > 1:
         raise LookupError(
             f"sha prefix {ref!r} matches {len(hits)} files: "
-            f"{', '.join(p.name for p in hits)}. Give more characters.")
+            f"{', '.join(p.name for p in hits)}. Give more characters."
+        )
     raise LookupError(
         f"no raw file matches {ref!r}. Tried {by_id.name} and a sha256 prefix "
         f"across {len(list(RAW_DIR.rglob('*.fit')))} files in "
-        f"{display_path(RAW_DIR)}.")
+        f"{display_path(RAW_DIR)}."
+    )
 
 
 def suggest_window(path: Path) -> dict:
@@ -217,9 +242,11 @@ def suggest_window(path: Path) -> dict:
     verified the same way. None where there is no window to verify.
     """
     from trail_factors.ingest import fit_file as ff
-    from trail_factors.ingest.validate import (detect_movement_ceased,
-                                     suggest_vehicle_window,
-                                     sustained_impossible_blocks)
+    from trail_factors.ingest.validate import (
+        detect_movement_ceased,
+        suggest_vehicle_window,
+        sustained_impossible_blocks,
+    )
 
     msgs = ff.read_messages(path)
     recs = ff.coalesce_records(msgs.get("record", []))
@@ -228,29 +255,38 @@ def suggest_window(path: Path) -> dict:
     car = suggest_vehicle_window(recs, sport)
 
     def pick(key, edge, tighter):
-        cands = [(ff.to_utc_naive(m[key]), basis)
-                 for m, basis in ((stop, f"{edge} stop"),
-                                  (car, f"{edge} vehicle speed"))
-                 if m[key] is not None]
+        cands = [
+            (ff.to_utc_naive(m[key]), basis)
+            for m, basis in ((stop, f"{edge} stop"), (car, f"{edge} vehicle speed"))
+            if m[key] is not None
+        ]
         return tighter(cands, key=lambda c: c[0]) if cands else (None, None)
 
     end, end_basis = pick("suggested_valid_end", "trailing", min)
     start, start_basis = pick("suggested_valid_start", "leading", max)
 
     def remaining(lo, hi):
-        kept = [r for r in recs
-                if (lo is None or ff.to_utc_naive(r["timestamp"]) >= lo)
-                and (hi is None or ff.to_utc_naive(r["timestamp"]) <= hi)]
+        kept = [
+            r
+            for r in recs
+            if (lo is None or ff.to_utc_naive(r["timestamp"]) >= lo)
+            and (hi is None or ff.to_utc_naive(r["timestamp"]) <= hi)
+        ]
         return len(sustained_impossible_blocks(kept, sport))
 
     cut = None
     if car["cut"] is not None:
         at = ff.to_utc_naive(car["cut"]["at"])
-        cut = {"bound": car["cut"]["bound"], "at": at,
-               "discards_on_foot_s": car["cut"]["discards_on_foot_s"],
-               "remaining_blocks": (remaining(None, at)
-                                    if car["cut"]["bound"] == "end"
-                                    else remaining(at, None))}
+        cut = {
+            "bound": car["cut"]["bound"],
+            "at": at,
+            "discards_on_foot_s": car["cut"]["discards_on_foot_s"],
+            "remaining_blocks": (
+                remaining(None, at)
+                if car["cut"]["bound"] == "end"
+                else remaining(at, None)
+            ),
+        }
     return {
         "file": path.name,
         "file_sha256": ff.sha256(path),
@@ -261,8 +297,8 @@ def suggest_window(path: Path) -> dict:
         "suggested_valid_end": end,
         "suggested_basis": {"start": start_basis, "end": end_basis},
         "suggested_window_remaining_blocks": (
-            remaining(start, end)
-            if start is not None or end is not None else None),
+            remaining(start, end) if start is not None or end is not None else None
+        ),
         "vehicle_blocks": car["n_blocks"],
         "vehicle_midrun_blocks": car["midrun_blocks"],
         "vehicle_on_foot_records": car["n_on_foot_records"],
@@ -271,8 +307,13 @@ def suggest_window(path: Path) -> dict:
     }
 
 
-def confirm_file(ref: str, valid_end: str = "", valid_start: str = "",
-                 note: str = "", source: str = "cli") -> dict:
+def confirm_file(
+    ref: str,
+    valid_end: str = "",
+    valid_start: str = "",
+    note: str = "",
+    source: str = "cli",
+) -> dict:
     """Confirm a valid window for a RAW FILE, ingested or not.
 
     Each bound comes from, in order: the explicit argument, the file's
@@ -282,15 +323,23 @@ def confirm_file(ref: str, valid_end: str = "", valid_start: str = "",
     knows and no record can carry. A stored bound outranks the detector for
     the same reason: it is something the athlete already said.
     """
-    return _confirm_path(resolve_raw_file(ref), valid_end=valid_end,
-                         valid_start=valid_start,
-                         note=note or f"confirmed by file reference {ref!r}",
-                         source=source)
+    return _confirm_path(
+        resolve_raw_file(ref),
+        valid_end=valid_end,
+        valid_start=valid_start,
+        note=note or f"confirmed by file reference {ref!r}",
+        source=source,
+    )
 
 
-def _confirm_path(path: Path, valid_end=None, valid_start=None,
-                  note: str = "", source: str = "cli",
-                  suggestion: dict | None = None) -> dict:
+def _confirm_path(
+    path: Path,
+    valid_end=None,
+    valid_start=None,
+    note: str = "",
+    source: str = "cli",
+    suggestion: dict | None = None,
+) -> dict:
     """The ONE write path for a window confirmation: validate, then store.
 
     Shared by confirm-file (resolves a raw file) and confirm-window (an
@@ -305,23 +354,30 @@ def _confirm_path(path: Path, valid_end=None, valid_start=None,
     no end, which ingests the tail on the next sync. `bound_source` says
     where each bound came from, so the reader can see which were kept.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    from trail_factors.ingest.athlete_state import (_dt, load_confirmations,
-                                          save_confirmation)
+    from trail_factors.ingest.athlete_state import (
+        _dt,
+        load_confirmations,
+        save_confirmation,
+    )
 
     s = suggestion if suggestion is not None else suggest_window(path)
-    stored = next((r for r in load_confirmations()
-                   if r.get("file_sha256") == s["file_sha256"]), None)
+    stored = next(
+        (r for r in load_confirmations() if r.get("file_sha256") == s["file_sha256"]),
+        None,
+    )
 
     def resolve(given, key):
         if given not in (None, ""):
             return _parse_utc(given), "argument"
         if stored is not None and stored.get(f"valid_{key}_utc") is not None:
             rev = stored.get("revision")
-            return (_dt(stored[f"valid_{key}_utc"]),
-                    "stored confirmation"
-                    + (f" (revision {rev})" if rev is not None else ""))
+            return (
+                _dt(stored[f"valid_{key}_utc"]),
+                "stored confirmation"
+                + (f" (revision {rev})" if rev is not None else ""),
+            )
         v = s[f"suggested_valid_{key}"]
         if v is None:
             return None, None
@@ -335,45 +391,61 @@ def _confirm_path(path: Path, valid_end=None, valid_start=None,
         raise ValueError(
             f"{path.name}: no window to confirm -- the detector suggests "
             f"neither a start nor an end, and none was given. Pass "
-            f"valid_end (or valid_start) explicitly.")
+            f"valid_end (or valid_start) explicitly."
+        )
     for label, v in (("valid_start", start), ("valid_end", end)):
         if v is not None and not (s["file_start_utc"] <= v <= s["file_end_utc"]):
             raise ValueError(
                 f"{label} {v} is outside the file's own span "
                 f"{s['file_start_utc']} .. {s['file_end_utc']}. A window must "
-                f"select from the file, not extend it.")
+                f"select from the file, not extend it."
+            )
     if start is not None and end is not None and start >= end:
         raise ValueError(f"valid_start {start} is not before valid_end {end}")
     entry = save_confirmation(
-        s["file_sha256"], start, end,
-        datetime.now(timezone.utc).replace(tzinfo=None),
-        note=note, source=source)
-    return {**s, "confirmed_valid_start": start, "confirmed_valid_end": end,
-            "bound_source": {"start": start_src, "end": end_src},
-            "revision": entry["revision"],
-            "next": (f"re-ingest: run `{CLI} sync` -- it re-ingests every "
-                     f"raw file, so this one is ingested at the confirmed "
-                     f"window (or "
-                     f"`{CLI} ingest {display_path(path)}` for this file "
-                     f"alone; the terrain steps dem -> silver -> match -> "
-                     f"recovery follow in the MCP sync job or as their own "
-                     f"commands)")}
+        s["file_sha256"],
+        start,
+        end,
+        datetime.now(UTC).replace(tzinfo=None),
+        note=note,
+        source=source,
+    )
+    return {
+        **s,
+        "confirmed_valid_start": start,
+        "confirmed_valid_end": end,
+        "bound_source": {"start": start_src, "end": end_src},
+        "revision": entry["revision"],
+        "next": (
+            f"re-ingest: run `{CLI} sync` -- it re-ingests every "
+            f"raw file, so this one is ingested at the confirmed "
+            f"window (or "
+            f"`{CLI} ingest {display_path(path)}` for this file "
+            f"alone; the terrain steps dem -> silver -> match -> "
+            f"recovery follow in the MCP sync job or as their own "
+            f"commands)"
+        ),
+    }
 
 
 def _parse_utc(v):
     from datetime import datetime
+
     if v in (None, ""):
         return None
     if isinstance(v, datetime):
         return v
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S",
-                "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M"):
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%dT%H:%M",
+    ):
         try:
             return datetime.strptime(str(v), fmt)
         except ValueError:
             continue
-    raise ValueError(f"{v!r} is not a UTC timestamp like "
-                     f"'2025-01-15 08:30:00'")
+    raise ValueError(f"{v!r} is not a UTC timestamp like '2025-01-15 08:30:00'")
 
 
 def rejected_files(con) -> dict:
@@ -413,24 +485,41 @@ def rejected_files(con) -> dict:
         path = path_by_sha.get(sha)
         # A Garmin id exists only for garmin/<id>_ACTIVITY.fit; anything else
         # is named by its sha prefix (raw_ref), never by a guessed id.
-        gid = (path.name.split("_")[0]
-               if path is not None and path.parent == RAW_GARMIN
-               and path.name.endswith("_ACTIVITY.fit") else None)
-        rec = {"file_sha256": sha, "run_id": run_id, "checks": checks,
-               "severities": sevs, "n_findings": n,
-               "last_checked": str(last), "file": path.name if path else None,
-               "garmin_id": gid,
-               "ref": raw_ref(path) if path is not None else None,
-               "messages": [r[0] for r in con.execute(
-                   "SELECT message FROM validation_results WHERE "
-                   "file_sha256 = ? AND activity_id IS NULL", [sha]).fetchall()]}
+        gid = (
+            path.name.split("_")[0]
+            if path is not None
+            and path.parent == RAW_GARMIN
+            and path.name.endswith("_ACTIVITY.fit")
+            else None
+        )
+        rec = {
+            "file_sha256": sha,
+            "run_id": run_id,
+            "checks": checks,
+            "severities": sevs,
+            "n_findings": n,
+            "last_checked": str(last),
+            "file": path.name if path else None,
+            "garmin_id": gid,
+            "ref": raw_ref(path) if path is not None else None,
+            "messages": [
+                r[0]
+                for r in con.execute(
+                    "SELECT message FROM validation_results WHERE "
+                    "file_sha256 = ? AND activity_id IS NULL",
+                    [sha],
+                ).fetchall()
+            ],
+        }
         if path is not None:
             check_names = [c.strip() for c in (checks or "").split(",") if c.strip()]
-            advice = rejection_advice(path, "; ".join(rec["messages"]),
-                                      check_names)
-            rec.update(reason=advice["reason"], next_step=advice["next_step"],
-                       fixable_by_window=advice["fixable_by_window"],
-                       cut_discards_on_foot_s=advice["cut_discards_on_foot_s"])
+            advice = rejection_advice(path, "; ".join(rec["messages"]), check_names)
+            rec.update(
+                reason=advice["reason"],
+                next_step=advice["next_step"],
+                fixable_by_window=advice["fixable_by_window"],
+                cut_discards_on_foot_s=advice["cut_discards_on_foot_s"],
+            )
             if advice.get("suggest_error"):
                 rec["suggested_window"] = None
                 rec["suggest_error"] = advice["suggest_error"]
@@ -441,23 +530,31 @@ def rejected_files(con) -> dict:
                     "valid_end": _ts(s["suggested_valid_end"]),
                     "basis": s["suggested_basis"],
                     "file_span": [_ts(s["file_start_utc"]), _ts(s["file_end_utc"])],
-                    "n_records": s["n_records"]}
+                    "n_records": s["n_records"],
+                }
             # The EXACT command, with the suggested bound filled in -- or no
             # command at all where a window cannot fix the cause. A
             # placeholder such as '<UTC timestamp>' is an instruction the
             # reader must complete by guessing.
             rec["confirm_with"] = advice["command"]
         out.append(rec)
-    return {"rejected": out, "n_rejected": len(out),
-            "note": ("these files are in the raw directory and have validation "
-                     "findings but NO activity row -- they did not ingest. A "
-                     "rejection persists across syncs; it is not a job event."),
-            "how_to_clear": ("confirm a window with `confirm-file` where the "
-                             "problem is a leading or trailing block (a car "
-                             "ride, a forgotten stop), then re-run `sync`. "
-                             "Where the file is genuinely corrupt, or the "
-                             "impossible stretch is mid-run, there is no "
-                             "masking mechanism and it stays here.")}
+    return {
+        "rejected": out,
+        "n_rejected": len(out),
+        "note": (
+            "these files are in the raw directory and have validation "
+            "findings but NO activity row -- they did not ingest. A "
+            "rejection persists across syncs; it is not a job event."
+        ),
+        "how_to_clear": (
+            "confirm a window with `confirm-file` where the "
+            "problem is a leading or trailing block (a car "
+            "ride, a forgotten stop), then re-run `sync`. "
+            "Where the file is genuinely corrupt, or the "
+            "impossible stretch is mid-run, there is no "
+            "masking mechanism and it stays here."
+        ),
+    }
 
 
 # --------------------------------------------------------------------------
@@ -479,16 +576,19 @@ def rejected_files(con) -> dict:
 REJECTION_REASONS = {
     "pace_sustained_impossible": (
         "it moves faster than any running pace (4:00/mi) for a sustained "
-        "stretch -- almost always the watch still recording in a vehicle"),
+        "stretch -- almost always the watch still recording in a vehicle"
+    ),
     "timestamp_integrity": (
-        "its timestamps are corrupt: a gap or a total span no single activity "
-        "can have"),
+        "its timestamps are corrupt: a gap or a total span no single activity can have"
+    ),
     "coordinate_range": (
         "its positions fall outside the valid degree range -- a file or "
-        "conversion fault, not the run itself"),
+        "conversion fault, not the run itself"
+    ),
     "distance_monotonic": "its distance channel runs backwards",
     "confirmed_window_empty": (
-        "the window confirmed for it selects none of its records"),
+        "the window confirmed for it selects none of its records"
+    ),
 }
 
 # What to check where NO window can fix the cause. TEMPLATES: `{ref}` is
@@ -501,15 +601,18 @@ NO_WINDOW_STEP = {
         "'YYYY-MM-DD HH:MM:SS'` (a UTC time before a gap at the end) or "
         "`--start 'YYYY-MM-DD HH:MM:SS'` (after a gap at the start) can "
         "exclude it; a gap or span in the middle cannot be repaired by a "
-        "window, and the file stays rejected"),
+        "window, and the file stays rejected"
+    ),
     "coordinate_range": (
         "a window cannot repair this. Check the activity in Garmin Connect; "
         "if it is wrong there too, the file stays rejected. The raw file is "
-        "never edited in place"),
+        "never edited in place"
+    ),
     "distance_monotonic": (
         "a window cannot repair this. Check the activity in Garmin Connect; "
         "if it is wrong there too, the file stays rejected. The raw file is "
-        "never edited in place"),
+        "never edited in place"
+    ),
 }
 
 
@@ -526,6 +629,7 @@ def raw_ref(path: Path) -> str:
     if Path(path).parent == RAW_GARMIN and name.endswith("_ACTIVITY.fit"):
         return name.split("_")[0]
     from trail_factors.ingest import fit_file as ff
+
     try:
         return ff.sha256(Path(path))[:16]
     except OSError:
@@ -556,19 +660,33 @@ def rejection_advice(path: Path, message: str, checks=()) -> dict:
     checks = [c for c in checks if c]
     ref = raw_ref(path)
     reasons = [REJECTION_REASONS[c] for c in checks if c in REJECTION_REASONS]
-    reason = "; ".join(reasons) if reasons else (
-        f"validation rejected it: {message}" if message
-        else "validation rejected it")
-    out = {"ref": ref, "file": path.name, "checks": checks, "reason": reason,
-           "fixable_by_window": False, "next_step": "", "command": None,
-           "then": f"{CLI} sync",
-           "list_command": f"{CLI} rejected-files",
-           "suggestion": None, "suggest_error": None,
-           "cut_discards_on_foot_s": None}
+    reason = (
+        "; ".join(reasons)
+        if reasons
+        else (
+            f"validation rejected it: {message}"
+            if message
+            else "validation rejected it"
+        )
+    )
+    out = {
+        "ref": ref,
+        "file": path.name,
+        "checks": checks,
+        "reason": reason,
+        "fixable_by_window": False,
+        "next_step": "",
+        "command": None,
+        "then": f"{CLI} sync",
+        "list_command": f"{CLI} rejected-files",
+        "suggestion": None,
+        "suggest_error": None,
+        "cut_discards_on_foot_s": None,
+    }
     try:
         s = suggest_window(path)
         out["suggestion"] = s
-    except Exception as exc:          # advice must never hide the rejection
+    except Exception as exc:  # advice must never hide the rejection
         s = None
         out["suggest_error"] = f"{type(exc).__name__}: {exc}"
 
@@ -581,9 +699,11 @@ def rejection_advice(path: Path, message: str, checks=()) -> dict:
         if s["suggested_valid_start"] is not None:
             bounds.append(f"--start '{_ts(s['suggested_valid_start'])}'")
         basis = s["suggested_basis"]
-        where = ", ".join(f"{k} {_ts(s[f'suggested_valid_{k}'])} UTC "
-                          f"({basis[k]})" for k in ("start", "end")
-                          if s[f"suggested_valid_{k}"] is not None)
+        where = ", ".join(
+            f"{k} {_ts(s[f'suggested_valid_{k}'])} UTC ({basis[k]})"
+            for k in ("start", "end")
+            if s[f"suggested_valid_{k}"] is not None
+        )
     # Blocks the suggested window would KEEP (suggest_window re-ran the fatal
     # check's own rule on its records). Only a 0 clears the file.
     remaining = s["suggested_window_remaining_blocks"] if bounds else None
@@ -598,8 +718,7 @@ def rejection_advice(path: Path, message: str, checks=()) -> dict:
         out.update(
             fixable_by_window=False,
             cut_discards_on_foot_s=cut["discards_on_foot_s"],
-            command=(f"{CLI} confirm-file {ref} --{cut['bound']} "
-                     f"'{_ts(cut['at'])}'"),
+            command=(f"{CLI} confirm-file {ref} --{cut['bound']} '{_ts(cut['at'])}'"),
             next_step=(
                 f"{lead}. The window `--{cut['bound']} '{_ts(cut['at'])}'` "
                 f"(UTC) removes every impossible stretch "
@@ -608,7 +727,9 @@ def rejection_advice(path: Path, message: str, checks=()) -> dict:
                 f"movement recorded {side} that time. Confirm it only if that "
                 f"movement is not part of the run (a walk from a parked car "
                 f"is not); otherwise there is no mid-run masking and the file "
-                f"stays rejected. Then run `{CLI} sync`"))
+                f"stays rejected. Then run `{CLI} sync`"
+            ),
+        )
 
     if unfixable:
         steps = "; ".join(NO_WINDOW_STEP[c].format(ref=ref) for c in unfixable)
@@ -618,13 +739,16 @@ def rejection_advice(path: Path, message: str, checks=()) -> dict:
             # then the one window fixes both -- but only the person who can
             # see where the bad gap sits can say so.
             out.update(
-                fixable_by_window=None, command=suggested_cmd,
+                fixable_by_window=None,
+                command=suggested_cmd,
                 next_step=(
                     f"{steps}. The impossible pace has a suggested window "
                     f"({where}) that removes it; confirming it fixes the file "
                     f"ONLY IF the bad timestamp gap also lies outside that "
                     f"window -- check where the gap is first, then run "
-                    f"`{CLI} sync`"))
+                    f"`{CLI} sync`"
+                ),
+            )
         else:
             out["next_step"] = steps
     elif bounds and remaining == 0:
@@ -635,21 +759,26 @@ def rejection_advice(path: Path, message: str, checks=()) -> dict:
                 f"confirm a recording window that excludes it -- suggested "
                 f"{where}. Check it against when you actually stopped (or "
                 f"started); if it is wrong, pass your own --end/--start in "
-                f"UTC. Then run `{CLI} sync` to ingest the trimmed run"))
+                f"UTC. Then run `{CLI} sync` to ingest the trimmed run"
+            ),
+        )
     elif bounds:
         # AN EDGE WINDOW OVER A FILE WITH A MID-RUN BLOCK. Printing it as the
         # fix made a loop: confirm, sync, the same rejection, the same
         # command, revision after revision.
-        lead = (f"the suggested window ({where}) removes the stretch at the "
-                f"edge of the recording, but {remaining} impossible block(s) "
-                f"remain inside it, so confirming it alone would NOT clear "
-                f"the file")
+        lead = (
+            f"the suggested window ({where}) removes the stretch at the "
+            f"edge of the recording, but {remaining} impossible block(s) "
+            f"remain inside it, so confirming it alone would NOT clear "
+            f"the file"
+        )
         if cut is not None:
             offer_cut(lead)
         else:
             out["next_step"] = (
                 f"{lead}. No single start/end window removes them all, and "
-                f"there is no mid-run masking: the file stays rejected")
+                f"there is no mid-run masking: the file stays rejected"
+            )
     elif s is None:
         # THE DETECTOR COULD NOT READ THE FILE, so nothing is known about
         # WHERE the bad stretch sits. Saying "it is mid-run, nothing to do"
@@ -664,7 +793,9 @@ def rejection_advice(path: Path, message: str, checks=()) -> dict:
                 "the file). If the bad stretch is at the start or end of the "
                 "recording, confirm the window that IS the run yourself, in "
                 "UTC (--start trims the front); a stretch in the middle "
-                "cannot be removed by a window"))
+                "cannot be removed by a window"
+            ),
+        )
     elif pace and cut is not None:
         n_mid = s["vehicle_midrun_blocks"]
         offer_cut(
@@ -672,28 +803,37 @@ def rejection_advice(path: Path, message: str, checks=()) -> dict:
             f"the detector's rule ({n_mid} block(s) with more than "
             f"{VEHICLE_EDGE_FOOT_MAX_S:.0f} s of on-foot movement on each "
             f"side), so no window was proposed automatically"
-            if n_mid else "no window was proposed automatically")
+            if n_mid
+            else "no window was proposed automatically"
+        )
     elif pace:
         # THE DETECTOR COULD NOT PLACE THE STRETCH. Every cause below is
         # measured on this file; "mid-run" is not one of them, because with
         # nothing on foot to anchor a bound nobody has looked at where it is.
         raw_cut = s["vehicle_cut"]
         if s["vehicle_blocks"] == 0:
-            why = ("it found no sustained impossible block in the file as a "
-                   "whole")
+            why = "it found no sustained impossible block in the file as a whole"
         elif s["vehicle_has_cadence"] is False:
-            why = ("the file has no cadence channel, so no record can be told "
-                   "apart from a vehicle as being on foot")
+            why = (
+                "the file has no cadence channel, so no record can be told "
+                "apart from a vehicle as being on foot"
+            )
         elif s["vehicle_on_foot_records"] == 0:
-            why = ("no record reads as on foot (steps at a speed between "
-                   "standing and the running bound)")
+            why = (
+                "no record reads as on foot (steps at a speed between "
+                "standing and the running bound)"
+            )
         elif raw_cut is not None:
-            why = (f"the window at {_ts(raw_cut['at'])} still kept "
-                   f"{raw_cut['remaining_blocks']} impossible block(s) when "
-                   f"checked")
+            why = (
+                f"the window at {_ts(raw_cut['at'])} still kept "
+                f"{raw_cut['remaining_blocks']} impossible block(s) when "
+                f"checked"
+            )
         else:
-            why = ("no on-foot record lies before the first impossible "
-                   "stretch or after the last one")
+            why = (
+                "no on-foot record lies before the first impossible "
+                "stretch or after the last one"
+            )
         out.update(
             fixable_by_window=None,
             command=(f"{CLI} confirm-file {ref} --end 'YYYY-MM-DD HH:MM:SS'"),
@@ -702,31 +842,38 @@ def rejection_advice(path: Path, message: str, checks=()) -> dict:
                 f"If it is at the start or end of the recording, confirm the "
                 f"window that IS the run yourself, in UTC (--end before a "
                 f"drive at the end, --start after one at the beginning); a "
-                f"stretch in the middle cannot be removed by a window"))
+                f"stretch in the middle cannot be removed by a window"
+            ),
+        )
     elif "confirmed_window_empty" in checks:
         out["next_step"] = (
             f"confirm a corrected window: `{CLI} confirm-file {ref} --end "
             f"'YYYY-MM-DD HH:MM:SS'` with a UTC time inside the file's span "
-            f"(a new confirmation revises the old one), then run `{CLI} sync`")
+            f"(a new confirmation revises the old one), then run `{CLI} sync`"
+        )
     else:
         out["next_step"] = (
             "no window suggestion fits this cause; check the activity in "
             "Garmin Connect. If the junk is at the very end, "
             f"`{CLI} confirm-file {ref} --end 'YYYY-MM-DD HH:MM:SS'` can "
             "exclude it (or `--start 'YYYY-MM-DD HH:MM:SS'` at the very "
-            "start, in UTC); otherwise it stays rejected")
+            "start, in UTC); otherwise it stays rejected"
+        )
     return out
 
 
 def advice_lines(a: dict, indent: str = "    ") -> list[str]:
     """The printed form of one rejection_advice, shared by ingest-all and
     sync so the two cannot word the same rejection differently."""
-    lines = [f"{indent}reason:    {a['reason']}",
-             f"{indent}next step: {a['next_step']}"]
+    lines = [
+        f"{indent}reason:    {a['reason']}",
+        f"{indent}next step: {a['next_step']}",
+    ]
     if a["command"]:
-        lines += [f"{indent}run:       {a['command']}",
-                  f"{indent}then:      {a['then']}"]
+        lines += [
+            f"{indent}run:       {a['command']}",
+            f"{indent}then:      {a['then']}",
+        ]
     if a.get("suggest_error"):
         lines.append(f"{indent}(no window suggestion: {a['suggest_error']})")
     return lines
-

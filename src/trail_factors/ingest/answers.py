@@ -8,7 +8,8 @@ never applied. None of those is a default standing in for an answer -- each
 reader states that the value was not collected.
 
 A later version re-enables run_type through user-defined run types. Until
-then, a run_type FILTER is rejected by name (src/trail_factors/analysis/select.py) rather
+then, a run_type FILTER is rejected by name (src/trail_factors/analysis/select.py)
+rather
 than silently matching nothing.
 """
 

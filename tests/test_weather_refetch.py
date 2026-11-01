@@ -10,32 +10,36 @@ opens its own connection by path, and the test reads back what it wrote.
 import json
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
 import duckdb
 
 import trail_factors.cli.weather as CW
+from tests.corpus import CorpusTestCase
 from trail_factors.ingest import weather as W
 from trail_factors.ingest.schema import DDL
-from tests.corpus import CorpusTestCase
 
-NOW = datetime.now(timezone.utc).replace(tzinfo=None).replace(microsecond=0)
+NOW = datetime.now(UTC).replace(tzinfo=None).replace(microsecond=0)
 
 
 def payload(start, final, temp=20.0):
     hours = [start - timedelta(hours=25) + timedelta(hours=i) for i in range(30)]
-    return {"hourly": {"time": [h.isoformat() for h in hours],
-                       "temperature_2m": [temp] * 30,
-                       "dew_point_2m": [10.0] * 30,
-                       "relative_humidity_2m": [50.0] * 30,
-                       "wind_speed_10m": [2.0] * 30,
-                       "wind_direction_10m": [90.0] * 30,
-                       "precipitation": [0.0] * 30,
-                       "cloud_cover": [20.0] * 30},
-            "_source": W.SOURCE_ERA5 if final else W.SOURCE_FORECAST,
-            "_is_final": final}
+    return {
+        "hourly": {
+            "time": [h.isoformat() for h in hours],
+            "temperature_2m": [temp] * 30,
+            "dew_point_2m": [10.0] * 30,
+            "relative_humidity_2m": [50.0] * 30,
+            "wind_speed_10m": [2.0] * 30,
+            "wind_direction_10m": [90.0] * 30,
+            "precipitation": [0.0] * 30,
+            "cloud_cover": [20.0] * 30,
+        },
+        "_source": W.SOURCE_ERA5 if final else W.SOURCE_FORECAST,
+        "_is_final": final,
+    }
 
 
 class TestRefetchInsideTheWeatherStep(unittest.TestCase):
@@ -46,28 +50,35 @@ class TestRefetchInsideTheWeatherStep(unittest.TestCase):
         con = duckdb.connect(str(self.db))
         con.execute(DDL)
         # OLD is past the lag, NEW is inside it; both start out provisional.
-        self.starts = {"old": NOW - timedelta(days=W.ARCHIVE_LAG_DAYS + 2),
-                       "new": NOW - timedelta(days=W.ARCHIVE_LAG_DAYS - 3)}
+        self.starts = {
+            "old": NOW - timedelta(days=W.ARCHIVE_LAG_DAYS + 2),
+            "new": NOW - timedelta(days=W.ARCHIVE_LAG_DAYS - 3),
+        }
         for aid, start in self.starts.items():
             con.execute(
                 "INSERT INTO activities (activity_id, run_id, file_hash, "
                 "source_file, start_time_utc, source, sampling_regime, "
                 "pipeline_version) VALUES (?,?,?,?,?,'garmin_watch','1hz',1)",
-                [aid, f"r-{aid}", f"h-{aid}", f"{aid}.fit", start])
+                [aid, f"r-{aid}", f"h-{aid}", f"{aid}.fit", start],
+            )
             for i in range(3):
                 con.execute(
                     "INSERT INTO records (activity_id, timestamp, lat, lon) "
                     # Synthetic, arbitrary, already at the 2 dp the
                     # request is rounded to.
                     "VALUES (?,?,46.5,7.5)",
-                    [aid, start + timedelta(minutes=10 * i)])
+                    [aid, start + timedelta(minutes=10 * i)],
+                )
         con.close()
         self.cache.mkdir()
         for aid, start in self.starts.items():
             (self.cache / f"{aid}.json").write_text(
-                json.dumps(payload(start, final=False)))
-        self.patches = [mock.patch.object(CW, "DB_PATH", self.db),
-                        mock.patch.object(W, "CACHE_DIR", self.cache)]
+                json.dumps(payload(start, final=False))
+            )
+        self.patches = [
+            mock.patch.object(CW, "DB_PATH", self.db),
+            mock.patch.object(W, "CACHE_DIR", self.cache),
+        ]
         for p in self.patches:
             p.start()
 
@@ -81,7 +92,9 @@ class TestRefetchInsideTheWeatherStep(unittest.TestCase):
         try:
             return con.execute(
                 "SELECT any_value(weather_source), bool_and(is_final) "
-                "FROM weather_records WHERE activity_id = ?", [aid]).fetchone()
+                "FROM weather_records WHERE activity_id = ?",
+                [aid],
+            ).fetchone()
         finally:
             con.close()
 
@@ -99,10 +112,15 @@ class TestRefetchInsideTheWeatherStep(unittest.TestCase):
     def test_a_provisional_run_older_than_the_lag_is_refetched(self):
         fetched = self.run_weather()
         self.assertIn(self.starts["old"], fetched)
-        self.assertEqual(self.stored("old"), (W.SOURCE_ERA5, True),
-                         "is_final flips on a successful refetch")
-        self.assertTrue(json.loads((self.cache / "old.json").read_text())
-                        ["_is_final"], "and the cache is the final payload")
+        self.assertEqual(
+            self.stored("old"),
+            (W.SOURCE_ERA5, True),
+            "is_final flips on a successful refetch",
+        )
+        self.assertTrue(
+            json.loads((self.cache / "old.json").read_text())["_is_final"],
+            "and the cache is the final payload",
+        )
 
     def test_a_newer_provisional_run_is_NOT_refetched(self):
         fetched = self.run_weather()
@@ -130,6 +148,7 @@ class TestConditionsCarryFinality(CorpusTestCase):
 
     def _check(self, rows):
         from trail_factors.analysis import report as REP
+
         for aid, flag in rows:
             c = REP.build(self.con, aid)["conditions"]
             self.assertIs(c["is_final"], flag, aid)

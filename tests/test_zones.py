@@ -6,17 +6,18 @@ their subject by property and assert invariants, never one athlete's zones.
 Every negative assertion has a positive twin.
 """
 
+import contextlib
 import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
+from tests.corpus import CorpusTestCase, corpus_path, isolated, one
 from trail_factors.analysis import over as O
 from trail_factors.analysis import zones as Z
 from trail_factors.analysis.report import cluster_of
 from trail_factors.ingest import load as L
-from tests.corpus import CorpusTestCase, corpus_path, one, use_config, isolated
 
 
 class TestTheFloorsReading(unittest.TestCase):
@@ -24,20 +25,27 @@ class TestTheFloorsReading(unittest.TestCase):
     its name, with max HR as the final entry. Reading it as highs shifts every
     zone up by one bpm. Synthetic boundaries, not anyone's heart."""
 
-    MSG = {"time_in_zone": [{
-        "reference_mesg": "session",
-        "hr_zone_high_boundary": (100, 120, 140, 160, 175, 190),
-        "time_in_hr_zone": (5.0, 10.0, 20.0, 30.0, 40.0, 50.0),
-        "hr_calc_type": "percent_max_hr"}]}
+    MSG = {
+        "time_in_zone": [
+            {
+                "reference_mesg": "session",
+                "hr_zone_high_boundary": (100, 120, 140, 160, 175, 190),
+                "time_in_hr_zone": (5.0, 10.0, 20.0, 30.0, 40.0, 50.0),
+                "hr_calc_type": "percent_max_hr",
+            }
+        ]
+    }
 
     def test_each_entry_is_a_floor_and_the_last_is_max(self):
         got = {z: (lo, hi) for _, z, lo, hi, *_ in L._hr_zones("a1", self.MSG)}
-        self.assertEqual(got, {1: (100, 119), 2: (120, 139), 3: (140, 159),
-                               4: (160, 174), 5: (175, 190)})
+        self.assertEqual(
+            got,
+            {1: (100, 119), 2: (120, 139), 3: (140, 159), 4: (160, 174), 5: (175, 190)},
+        )
 
     def test_the_seconds_go_with_their_zone(self):
         got = {z: t for _, z, _, _, _, t, _ in L._hr_zones("a1", self.MSG)}
-        self.assertEqual(got[1], 10.0)      # index 0 is below zone 1
+        self.assertEqual(got[1], 10.0)  # index 0 is below zone 1
         self.assertEqual(got[5], 50.0)
 
     def test_a_file_without_boundaries_returns_nothing_not_a_default(self):
@@ -67,16 +75,33 @@ class TestTheConfiguredFallback(unittest.TestCase):
 
     def test_the_set_in_force_at_the_date_is_used(self):
         """THE TWIN: with a configuration, the fallback carries it."""
-        self.write([
-            {"sport": "RUNNING", "effective_from": "2025-01-01", "max_hr": 180,
-             "zone_floors": {"1": 90, "2": 110, "3": 130, "4": 150, "5": 165}},
-            {"sport": "RUNNING", "effective_from": "2025-06-01", "max_hr": 182,
-             "zone_floors": {"1": 91, "2": 111, "3": 131, "4": 151, "5": 166}},
-            {"sport": "CYCLING", "effective_from": "2025-01-01", "max_hr": 170,
-             "zone_floors": {"1": 80, "2": 100, "3": 120, "4": 140, "5": 155}}])
+        self.write(
+            [
+                {
+                    "sport": "RUNNING",
+                    "effective_from": "2025-01-01",
+                    "max_hr": 180,
+                    "zone_floors": {"1": 90, "2": 110, "3": 130, "4": 150, "5": 165},
+                },
+                {
+                    "sport": "RUNNING",
+                    "effective_from": "2025-06-01",
+                    "max_hr": 182,
+                    "zone_floors": {"1": 91, "2": 111, "3": 131, "4": 151, "5": 166},
+                },
+                {
+                    "sport": "CYCLING",
+                    "effective_from": "2025-01-01",
+                    "max_hr": 170,
+                    "zone_floors": {"1": 80, "2": 100, "3": 120, "4": 140, "5": 155},
+                },
+            ]
+        )
         zones, label = Z._configured_zones("2025-03-01")
-        self.assertEqual(zones, [(1, 90, 109), (2, 110, 129), (3, 130, 149),
-                                 (4, 150, 164), (5, 165, 180)])
+        self.assertEqual(
+            zones,
+            [(1, 90, 109), (2, 110, 129), (3, 130, 149), (4, 150, 164), (5, 165, 180)],
+        )
         self.assertIn("2025-01-01", label)
         zones, _ = Z._configured_zones("2025-07-01")
         self.assertEqual(zones[0], (1, 91, 110))
@@ -87,9 +112,18 @@ class TestTheConfiguredFallback(unittest.TestCase):
 
 
 # --- isolation: never the real athlete state or config ----------------------
+# Entered in setUpModule, CLOSED in tearDownModule -- see tests/corpus.py
+# isolated() for why this is not unittest.enterModuleContext.
+_ISOLATION = contextlib.ExitStack()
+
+
 def setUpModule():
     if corpus_path() is not None:
-        unittest.enterModuleContext(isolated())
+        _ISOLATION.enter_context(isolated())
+
+
+def tearDownModule():
+    _ISOLATION.close()
 
 
 class TestStoredBoundaries(CorpusTestCase):
@@ -105,7 +139,8 @@ class TestStoredBoundaries(CorpusTestCase):
             WHERE a.sport = 'running' AND a.source = 'garmin_watch'""").fetchone()[0]
         total = self.con.execute(
             "SELECT count(*) FROM activities WHERE sport = 'running' "
-            "AND source = 'garmin_watch'").fetchone()[0]
+            "AND source = 'garmin_watch'"
+        ).fetchone()[0]
         if total == 0:
             self.skipTest("this corpus has no garmin_watch run")
         self.assertGreaterEqual(n, 0.9 * total)
@@ -117,29 +152,36 @@ class TestStoredBoundaries(CorpusTestCase):
             SELECT count(*) FROM (SELECT DISTINCT list(low_bpm ORDER BY zone)
             FROM activity_hr_zones GROUP BY activity_id)""").fetchone()[0]
         n_act = self.con.execute(
-            "SELECT count(DISTINCT activity_id) FROM activity_hr_zones").fetchone()[0]
+            "SELECT count(DISTINCT activity_id) FROM activity_hr_zones"
+        ).fetchone()[0]
         if n_act == 0:
             self.skipTest("this corpus has no stored zone boundaries")
         self.assertGreaterEqual(n_sets, 1)
         self.assertLessEqual(n_sets, n_act)
 
     def test_every_stored_set_is_five_ascending_zones(self):
-        for aid, in self.con.execute(
-                "SELECT DISTINCT activity_id FROM activity_hr_zones").fetchall():
+        for (aid,) in self.con.execute(
+            "SELECT DISTINCT activity_id FROM activity_hr_zones"
+        ).fetchall():
             rows = self.con.execute(
                 "SELECT zone, low_bpm, high_bpm FROM activity_hr_zones "
-                "WHERE activity_id = ? ORDER BY zone", [aid]).fetchall()
+                "WHERE activity_id = ? ORDER BY zone",
+                [aid],
+            ).fetchall()
             self.assertEqual([r[0] for r in rows], list(range(1, len(rows) + 1)), aid)
             for z, lo, hi in rows:
                 self.assertLessEqual(lo, hi, f"{aid} z{z}")
 
     def test_zones_do_not_overlap_or_leave_gaps(self):
-        for aid, in self.con.execute(
-                "SELECT DISTINCT activity_id FROM activity_hr_zones").fetchall():
+        for (aid,) in self.con.execute(
+            "SELECT DISTINCT activity_id FROM activity_hr_zones"
+        ).fetchall():
             rows = self.con.execute(
                 "SELECT zone, low_bpm, high_bpm FROM activity_hr_zones "
-                "WHERE activity_id = ? ORDER BY zone", [aid]).fetchall()
-            for (z1, _, hi), (z2, lo, _) in zip(rows, rows[1:]):
+                "WHERE activity_id = ? ORDER BY zone",
+                [aid],
+            ).fetchall()
+            for (z1, _, hi), (z2, lo, _) in zip(rows, rows[1:], strict=False):
                 self.assertEqual(lo, hi + 1, f"{aid} between z{z1} and z{z2}")
 
 
@@ -150,7 +192,9 @@ class TestZoneByGait(CorpusTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.aid = one(cls.con, """
+        cls.aid = one(
+            cls.con,
+            """
             SELECT a.activity_id FROM activities a
             WHERE a.source = 'garmin_watch' AND a.sport = 'running'
               AND EXISTS (SELECT 1 FROM splits s WHERE s.activity_id = a.activity_id
@@ -164,35 +208,40 @@ class TestZoneByGait(CorpusTestCase):
                           WHERE e.activity_id = a.activity_id
                             AND coalesce(e.quality_flags, '') <> '')
             ORDER BY a.start_time_utc DESC LIMIT 1""",
-            what="watch run with walking, standing, stored zones and flags")[0]
+            what="watch run with walking, standing, stored zones and flags",
+        )[0]
         cls.r = Z.time_in_zone_by_gait(cls.con, cls.aid)
 
     def test_all_three_gaits_are_reported(self):
-        self.assertEqual(set(self.r["by_gait"]),
-                         {"running", "walking", "standing"})
+        self.assertEqual(set(self.r["by_gait"]), {"running", "walking", "standing"})
 
     def test_standing_is_a_gait_not_paused_time(self):
         """record_weights normally subtracts rwd_stand. Zeroing it would make
         'zone 2 while standing' -- one of the three quantities asked for --
         unmeasurable."""
         self.assertGreater(self.r["by_gait"]["standing"]["total_s"], 0)
-        self.assertIn("rwd_stand is a GAIT",
-                      self.r["filters"]["stopped_time_source"])
+        self.assertIn("rwd_stand is a GAIT", self.r["filters"]["stopped_time_source"])
 
     def test_zone_seconds_sum_to_the_gait_total(self):
         for gait, v in self.r["by_gait"].items():
             zsum = sum(val for k, val in v.items() if k.startswith("zone_"))
-            self.assertAlmostEqual(zsum + v["unclassified_s"], v["total_s"],
-                                   delta=1e-6, msg=gait)
+            self.assertAlmostEqual(
+                zsum + v["unclassified_s"], v["total_s"], delta=1e-6, msg=gait
+            )
 
     def test_it_uses_the_activitys_own_boundaries(self):
         self.assertIn("own FIT file", self.r["boundary_source"])
 
     def test_the_boundary_set_travels_with_the_result(self):
         """Several sets can exist; a reader must see which ruler was used."""
-        stored = [tuple(r) for r in self.con.execute(
-            "SELECT low_bpm, high_bpm FROM activity_hr_zones "
-            "WHERE activity_id = ? ORDER BY zone", [self.aid]).fetchall()]
+        stored = [
+            tuple(r)
+            for r in self.con.execute(
+                "SELECT low_bpm, high_bpm FROM activity_hr_zones "
+                "WHERE activity_id = ? ORDER BY zone",
+                [self.aid],
+            ).fetchall()
+        ]
         self.assertEqual([tuple(b) for b in self.r["boundary_set"]], stored)
         self.assertIn("boundary_set", self.r["filters"])
 
@@ -204,7 +253,9 @@ class TestZoneByGait(CorpusTestCase):
         it must be LOWER. Reading higher would mean a gate is not firing."""
         garmin = self.con.execute(
             "SELECT time_in_zone_s FROM activity_hr_zones "
-            "WHERE activity_id = ? AND zone = 2", [self.aid]).fetchone()[0]
+            "WHERE activity_id = ? AND zone = 2",
+            [self.aid],
+        ).fetchone()[0]
         self.assertIsNotNone(garmin)
         self.assertLess(self.r["zone2_total_minutes"] * 60, garmin)
 
@@ -212,12 +263,15 @@ class TestZoneByGait(CorpusTestCase):
         self.assertEqual(self.r["filters"]["hr_lag_s"], Z.HR_LAG_S)
 
     def test_a_run_with_no_heart_rate_is_unavailable_not_zero(self):
-        aid = one(self.con, """
+        aid = one(
+            self.con,
+            """
             SELECT a.activity_id FROM activities a WHERE NOT EXISTS (
                 SELECT 1 FROM records r WHERE r.activity_id = a.activity_id
                   AND r.heart_rate IS NOT NULL)
             ORDER BY a.activity_id LIMIT 1""",
-            what="activity with no heart rate")[0]
+            what="activity with no heart rate",
+        )[0]
         r = Z.time_in_zone_by_gait(self.con, aid)
         self.assertEqual(r["status"], "unavailable")
         self.assertEqual(r["by_gait"], {})
@@ -230,10 +284,14 @@ class TestWeeklyRollup(CorpusTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        aid = one(cls.con, """
+        aid = one(
+            cls.con,
+            """
             SELECT activity_id FROM activities
             WHERE source = 'garmin_watch' AND sport = 'running'
-            ORDER BY start_time_utc DESC LIMIT 1""", what="watch run")[0]
+            ORDER BY start_time_utc DESC LIMIT 1""",
+            what="watch run",
+        )[0]
         cls.cluster = cluster_of(cls.con, aid)
         cls.r = O.zone_by_gait(cls.con, cluster=cls.cluster, last_n=8)
 
@@ -268,8 +326,13 @@ class TestWeeklyRollup(CorpusTestCase):
     def test_every_result_states_its_filters(self):
         f = self.r["applied_filters"]
         self.assertIsNotNone(f)
-        for k in ("hr_lag_s", "gait_source", "stopped_time_source",
-                  "boundary_source", "quality_flags_excluded"):
+        for k in (
+            "hr_lag_s",
+            "gait_source",
+            "stopped_time_source",
+            "boundary_source",
+            "quality_flags_excluded",
+        ):
             self.assertIn(k, f)
 
     def test_it_honours_the_standard_filter_vocabulary(self):

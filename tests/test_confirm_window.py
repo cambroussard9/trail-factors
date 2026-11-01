@@ -23,7 +23,7 @@ real database.
 import json
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -52,36 +52,65 @@ def synthetic_messages():
     block has zero speed and zero cadence, which is what the movement
     detector reads as "the recording outlived the run".
     """
-    t0 = BASE.replace(tzinfo=timezone.utc)
+    t0 = BASE.replace(tzinfo=UTC)
     recs, d = [], 0.0
     for i in range(0, RUN_S + STOP_S + 1, GAP_S):
         moving = i <= RUN_S
         v = 2.8 + (i % 7) * 0.05 if moving else 0.0
         d += v * GAP_S if moving and i else 0.0
-        recs.append({"timestamp": t0 + timedelta(seconds=i), "distance": d,
-                     "enhanced_speed": v,
-                     "heart_rate": 120 + (i % 9) if moving else 110,
-                     "cadence": 80 + (i % 3) if moving else 0,
-                     "fractional_cadence": 0.0,
-                     "position_lat": int((46.5 + i * 1e-5) * SEMI),
-                     "position_long": int(7.5 * SEMI)})
-    splits = [{"split_type": "rwd_run", "start_time": t0,
-               "total_timer_time": float(RUN_S), "total_distance": d},
-              {"split_type": "rwd_stand",
-               "start_time": t0 + timedelta(seconds=RUN_S),
-               "total_timer_time": float(STOP_S), "total_distance": 0.0}]
+        recs.append(
+            {
+                "timestamp": t0 + timedelta(seconds=i),
+                "distance": d,
+                "enhanced_speed": v,
+                "heart_rate": 120 + (i % 9) if moving else 110,
+                "cadence": 80 + (i % 3) if moving else 0,
+                "fractional_cadence": 0.0,
+                "position_lat": int((46.5 + i * 1e-5) * SEMI),
+                "position_long": int(7.5 * SEMI),
+            }
+        )
+    splits = [
+        {
+            "split_type": "rwd_run",
+            "start_time": t0,
+            "total_timer_time": float(RUN_S),
+            "total_distance": d,
+        },
+        {
+            "split_type": "rwd_stand",
+            "start_time": t0 + timedelta(seconds=RUN_S),
+            "total_timer_time": float(STOP_S),
+            "total_distance": 0.0,
+        },
+    ]
     total = float(RUN_S + STOP_S)
-    return {"file_id": [{"manufacturer": "garmin", "garmin_product": "fr265"}],
-            "session": [{"sport": "running", "start_time": t0,
-                         "total_elapsed_time": total,
-                         "total_timer_time": total, "total_distance": d}],
-            "record": recs, "split": splits}
+    return {
+        "file_id": [{"manufacturer": "garmin", "garmin_product": "fr265"}],
+        "session": [
+            {
+                "sport": "running",
+                "start_time": t0,
+                "total_elapsed_time": total,
+                "total_timer_time": total,
+                "total_distance": d,
+            }
+        ],
+        "record": recs,
+        "split": splits,
+    }
 
 
 def suggestion(start=None, end=TRIMMED, sha="h1"):
-    return {"file": "x.fit", "file_sha256": sha, "n_records": 100,
-            "file_start_utc": BASE, "file_end_utc": END,
-            "suggested_valid_start": start, "suggested_valid_end": end}
+    return {
+        "file": "x.fit",
+        "file_sha256": sha,
+        "n_records": 100,
+        "file_start_utc": BASE,
+        "file_end_utc": END,
+        "suggested_valid_start": start,
+        "suggested_valid_end": end,
+    }
 
 
 class _Scratch(unittest.TestCase):
@@ -90,8 +119,10 @@ class _Scratch(unittest.TestCase):
         d = Path(self.tmp.name)
         self.state = d / "window_confirmations.json"
         self.db = d / "cw.duckdb"
-        self.patches = [mock.patch.object(athlete_state, "CONFIRMATIONS", self.state),
-                        mock.patch.object(cli, "DB_PATH", self.db)]
+        self.patches = [
+            mock.patch.object(athlete_state, "CONFIRMATIONS", self.state),
+            mock.patch.object(cli, "DB_PATH", self.db),
+        ]
         for p in self.patches:
             p.start()
 
@@ -114,14 +145,16 @@ class TestConfirmWindowWritesOnlyTheConfirmation(_Scratch):
             "start_time_utc, duration_s, total_distance_m, source, sampling_regime, "
             "valid_start_utc, valid_end_utc, pipeline_version) VALUES "
             "('a1','r1','h1','x.fit',?,3000.0,8000.0,'garmin_watch','smart_recording',?,?,1)",
-            [BASE, BASE, END])
+            [BASE, BASE, END],
+        )
         con.close()
 
     def window(self):
         con = duckdb.connect(str(self.db), read_only=True)
         try:
             return con.execute(
-                "SELECT valid_start_utc, valid_end_utc FROM activities").fetchone()
+                "SELECT valid_start_utc, valid_end_utc FROM activities"
+            ).fetchone()
         finally:
             con.close()
 
@@ -131,13 +164,18 @@ class TestConfirmWindowWritesOnlyTheConfirmation(_Scratch):
 
     def test_the_activity_is_UNCHANGED_until_re_ingest(self):
         self.run_confirm(suggestion())
-        self.assertEqual(self.window(), (BASE, END),
-                         "valid_* must not move without the records moving")
+        self.assertEqual(
+            self.window(),
+            (BASE, END),
+            "valid_* must not move without the records moving",
+        )
         con = duckdb.connect(str(self.db), read_only=True)
         try:
-            self.assertEqual(con.execute(
-                "SELECT count(*) FROM window_confirmations").fetchone()[0], 0,
-                "the projection table is not written directly")
+            self.assertEqual(
+                con.execute("SELECT count(*) FROM window_confirmations").fetchone()[0],
+                0,
+                "the projection table is not written directly",
+            )
         finally:
             con.close()
 
@@ -152,6 +190,7 @@ class TestConfirmWindowWritesOnlyTheConfirmation(_Scratch):
     def test_it_says_re_ingest(self):
         import contextlib
         import io
+
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             self.run_confirm(suggestion())
@@ -160,9 +199,12 @@ class TestConfirmWindowWritesOnlyTheConfirmation(_Scratch):
 
     def test_report_failure_writes_nothing(self):
         """§4.3: a failure must leave the stored window untouched."""
-        with mock.patch.object(cli, "_window_report",
-                               side_effect=RuntimeError("report blew up")), \
-             self.assertRaises(RuntimeError):
+        with (
+            mock.patch.object(
+                cli, "_window_report", side_effect=RuntimeError("report blew up")
+            ),
+            self.assertRaises(RuntimeError),
+        ):
             self.run_confirm(suggestion())
         self.assertEqual(self.stored(), [])
 
@@ -205,19 +247,18 @@ class TestOneBoundKeepsTheOtherStoredBound(_Scratch):
         self.assertEqual(row["valid_end_utc"], self.OWN_END.isoformat())
         self.assertEqual(row["valid_start_utc"], self.OWN_START.isoformat())
         self.assertEqual(row["revision"], 1)
-        self.assertEqual(out["bound_source"],
-                         {"start": "argument",
-                          "end": "stored confirmation (revision 0)"})
+        self.assertEqual(
+            out["bound_source"],
+            {"start": "argument", "end": "stored confirmation (revision 0)"},
+        )
 
     def test_it_holds_when_the_detector_suggests_NO_end(self):
         self.confirm(suggestion(), valid_end=self.OWN_END)
         self.confirm(suggestion(end=None), valid_start=self.OWN_START)
-        self.assertEqual(self.stored()[0]["valid_end_utc"],
-                         self.OWN_END.isoformat())
+        self.assertEqual(self.stored()[0]["valid_end_utc"], self.OWN_END.isoformat())
 
     def test_twin_with_nothing_stored_the_detector_fills_it_and_says_so(self):
-        s = dict(suggestion(), suggested_basis={"start": None,
-                                                "end": "trailing stop"})
+        s = dict(suggestion(), suggested_basis={"start": None, "end": "trailing stop"})
         out = self.confirm(s, valid_start=self.OWN_START)
         self.assertEqual(self.stored()[0]["valid_end_utc"], TRIMMED.isoformat())
         self.assertEqual(out["bound_source"]["end"], "detector (trailing stop)")
@@ -238,9 +279,10 @@ class TestReIngestAppliesIt(_Scratch):
         super().setUp()
         self.file = Path(self.tmp.name) / "synthetic.fit"
         self.file.write_bytes(b"synthetic")
-        self.fit = [mock.patch.object(ff, "read_messages",
-                                      return_value=synthetic_messages()),
-                    mock.patch.object(ff, "sha256", return_value="0" * 64)]
+        self.fit = [
+            mock.patch.object(ff, "read_messages", return_value=synthetic_messages()),
+            mock.patch.object(ff, "sha256", return_value="0" * 64),
+        ]
         for p in self.fit:
             p.start()
 
@@ -254,7 +296,9 @@ class TestReIngestAppliesIt(_Scratch):
         try:
             return con.execute(
                 "SELECT valid_end_utc, duration_s, timer_time_s FROM activities "
-                "WHERE activity_id = ?", [aid]).fetchone()
+                "WHERE activity_id = ?",
+                [aid],
+            ).fetchone()
         finally:
             con.close()
 
@@ -263,7 +307,9 @@ class TestReIngestAppliesIt(_Scratch):
         try:
             return con.execute(
                 "SELECT sum(total_timer_time) FROM splits WHERE activity_id = ? "
-                "AND split_type LIKE 'rwd%'", [aid]).fetchone()[0]
+                "AND split_type LIKE 'rwd%'",
+                [aid],
+            ).fetchone()[0]
         finally:
             con.close()
 
@@ -278,8 +324,11 @@ class TestReIngestAppliesIt(_Scratch):
         self.assertLess(s["suggested_valid_end"], whole_end)
 
         cli.confirm_window(aid)
-        self.assertEqual(self.row(aid), (whole_end, whole_dur, whole_timer),
-                         "confirm_window must not touch the activity")
+        self.assertEqual(
+            self.row(aid),
+            (whole_end, whole_dur, whole_timer),
+            "confirm_window must not touch the activity",
+        )
 
         ingest(self.file, db_path=self.db)
         end, dur, timer = self.row(aid)

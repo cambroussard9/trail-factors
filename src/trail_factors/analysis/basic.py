@@ -99,6 +99,7 @@ MIN_BIN_TIME_S = 120.0
 # shared: moving-time weights
 # --------------------------------------------------------------------------
 
+
 def paused_intervals(con, activity_id: str) -> list[tuple]:
     """Every interval the athlete was not moving, MERGED.
 
@@ -112,12 +113,15 @@ def paused_intervals(con, activity_id: str) -> list[tuple]:
     subtracting each in turn would remove the same second twice and can drive a
     weight negative.
     """
-    rows = con.execute("""
+    rows = con.execute(
+        """
         SELECT start_utc, end_utc FROM stops WHERE activity_id = ?
         UNION ALL
         SELECT start_time, end_time FROM splits
         WHERE activity_id = ? AND split_type = 'rwd_stand'
-    """, [activity_id, activity_id]).fetchall()
+    """,
+        [activity_id, activity_id],
+    ).fetchall()
     spans = sorted((a, b) for a, b in rows if a is not None and b is not None and b > a)
     merged: list[list] = []
     for a, b in spans:
@@ -138,8 +142,12 @@ def moving_seconds(a, b, paused: list[tuple]) -> float:
     return max(total, 0.0)
 
 
-def record_weights(con, activity_id: str, cap: float = MAX_WEIGHT_GAP_S,
-                   paused: list[tuple] | None = None) -> dict:
+def record_weights(
+    con,
+    activity_id: str,
+    cap: float = MAX_WEIGHT_GAP_S,
+    paused: list[tuple] | None = None,
+) -> dict:
     """timestamp -> the moving seconds it stands for, over the FULL series.
 
     WEIGHTS ARE COMPUTED BEFORE ANY FILTER, and this function exists so that
@@ -163,12 +171,15 @@ def record_weights(con, activity_id: str, cap: float = MAX_WEIGHT_GAP_S,
     weights that do not subtract rwd_stand. Our own metrics use moving time and
     are deliberately a different quantity.
     """
-    rows = con.execute("""
+    rows = con.execute(
+        """
         SELECT r.timestamp,
                coalesce(a.valid_end_utc, max(r.timestamp) OVER ()) AS run_end
         FROM records r JOIN activities a USING (activity_id)
         WHERE r.activity_id = ? ORDER BY r.timestamp
-    """, [activity_id]).fetchall()
+    """,
+        [activity_id],
+    ).fetchall()
     if not rows:
         return {}
     if paused is None:
@@ -210,23 +221,26 @@ def _flag_note(con, activity_id: str) -> dict:
     Saying "quality_flags_excluded: false" without saying WHY would read as a
     choice when on most activities it is an absence.
     """
-    n = con.execute("SELECT count(*) FROM records_enriched WHERE activity_id = ?",
-                    [activity_id]).fetchone()[0]
-    return {"quality_flags_excluded": False,
-            "quality_flags_available": n > 0,
-            "quality_flags_reason":
-                "flags live on records_enriched, which is built from "
-                "records JOIN dem_elevations and covers only DEM-tiled "
-                "activities; these metrics read `records` so they cover all "
-                "of them"
-                if n == 0 else
-                "flags exist for this activity but are not applied: none of "
-                "the five flags flags the HR or cadence channel (§15.4)"}
+    n = con.execute(
+        "SELECT count(*) FROM records_enriched WHERE activity_id = ?", [activity_id]
+    ).fetchone()[0]
+    return {
+        "quality_flags_excluded": False,
+        "quality_flags_available": n > 0,
+        "quality_flags_reason": "flags live on records_enriched, which is built from "
+        "records JOIN dem_elevations and covers only DEM-tiled "
+        "activities; these metrics read `records` so they cover all "
+        "of them"
+        if n == 0
+        else "flags exist for this activity but are not applied: none of "
+        "the five flags flags the HR or cadence channel (§15.4)",
+    }
 
 
 # --------------------------------------------------------------------------
 # §6.0a average heart rate
 # --------------------------------------------------------------------------
+
 
 def average_hr(con, activity_id: str) -> dict:
     """Run-level average HR: TIME-WEIGHTED, stopped time excluded.
@@ -243,43 +257,61 @@ def average_hr(con, activity_id: str) -> dict:
     ban on pooling is about GRADE BINS, where mixing two gait modes puts the
     median between the modes and reads as "pace does not vary with grade".
     """
-    rows = con.execute("""
+    rows = con.execute(
+        """
         SELECT timestamp, heart_rate FROM records
         WHERE activity_id = ? ORDER BY timestamp
-    """, [activity_id]).fetchall()
+    """,
+        [activity_id],
+    ).fetchall()
     if len(rows) < 2:
-        return {"value": None, "n": 0, "status_hint": "unavailable",
-                "reason": "fewer than two records", "filters": _hr_filters(con, activity_id)}
+        return {
+            "value": None,
+            "n": 0,
+            "status_hint": "unavailable",
+            "reason": "fewer than two records",
+            "filters": _hr_filters(con, activity_id),
+        }
 
     weights = record_weights(con, activity_id)
     num, den = weighted_mean(rows, weights)
     if den <= 0:
-        return {"value": None, "n": 0, "status_hint": "unavailable",
-                "reason": "no heart rate on this run",
-                "filters": _hr_filters(con, activity_id)}
+        return {
+            "value": None,
+            "n": 0,
+            "status_hint": "unavailable",
+            "reason": "no heart rate on this run",
+            "filters": _hr_filters(con, activity_id),
+        }
 
     by_class = {}
     for cls in ("rwd_run", "rwd_walk"):
-        sub = con.execute("""
+        sub = con.execute(
+            """
             SELECT r.timestamp, r.heart_rate
             FROM records r JOIN splits s ON s.activity_id = r.activity_id
                  AND r.timestamp BETWEEN s.start_time AND s.end_time
             WHERE r.activity_id = ? AND s.split_type = ? ORDER BY r.timestamp
-        """, [activity_id, cls]).fetchall()
+        """,
+            [activity_id, cls],
+        ).fetchall()
         # The SAME weight map, not a re-derivation from this filtered subset.
         n2, d2 = weighted_mean(sub, weights)
         # GATED ON THE SAME MINIMUM AS THE CLASS PACES. Ten seconds of walking
         # does not produce a walking heart rate any more than it produces a
         # walking pace, and an unqualified walking HR next to a running HR
         # reads as a real contrast when it is one brief transition.
-        by_class[cls] = ((n2 / d2) if d2 >= MIN_CLASS_TIME_S else None)
+        by_class[cls] = (n2 / d2) if d2 >= MIN_CLASS_TIME_S else None
 
     n_hr = sum(1 for _, h in rows if h is not None)
-    return {"value": num / den, "n": n_hr,
-            "weight_seconds": den,
-            "avg_hr_running": by_class["rwd_run"],
-            "avg_hr_walking": by_class["rwd_walk"],
-            "filters": _hr_filters(con, activity_id)}
+    return {
+        "value": num / den,
+        "n": n_hr,
+        "weight_seconds": den,
+        "avg_hr_running": by_class["rwd_run"],
+        "avg_hr_walking": by_class["rwd_walk"],
+        "filters": _hr_filters(con, activity_id),
+    }
 
 
 def _hr_filters(con, activity_id: str) -> dict:
@@ -292,7 +324,7 @@ def _hr_filters(con, activity_id: str) -> dict:
         "split_type": None,
         "split_types_pooled": True,
         "pooling_note": "whole-run anchor; avg_hr_running and avg_hr_walking "
-                        "are returned beside it so the pooling is visible",
+        "are returned beside it so the pooling is visible",
         "source_table": "records",
         "grain": "records",
         **_flag_note(con, activity_id),
@@ -302,6 +334,7 @@ def _hr_filters(con, activity_id: str) -> dict:
 # --------------------------------------------------------------------------
 # §6.0b run / walk / stand durations, and the three paces
 # --------------------------------------------------------------------------
+
 
 def durations(con, activity_id: str) -> dict:
     """Run, walk and stand time from the rwd_* splits' total_timer_time.
@@ -322,17 +355,26 @@ def durations(con, activity_id: str) -> dict:
     `n_splits` per class is returned so the two can be told apart -- a class
     with n_splits 0 and seconds 0.0 is a real zero.
     """
-    rows = dict((st, (tt, dm, n)) for st, tt, dm, n in con.execute("""
+    rows = dict(
+        (st, (tt, dm, n))
+        for st, tt, dm, n in con.execute(
+            """
         SELECT split_type, sum(total_timer_time), sum(total_distance_m), count(*)
         FROM splits WHERE activity_id = ? AND split_type LIKE 'rwd_%'
-        GROUP BY 1""", [activity_id]).fetchall())
+        GROUP BY 1""",
+            [activity_id],
+        ).fetchall()
+    )
     if not rows:
         # DERIVED, NOT ASSERTED. See no_splits_reason.
         why = no_splits_reason(con, activity_id)
-        return {"value": None, "status_hint": "unavailable",
-                "no_splits_cause": why["cause"],
-                "reason": f"this activity carries no rwd_* splits: {why['reason']}",
-                "filters": _duration_filters()}
+        return {
+            "value": None,
+            "status_hint": "unavailable",
+            "no_splits_cause": why["cause"],
+            "reason": f"this activity carries no rwd_* splits: {why['reason']}",
+            "filters": _duration_filters(),
+        }
 
     # TWO KINDS OF NOTHING, AND THEY ARE NOT THE SAME FACT.
     #
@@ -353,8 +395,7 @@ def durations(con, activity_id: str) -> dict:
     # which and why.
     out = {}
     unavailable = {}
-    for cls, key in (("rwd_run", "run"), ("rwd_walk", "walk"),
-                     ("rwd_stand", "stand")):
+    for cls, key in (("rwd_run", "run"), ("rwd_walk", "walk"), ("rwd_stand", "stand")):
         present = cls in rows
         tt, dm, n = rows.get(cls, (0.0, 0.0, 0))
         out[f"{key}_s"] = float(tt) if tt is not None else None
@@ -364,7 +405,8 @@ def durations(con, activity_id: str) -> dict:
             if v is None and present:
                 unavailable[field] = (
                     f"{n} {cls} split(s) exist and none carries this field; "
-                    f"the device did not record it. NOT a zero.")
+                    f"the device did not record it. NOT a zero."
+                )
     out["unavailable_fields"] = unavailable
 
     # PARTIAL SUMS ARE ALSO NOT WHOLE SUMS. sum() SKIPS nulls, so a class where
@@ -372,22 +414,25 @@ def durations(con, activity_id: str) -> dict:
     # saying so -- understating with ONE SIGN, which accumulates rather than
     # averaging away. Measured on several FR265 class-groups.
     partial = {}
-    for cls, key in (("rwd_run", "run"), ("rwd_walk", "walk"),
-                     ("rwd_stand", "stand")):
+    for cls, key in (("rwd_run", "run"), ("rwd_walk", "walk"), ("rwd_stand", "stand")):
         if cls not in rows:
             continue
         n_dist = con.execute(
             "SELECT count(total_distance_m), count(*) FROM splits "
             "WHERE activity_id = ? AND split_type = ?",
-            [activity_id, cls]).fetchone()
+            [activity_id, cls],
+        ).fetchone()
         if 0 < n_dist[0] < n_dist[1]:
             partial[f"{key}_distance_m"] = (
                 f"summed over {n_dist[0]} of {n_dist[1]} splits; the rest "
-                f"carry no distance, so this is a LOWER BOUND")
+                f"carry no distance, so this is a LOWER BOUND"
+            )
     out["partial_sums"] = partial
 
-    timer = con.execute("SELECT timer_time_s, duration_s FROM activities "
-                        "WHERE activity_id = ?", [activity_id]).fetchone()
+    timer = con.execute(
+        "SELECT timer_time_s, duration_s FROM activities WHERE activity_id = ?",
+        [activity_id],
+    ).fetchone()
     # The total sums what EXISTS and declares what it could not include,
     # rather than treating an unmeasured class as 0 s.
     parts = [out["run_s"], out["walk_s"], out["stand_s"]]
@@ -399,8 +444,9 @@ def durations(con, activity_id: str) -> dict:
     # a tenth of a second, worst a few seconds. Reported rather than asserted, so a
     # future file that does NOT tile is visible instead of silently absorbed.
     out["tiling_residual_s"] = (total - timer[0]) if timer[0] is not None else None
-    out["paused_s"] = ((timer[1] - timer[0])
-                       if timer[0] is not None and timer[1] is not None else None)
+    out["paused_s"] = (
+        (timer[1] - timer[0]) if timer[0] is not None and timer[1] is not None else None
+    )
     out["filters"] = _duration_filters()
     return out
 
@@ -411,11 +457,11 @@ def _duration_filters() -> dict:
         "never": "end_time - start_time, and never sum(splits.duration_s)",
         "sampling_regime_dependent": False,
         "regime_note": "splits are written once per split, not per record, so "
-                       "these durations do not depend on Smart Recording vs 1 Hz",
+        "these durations do not depend on Smart Recording vs 1 Hz",
         "split_types_pooled": False,
         "zero_vs_missing": "n_*_splits distinguishes a real 0 s from no data; "
-                           "a field the device never wrote is None and is named "
-                           "in unavailable_fields, never coerced to 0",
+        "a field the device never wrote is None and is named "
+        "in unavailable_fields, never coerced to 0",
         "grain": "splits",
     }
 
@@ -440,50 +486,89 @@ def paces(con, activity_id: str) -> dict:
     time stated, not dropped and not returned as a bare null.
     """
     d = durations(con, activity_id)
-    a = con.execute("""
+    a = con.execute(
+        """
         SELECT total_distance_m, duration_s, timer_time_s, moving_time_s,
                coverage_fraction
-        FROM activities WHERE activity_id = ?""", [activity_id]).fetchone()
+        FROM activities WHERE activity_id = ?""",
+        [activity_id],
+    ).fetchone()
     if a is None:
         raise LookupError(f"no activity {activity_id}")
     dist, elapsed_s, timer_s, moving_s, cov = a
 
     def entry(name, metres, secs, source):
         if metres is None or secs is None or secs <= 0:
-            return {"name": name, "status": "unavailable", "mps": None,
-                    "pace_per_mile": None, "seconds": secs, "meters": metres,
-                    "source": source,
-                    "reason": "no distance or no duration for this class"}
+            return {
+                "name": name,
+                "status": "unavailable",
+                "mps": None,
+                "pace_per_mile": None,
+                "seconds": secs,
+                "meters": metres,
+                "source": source,
+                "reason": "no distance or no duration for this class",
+            }
         if metres <= 0:
-            return {"name": name, "status": "gated", "mps": None,
-                    "pace_per_mile": None, "seconds": secs, "meters": metres,
-                    "source": source,
-                    "reason": f"{secs:.0f} s of this class covered no distance"}
-        return {"name": name, "status": "ok", "mps": metres / secs,
-                "pace_per_mile": pace_per_mile(metres / secs),
-                "seconds": secs, "meters": metres, "source": source}
+            return {
+                "name": name,
+                "status": "gated",
+                "mps": None,
+                "pace_per_mile": None,
+                "seconds": secs,
+                "meters": metres,
+                "source": source,
+                "reason": f"{secs:.0f} s of this class covered no distance",
+            }
+        return {
+            "name": name,
+            "status": "ok",
+            "mps": metres / secs,
+            "pace_per_mile": pace_per_mile(metres / secs),
+            "seconds": secs,
+            "meters": metres,
+            "source": source,
+        }
 
     def class_entry(name, key):
         secs, metres = d.get(f"{key}_s"), d.get(f"{key}_distance_m")
         if secs is None:
-            return {"name": name, "status": "unavailable", "mps": None,
-                    "pace_per_mile": None, "seconds": None, "meters": None,
-                    "source": "splits",
-                    "reason": "no rwd_* splits on this activity"}
+            return {
+                "name": name,
+                "status": "unavailable",
+                "mps": None,
+                "pace_per_mile": None,
+                "seconds": None,
+                "meters": None,
+                "source": "splits",
+                "reason": "no rwd_* splits on this activity",
+            }
         if secs < MIN_CLASS_TIME_S:
-            return {"name": name, "status": "gated", "mps": None,
-                    "pace_per_mile": None, "seconds": secs, "meters": metres,
-                    "source": "splits",
-                    "reason": (f"{secs:.0f} s of {key} is below the "
-                               f"{MIN_CLASS_TIME_S:.0f} s minimum; below it the "
-                               f"class pace is unstable to worse than "
-                               f"60 s/mile under leave-one-split-out")}
+            return {
+                "name": name,
+                "status": "gated",
+                "mps": None,
+                "pace_per_mile": None,
+                "seconds": secs,
+                "meters": metres,
+                "source": "splits",
+                "reason": (
+                    f"{secs:.0f} s of {key} is below the "
+                    f"{MIN_CLASS_TIME_S:.0f} s minimum; below it the "
+                    f"class pace is unstable to worse than "
+                    f"60 s/mile under leave-one-split-out"
+                ),
+            }
         return entry(name, metres, secs, "splits")
 
     out = [
         entry("overall", dist, timer_s, "activities.timer_time_s (Garmin duration)"),
-        entry("overall_elapsed", dist, elapsed_s,
-              "activities.duration_s (Garmin elapsedDuration)"),
+        entry(
+            "overall_elapsed",
+            dist,
+            elapsed_s,
+            "activities.duration_s (Garmin elapsedDuration)",
+        ),
         class_entry("running", "run"),
         class_entry("walking", "walk"),
     ]
@@ -494,18 +579,18 @@ def _pace_filters(coverage_fraction, d: dict) -> dict:
     return {
         "split_types_pooled": False,
         "overall_denominator": "timer_time_s == Garmin `duration` "
-                               "(verified against the Garmin listing, max diff 0.0002 s)",
+        "(verified against the Garmin listing, max diff 0.0002 s)",
         "class_duration_source": "splits.total_timer_time",
         "class_distance_source": "splits.total_distance_m",
         "min_class_time_s": MIN_CLASS_TIME_S,
         "stopped_time_excluded": False,
         "stopped_time_note": "rwd_stand time is excluded from the CLASS paces "
-                             "by construction (it is its own class) but is "
-                             "inside the overall, which is Garmin's own basis",
+        "by construction (it is its own class) but is "
+        "inside the overall, which is Garmin's own basis",
         "quality_flags_excluded": False,
         "quality_flags_reason": "splits are Garmin's segmentation and sit "
-                                "upstream of records_enriched, where the flags "
-                                "live -- they cannot reach this grain",
+        "upstream of records_enriched, where the flags "
+        "live -- they cannot reach this grain",
         "gps_coverage_fraction": coverage_fraction,
         "distance_provenance": _provenance(coverage_fraction),
         "sampling_regime_dependent": False,
@@ -528,6 +613,7 @@ def _provenance(coverage_fraction) -> str:
 # --------------------------------------------------------------------------
 # §6.0c windowed best paces
 # --------------------------------------------------------------------------
+
 
 def windowed_bests(con, activity_id: str) -> dict:
     """Best 30 s, best 0.25 mi, best 1 mi -- sliding windows, never a maximum.
@@ -559,18 +645,25 @@ def windowed_bests(con, activity_id: str) -> dict:
     """
     import numpy as np
 
-    rows = con.execute("""
+    rows = con.execute(
+        """
         SELECT timestamp, distance_m FROM records
         WHERE activity_id = ? AND distance_m IS NOT NULL ORDER BY timestamp
-    """, [activity_id]).fetchall()
-    cov = con.execute("SELECT coverage_fraction FROM activities WHERE activity_id = ?",
-                      [activity_id]).fetchone()
+    """,
+        [activity_id],
+    ).fetchall()
+    cov = con.execute(
+        "SELECT coverage_fraction FROM activities WHERE activity_id = ?", [activity_id]
+    ).fetchone()
     cov = cov[0] if cov else None
     base = _best_filters(con, activity_id, cov)
     if len(rows) < 3:
-        return {"windows": [], "status_hint": "unavailable",
-                "reason": "fewer than three records with distance",
-                "filters": base}
+        return {
+            "windows": [],
+            "status_hint": "unavailable",
+            "reason": "fewer than three records with distance",
+            "filters": base,
+        }
 
     t0 = rows[0][0]
     t = np.array([(r[0] - t0).total_seconds() for r in rows], dtype=float)
@@ -609,10 +702,17 @@ def windowed_bests(con, activity_id: str) -> dict:
     for w in windows:
         if w["mps"] is not None:
             w["pace_per_mile"] = pace_per_mile(w["mps"])
-            w.update(_window_composition(con, activity_id, t0,
-                                         w["start_elapsed_s"], w["end_elapsed_s"]))
-    return {"windows": windows, "n_backwards_odometer_steps": n_backwards,
-            "n_clean_blocks": len(blocks), "filters": base}
+            w.update(
+                _window_composition(
+                    con, activity_id, t0, w["start_elapsed_s"], w["end_elapsed_s"]
+                )
+            )
+    return {
+        "windows": windows,
+        "n_backwards_odometer_steps": n_backwards,
+        "n_clean_blocks": len(blocks),
+        "filters": base,
+    }
 
 
 def distance_inverse(t, d):
@@ -684,23 +784,40 @@ def _best_time_window(t, d, blocks, target_s: float) -> dict:
             if best is None or gained[j] > best[0]:
                 best = (float(gained[j]), float(s[j]), float(e[j]))
     if best is None:
-        return {"window": f"best_{target_s:.0f}s", "target_s": target_s,
-                "mps": None, "pace_per_mile": None, "status": "unavailable",
-                "reason": (f"no {target_s:.0f} s stretch free of sample gaps "
-                           f"over {MAX_SAMPLE_GAP_S:.0f} s and of stopped time")}
+        return {
+            "window": f"best_{target_s:.0f}s",
+            "target_s": target_s,
+            "mps": None,
+            "pace_per_mile": None,
+            "status": "unavailable",
+            "reason": (
+                f"no {target_s:.0f} s stretch free of sample gaps "
+                f"over {MAX_SAMPLE_GAP_S:.0f} s and of stopped time"
+            ),
+        }
     gained, s, e = best
-    return {"window": f"best_{target_s:.0f}s", "target_s": target_s,
-            "status": "ok", "mps": gained / target_s, "pace_per_mile": None,
-            "meters": gained, "seconds": target_s,
-            "start_elapsed_s": s, "end_elapsed_s": e}
+    return {
+        "window": f"best_{target_s:.0f}s",
+        "target_s": target_s,
+        "status": "ok",
+        "mps": gained / target_s,
+        "pace_per_mile": None,
+        "meters": gained,
+        "seconds": target_s,
+        "start_elapsed_s": s,
+        "end_elapsed_s": e,
+    }
 
 
 def _best_distance_window(t, d, blocks, target_m: float) -> dict:
     """Fastest time to cover exactly `target_m`, interpolated at the ends."""
     import numpy as np
 
-    label = ("best_1mi" if abs(target_m - METERS_PER_MILE) < 1e-6
-             else f"best_{target_m / METERS_PER_MILE:.2f}mi")
+    label = (
+        "best_1mi"
+        if abs(target_m - METERS_PER_MILE) < 1e-6
+        else f"best_{target_m / METERS_PER_MILE:.2f}mi"
+    )
     best = None
     for lo, hi in blocks:
         tb, db = t[lo:hi], d[lo:hi]
@@ -726,7 +843,7 @@ def _best_distance_window(t, d, blocks, target_m: float) -> dict:
         if xu.size < 2:
             continue
 
-        def at(q, end: bool):
+        def at(q, end: bool, inv=inv):
             return time_at_distance(inv, q, end)
 
         # Time-to-cover is piecewise linear in the start distance with kinks
@@ -750,15 +867,29 @@ def _best_distance_window(t, d, blocks, target_m: float) -> dict:
             if best is None or took[j] < best[0]:
                 best = (float(took[j]), float(t_start[j]), float(t_end[j]))
     if best is None:
-        return {"window": label, "target_m": target_m, "mps": None,
-                "pace_per_mile": None, "status": "unavailable",
-                "reason": (f"no {target_m:.0f} m stretch free of sample gaps "
-                           f"over {MAX_SAMPLE_GAP_S:.0f} s and of stopped time")}
+        return {
+            "window": label,
+            "target_m": target_m,
+            "mps": None,
+            "pace_per_mile": None,
+            "status": "unavailable",
+            "reason": (
+                f"no {target_m:.0f} m stretch free of sample gaps "
+                f"over {MAX_SAMPLE_GAP_S:.0f} s and of stopped time"
+            ),
+        }
     took, s, e = best
-    return {"window": label, "target_m": target_m, "status": "ok",
-            "mps": target_m / took, "pace_per_mile": None,
-            "meters": target_m, "seconds": took,
-            "start_elapsed_s": s, "end_elapsed_s": e}
+    return {
+        "window": label,
+        "target_m": target_m,
+        "status": "ok",
+        "mps": target_m / took,
+        "pace_per_mile": None,
+        "meters": target_m,
+        "seconds": took,
+        "start_elapsed_s": s,
+        "end_elapsed_s": e,
+    }
 
 
 def _window_composition(con, activity_id: str, t0, start_s, end_s) -> dict:
@@ -775,18 +906,24 @@ def _window_composition(con, activity_id: str, t0, start_s, end_s) -> dict:
     span = max((b - a).total_seconds(), 1e-9)
     out = {}
     for cls, key in (("rwd_run", "run"), ("rwd_walk", "walk")):
-        secs = con.execute("""
+        secs = con.execute(
+            """
             SELECT coalesce(sum(date_diff('millisecond',
                        greatest(start_time, ?), least(end_time, ?)) / 1000.0), 0)
             FROM splits WHERE activity_id = ? AND split_type = ?
               AND end_time > ? AND start_time < ?
-        """, [a, b, activity_id, cls, a, b]).fetchone()[0]
+        """,
+            [a, b, activity_id, cls, a, b],
+        ).fetchone()[0]
         out[f"{key}_time_fraction"] = max(float(secs), 0.0) / span
-    flagged, total = con.execute("""
+    flagged, total = con.execute(
+        """
         SELECT count(*) FILTER (WHERE coalesce(quality_flags, '') <> ''), count(*)
         FROM records_enriched
         WHERE activity_id = ? AND timestamp BETWEEN ? AND ?
-    """, [activity_id, a, b]).fetchone()
+    """,
+        [activity_id, a, b],
+    ).fetchone()
     out["flagged_record_fraction"] = (flagged / total) if total else None
     out["n_enriched_records_in_window"] = total
     return out
@@ -794,40 +931,40 @@ def _window_composition(con, activity_id: str, t0, start_s, end_s) -> dict:
 
 def _best_filters(con, activity_id: str, coverage_fraction) -> dict:
     regime = con.execute(
-        "SELECT sampling_regime FROM activities WHERE activity_id = ?",
-        [activity_id]).fetchone()
+        "SELECT sampling_regime FROM activities WHERE activity_id = ?", [activity_id]
+    ).fetchone()
     return {
         "boundary_mode": "interpolated_exact",
         "distance_source": "records.distance_m (device odometer)",
         "distance_source_note": "NOT records.speed_mps, which is the fused "
-                                "instantaneous speed §9 prohibits; the "
-                                "cumulative odometer is a different field and "
-                                "agrees with path_distance_m to within 1% "
-                                "wherever both exist at adequate coverage",
+        "instantaneous speed §9 prohibits; the "
+        "cumulative odometer is a different field and "
+        "agrees with path_distance_m to within 1% "
+        "wherever both exist at adequate coverage",
         "max_sample_gap_s": MAX_SAMPLE_GAP_S,
         "stopped_time_excluded": True,
         "stopped_time_source": "stops table UNION rwd_stand splits, merged",
         "split_type": None,
         "walking_included": True,
         "gait_note": "a best window is one contiguous stretch of real ground, "
-                     "not a pooled aggregate; restricting to rwd_run destroys "
-                     "the mile (on a run/walk run a fully-running mile is "
-                     "rare)",
+        "not a pooled aggregate; restricting to rwd_run destroys "
+        "the mile (on a run/walk run a fully-running mile is "
+        "rare)",
         "sampling_regime": regime[0] if regime else None,
         "comparable_across_sampling_regimes": False,
         "regime_note": "the path a maximum finds depends on sampling density, "
-                       "so bests must not be compared across a switch "
-                       "between Smart Recording and 1 Hz",
+        "so bests must not be compared across a switch "
+        "between Smart Recording and 1 Hz",
         "gps_coverage_fraction": coverage_fraction,
         "distance_provenance": _provenance(coverage_fraction),
         "grain": "records",
         **_flag_note(con, activity_id),
-        "quality_flags_reason":
-            "100% of one-mile windows on every activity that has a mile "
-            "contain at least one flagged record, so rejecting on any flag "
-            "returns nothing; the winning window's flagged fraction is "
-            "reported instead. A maximum selects for positive measurement "
-            "error in a way a mean does not -- read that field.",
+        "quality_flags_reason": "100% of one-mile windows on every activity that has a "
+        "mile "
+        "contain at least one flagged record, so rejecting on any flag "
+        "returns nothing; the winning window's flagged fraction is "
+        "reported instead. A maximum selects for positive measurement "
+        "error in a way a mean does not -- read that field.",
     }
 
 
@@ -835,9 +972,12 @@ def _best_filters(con, activity_id: str, coverage_fraction) -> dict:
 # §6.0d cadence
 # --------------------------------------------------------------------------
 
+
 def _cadence_expr() -> str:
-    return (f"({CADENCE_STEPS_PER_STRIDE}.0 * "
-            f"(r.cadence_raw_rpm + coalesce(r.fractional_cadence, 0.0)))")
+    return (
+        f"({CADENCE_STEPS_PER_STRIDE}.0 * "
+        f"(r.cadence_raw_rpm + coalesce(r.fractional_cadence, 0.0)))"
+    )
 
 
 def mean_running_cadence(con, activity_id: str) -> dict:
@@ -866,28 +1006,47 @@ def mean_running_cadence(con, activity_id: str) -> dict:
     on purpose -- it answers "how fast were the legs turning over while
     running", which is the trainable variable (§14a).
     """
-    rows = con.execute(f"""
+    rows = con.execute(
+        f"""
         SELECT r.timestamp, {_cadence_expr()}
         FROM records r JOIN splits s ON s.activity_id = r.activity_id
              AND r.timestamp BETWEEN s.start_time AND s.end_time
         WHERE r.activity_id = ? AND s.split_type = 'rwd_run'
           AND r.cadence_raw_rpm IS NOT NULL AND r.cadence_raw_rpm > 0
         ORDER BY r.timestamp
-    """, [activity_id]).fetchall()
+    """,
+        [activity_id],
+    ).fetchall()
     filters = _cadence_filters(con, activity_id)
     if len(rows) < 2:
-        no_cad = con.execute(
-            "SELECT count(cadence_raw_rpm) FROM records WHERE activity_id = ?",
-            [activity_id]).fetchone()[0] == 0
-        return {"value": None, "n": 0, "status_hint": "unavailable",
-                "reason": ("this source records no cadence at all (the Strava "
-                           "phone file has none -- NULL, not zero)" if no_cad
-                           else "too few running records with cadence"),
-                "filters": filters}
+        no_cad = (
+            con.execute(
+                "SELECT count(cadence_raw_rpm) FROM records WHERE activity_id = ?",
+                [activity_id],
+            ).fetchone()[0]
+            == 0
+        )
+        return {
+            "value": None,
+            "n": 0,
+            "status_hint": "unavailable",
+            "reason": (
+                "this source records no cadence at all (the Strava "
+                "phone file has none -- NULL, not zero)"
+                if no_cad
+                else "too few running records with cadence"
+            ),
+            "filters": filters,
+        }
     num, den = weighted_mean(rows, record_weights(con, activity_id))
     if den <= 0:
-        return {"value": None, "n": len(rows), "status_hint": "unavailable",
-                "reason": "no weighted running time", "filters": filters}
+        return {
+            "value": None,
+            "n": len(rows),
+            "status_hint": "unavailable",
+            "reason": "no weighted running time",
+            "filters": filters,
+        }
     # The denominator of the weighted mean, next to the authoritative running
     # time it should approximate. They are not the same quantity -- the weight
     # sum omits records with no cadence and is capped -- so the pair is
@@ -895,14 +1054,20 @@ def mean_running_cadence(con, activity_id: str) -> dict:
     rwd_run_s = con.execute(
         "SELECT coalesce(sum(total_timer_time), 0) FROM splits "
         "WHERE activity_id = ? AND split_type = 'rwd_run'",
-        [activity_id]).fetchone()[0]
+        [activity_id],
+    ).fetchone()[0]
     n_high = sum(1 for _, c in rows if c is not None and c >= 200)
-    return {"value": num / den, "n": len(rows), "weight_seconds": den,
-            "rwd_run_timer_time_s": float(rwd_run_s),
-            # A maximum-adjacent artifact worth counting rather than averaging
-            # in: §14a measured a genuine spike well above 200 spm immediately
-            # after a walk->run boundary, at a near-constant speed.
-            "n_above_200_spm": n_high, "filters": filters}
+    return {
+        "value": num / den,
+        "n": len(rows),
+        "weight_seconds": den,
+        "rwd_run_timer_time_s": float(rwd_run_s),
+        # A maximum-adjacent artifact worth counting rather than averaging
+        # in: §14a measured a genuine spike well above 200 spm immediately
+        # after a walk->run boundary, at a near-constant speed.
+        "n_above_200_spm": n_high,
+        "filters": filters,
+    }
 
 
 # THE FOUR RUNNING-DYNAMICS CHANNELS, with the units Garmin actually uses.
@@ -946,7 +1111,8 @@ def running_dynamics(con, activity_id: str) -> dict:
     weights = record_weights(con, activity_id)
     out = {"filters": filters}
     for field, (unit, key) in sorted(RUNNING_DYNAMICS.items()):
-        rows = con.execute(f"""
+        rows = con.execute(
+            f"""
             SELECT r.timestamp, r.{field}
             FROM records r JOIN splits s ON s.activity_id = r.activity_id
                  AND r.timestamp BETWEEN s.start_time AND s.end_time
@@ -954,15 +1120,22 @@ def running_dynamics(con, activity_id: str) -> dict:
               AND r.{field} IS NOT NULL
               {filters["_flag_clause"]}
             ORDER BY r.timestamp
-        """, [activity_id]).fetchall()
+        """,
+            [activity_id],
+        ).fetchall()
         if len(rows) < 2:
-            out[key] = {"value": None, "unit": unit, "n": 0,
-                        "status_hint": "unavailable",
-                        "reason": "this device records no " + field
-                                  + " (the FR245 has no running dynamics; "
-                                    "stance_time_balance and "
-                                    "stance_time_percent need an HRM-Pro or "
-                                    "RD pod even on the FR265)"}
+            out[key] = {
+                "value": None,
+                "unit": unit,
+                "n": 0,
+                "status_hint": "unavailable",
+                "reason": "this device records no "
+                + field
+                + " (the FR245 has no running dynamics; "
+                "stance_time_balance and "
+                "stance_time_percent need an HRM-Pro or "
+                "RD pod even on the FR265)",
+            }
             continue
         num, den = weighted_mean(rows, weights)
         vals = sorted(v for _, v in rows)
@@ -980,9 +1153,12 @@ def running_dynamics(con, activity_id: str) -> dict:
 
 def _dynamics_filters(con, activity_id: str) -> dict:
     """What the dynamics means included, and whether flags could be applied."""
-    n_flagged, n_enriched = con.execute("""
+    n_flagged, n_enriched = con.execute(
+        """
         SELECT count(*) FILTER (WHERE coalesce(quality_flags, '') <> ''), count(*)
-        FROM records_enriched WHERE activity_id = ?""", [activity_id]).fetchone()
+        FROM records_enriched WHERE activity_id = ?""",
+        [activity_id],
+    ).fetchone()
     enriched = n_enriched > 0
     return {
         "split_type": "rwd_run",
@@ -991,25 +1167,29 @@ def _dynamics_filters(con, activity_id: str) -> dict:
         "grain": "record",
         "units": {k: v[0] for k, v in sorted(RUNNING_DYNAMICS.items())},
         "units_note": "Garmin's units are NOT the obvious ones: vertical "
-                      "oscillation and step length are MILLIMETRES, ground "
-                      "contact time is MILLISECONDS, vertical ratio is a "
-                      "PERCENT (oscillation / step length)",
+        "oscillation and step length are MILLIMETRES, ground "
+        "contact time is MILLISECONDS, vertical ratio is a "
+        "PERCENT (oscillation / step length)",
         "quality_flags_excluded": enriched,
         "quality_flags_available": enriched,
-        "quality_flags_reason":
-            (f"{n_flagged} of {n_enriched} enriched records flagged and "
-             f"excluded (§15.4)" if enriched else
-             "this run has no records_enriched rows -- it is `records JOIN "
-             "dem_elevations`, so it exists only where a DEM tile does. The "
-             "mean is over unfiltered `records` and is NOT §15.4-clean."),
+        "quality_flags_reason": (
+            f"{n_flagged} of {n_enriched} enriched records flagged and excluded (§15.4)"
+            if enriched
+            else "this run has no records_enriched rows -- it is `records JOIN "
+            "dem_elevations`, so it exists only where a DEM tile does. The "
+            "mean is over unfiltered `records` and is NOT §15.4-clean."
+        ),
         # The clause is carried so the query and the declaration cannot drift.
-        "_flag_clause":
-            ("AND EXISTS (SELECT 1 FROM records_enriched e "
-             " WHERE e.activity_id = r.activity_id AND e.timestamp = r.timestamp "
-             "   AND coalesce(e.quality_flags, '') = '')" if enriched else ""),
+        "_flag_clause": (
+            "AND EXISTS (SELECT 1 FROM records_enriched e "
+            " WHERE e.activity_id = r.activity_id AND e.timestamp = r.timestamp "
+            "   AND coalesce(e.quality_flags, '') = '')"
+            if enriched
+            else ""
+        ),
         "computes_nothing": "these are ANCHORS. No metric is derived from them "
-                            "yet -- M1 (mode detection) is the build that was "
-                            "waiting on this data",
+        "yet -- M1 (mode detection) is the build that was "
+        "waiting on this data",
     }
 
 
@@ -1030,39 +1210,58 @@ def no_splits_reason(con, activity_id: str) -> dict:
     """
     row = con.execute(
         "SELECT source, sport, sub_sport, coverage_fraction FROM activities "
-        "WHERE activity_id = ?", [activity_id]).fetchone()
+        "WHERE activity_id = ?",
+        [activity_id],
+    ).fetchone()
     if row is None:
-        return {"cause": "unknown_activity",
-                "reason": f"no activity {activity_id}"}
+        return {"cause": "unknown_activity", "reason": f"no activity {activity_id}"}
     source, sport, sub_sport, cov = row
     if source != "garmin_watch":
-        return {"cause": "not_the_watch", "source": source, "sport": sport,
-                "reason": (f"this is the {source} file, and run/walk detection "
-                           f"is the WATCH's -- the phone app does not segment, "
-                           f"so no rwd_* split exists to read")}
+        return {
+            "cause": "not_the_watch",
+            "source": source,
+            "sport": sport,
+            "reason": (
+                f"this is the {source} file, and run/walk detection "
+                f"is the WATCH's -- the phone app does not segment, "
+                f"so no rwd_* split exists to read"
+            ),
+        }
     if sport != "running":
-        return {"cause": "non_running_sport", "source": source, "sport": sport,
-                "reason": (f"the watch recorded this as {sport!r}"
-                           + (f"/{sub_sport!r}" if sub_sport else "")
-                           + f", and run/walk detection only runs on a RUNNING "
-                             f"activity. There is no walk to detect on a bike "
-                             f"or in a pool, so the absence is correct and is "
-                             f"not a gap in the file.")}
+        return {
+            "cause": "non_running_sport",
+            "source": source,
+            "sport": sport,
+            "reason": (
+                f"the watch recorded this as {sport!r}"
+                + (f"/{sub_sport!r}" if sub_sport else "")
+                + ", and run/walk detection only runs on a RUNNING "
+                "activity. There is no walk to detect on a bike "
+                "or in a pool, so the absence is correct and is "
+                "not a gap in the file."
+            ),
+        }
     # Running, on the watch, and still no segmentation. TWO causes are possible
     # and this cannot tell them apart, so it says so rather than picking.
-    return {"cause": "running_without_segmentation", "source": source,
-            "sport": sport, "coverage_fraction": cov,
-            "reason": (f"the watch recorded this as running but wrote no "
-                       f"run/walk segmentation. Two causes are possible and "
-                       f"this cannot distinguish them: an activity IMPORTED "
-                       f"into Garmin rather than recorded on the watch "
-                       f"(segmentation happens on the device, during the "
-                       f"activity -- a file that arrives in a bulk upload "
-                       f"can carry a full record stream and no splits), "
-                       f"or a recording where the feature was off. This run's "
-                       f"GPS coverage is "
-                       + (f"{cov:.2f}" if cov is not None else "unknown")
-                       + ", which is the only hint available here.")}
+    return {
+        "cause": "running_without_segmentation",
+        "source": source,
+        "sport": sport,
+        "coverage_fraction": cov,
+        "reason": (
+            "the watch recorded this as running but wrote no "
+            "run/walk segmentation. Two causes are possible and "
+            "this cannot distinguish them: an activity IMPORTED "
+            "into Garmin rather than recorded on the watch "
+            "(segmentation happens on the device, during the "
+            "activity -- a file that arrives in a bulk upload "
+            "can carry a full record stream and no splits), "
+            "or a recording where the feature was off. This run's "
+            "GPS coverage is "
+            + (f"{cov:.2f}" if cov is not None else "unknown")
+            + ", which is the only hint available here."
+        ),
+    }
 
 
 # --------------------------------------------------------------------------
@@ -1084,8 +1283,9 @@ def no_splits_reason(con, activity_id: str) -> dict:
 # filter" is unactionable without saying WHICH filter -- and NOT with a line
 # number, which drifts with every edit to that file and would then point at
 # the wrong line with full confidence.
-SPORT_HOLD_SITE = ("src/trail_factors/cli/terrain.py, dem_populate "
-                   "(`a.sport = 'running'`)")
+SPORT_HOLD_SITE = (
+    "src/trail_factors/cli/terrain.py, dem_populate (`a.sport = 'running'`)"
+)
 
 
 def terrain_state(con, activity_id: str) -> dict:
@@ -1106,59 +1306,90 @@ def terrain_state(con, activity_id: str) -> dict:
     absence produced a payload that contradicted itself.
     """
     n_enr = con.execute(
-        "SELECT count(*) FROM records_enriched WHERE activity_id = ?",
-        [activity_id]).fetchone()[0]
+        "SELECT count(*) FROM records_enriched WHERE activity_id = ?", [activity_id]
+    ).fetchone()[0]
     if n_enr:
         return {"state": "ok", "enriched_records": n_enr, "reason": None}
 
-    sport = con.execute("SELECT sport FROM activities WHERE activity_id = ?",
-                        [activity_id]).fetchone()
+    sport = con.execute(
+        "SELECT sport FROM activities WHERE activity_id = ?", [activity_id]
+    ).fetchone()
     sport = sport[0] if sport else None
-    pts = con.execute("SELECT lat, lon FROM records WHERE activity_id = ? "
-                      "AND lat IS NOT NULL", [activity_id]).fetchall()
+    pts = con.execute(
+        "SELECT lat, lon FROM records WHERE activity_id = ? AND lat IS NOT NULL",
+        [activity_id],
+    ).fetchall()
     if not pts:
-        return {"state": "outside_loaded_tiles", "enriched_records": 0,
-                "sport": sport, "covered_fraction": None,
-                "reason": "this activity has no position at all, so no tile "
-                          "can cover it (indoor, or a file with no GPS)"}
+        return {
+            "state": "outside_loaded_tiles",
+            "enriched_records": 0,
+            "sport": sport,
+            "covered_fraction": None,
+            "reason": "this activity has no position at all, so no tile "
+            "can cover it (indoor, or a file with no GPS)",
+        }
     try:
         from trail_factors.transform.dem import TileSet
+
         cov = TileSet().coverage([r[0] for r in pts], [r[1] for r in pts])
         covered = cov["fraction_covered"]
         missing = cov["missing_tiles"]
     except Exception as exc:
-        return {"state": "unpopulated", "enriched_records": 0, "sport": sport,
-                "covered_fraction": None,
-                "reason": f"the DEM tiles could not be read to decide this "
-                          f"({type(exc).__name__}: {exc})"}
+        return {
+            "state": "unpopulated",
+            "enriched_records": 0,
+            "sport": sport,
+            "covered_fraction": None,
+            "reason": f"the DEM tiles could not be read to decide this "
+            f"({type(exc).__name__}: {exc})",
+        }
 
     if missing:
-        return {"state": "outside_loaded_tiles", "enriched_records": 0,
-                "sport": sport, "covered_fraction": covered,
-                "missing_tiles": missing,
-                "reason": (f"no loaded DEM tile covers "
-                           f"{cov['n_uncovered']:,} of {cov['n_points']:,} "
-                           f"positions on this run "
-                           f"({covered:.0%} covered). Run the fetch command "
-                           f"each missing cell names, where it names one -- "
-                           f"ground with no USGS grid has none, and says "
-                           f"why.")}
-    if sport != "running":
-        return {"state": "held_by_sport", "enriched_records": 0, "sport": sport,
-                "covered_fraction": covered, "hold_site": SPORT_HOLD_SITE,
-                "reason": (f"a loaded DEM tile DOES cover this run "
-                           f"({covered:.0%} of {cov['n_points']:,} positions), "
-                           f"but its sport is {sport!r} and the terrain layers "
-                           f"are held to running by {SPORT_HOLD_SITE}. That "
-                           f"hold is §4.1's deferred decision about how each "
-                           f"activity type is used -- NOT a terrain gap, and "
-                           f"not a property of this run.")}
-    return {"state": "unpopulated", "enriched_records": 0, "sport": sport,
+        return {
+            "state": "outside_loaded_tiles",
+            "enriched_records": 0,
+            "sport": sport,
             "covered_fraction": covered,
-            "reason": (f"a loaded tile covers this run "
-                       f"({covered:.0%} of {cov['n_points']:,} positions) and "
-                       f"its sport is running, but dem_elevations has no rows "
-                       f"for it. Run `uv run trail-factors retile`.")}
+            "missing_tiles": missing,
+            "reason": (
+                f"no loaded DEM tile covers "
+                f"{cov['n_uncovered']:,} of {cov['n_points']:,} "
+                f"positions on this run "
+                f"({covered:.0%} covered). Run the fetch command "
+                f"each missing cell names, where it names one -- "
+                f"ground with no USGS grid has none, and says "
+                f"why."
+            ),
+        }
+    if sport != "running":
+        return {
+            "state": "held_by_sport",
+            "enriched_records": 0,
+            "sport": sport,
+            "covered_fraction": covered,
+            "hold_site": SPORT_HOLD_SITE,
+            "reason": (
+                f"a loaded DEM tile DOES cover this run "
+                f"({covered:.0%} of {cov['n_points']:,} positions), "
+                f"but its sport is {sport!r} and the terrain layers "
+                f"are held to running by {SPORT_HOLD_SITE}. That "
+                f"hold is §4.1's deferred decision about how each "
+                f"activity type is used -- NOT a terrain gap, and "
+                f"not a property of this run."
+            ),
+        }
+    return {
+        "state": "unpopulated",
+        "enriched_records": 0,
+        "sport": sport,
+        "covered_fraction": covered,
+        "reason": (
+            f"a loaded tile covers this run "
+            f"({covered:.0%} of {cov['n_points']:,} positions) and "
+            f"its sport is running, but dem_elevations has no rows "
+            f"for it. Run `uv run trail-factors retile`."
+        ),
+    }
 
 
 def cadence_by_grade(con, activity_id: str) -> dict:
@@ -1175,7 +1406,8 @@ def cadence_by_grade(con, activity_id: str) -> dict:
     excluded ones -- the bin totals then measure the filter rather than the
     time.
     """
-    rows = con.execute(f"""
+    rows = con.execute(
+        f"""
         WITH w AS (
           SELECT r.timestamp, r.activity_id, {_cadence_expr()} AS spm,
                  date_diff('second', r.timestamp,
@@ -1195,29 +1427,40 @@ def cadence_by_grade(con, activity_id: str) -> dict:
           AND s.split_type IN ('rwd_run', 'rwd_walk')
         GROUP BY 1, 2 HAVING sum(w.dt) >= ?
         ORDER BY 1, 2
-    """, [activity_id, GRADE_BIN_PCT, GRADE_BIN_PCT, MAX_SAMPLE_GAP_S,
-          MIN_BIN_TIME_S]).fetchall()
+    """,
+        [activity_id, GRADE_BIN_PCT, GRADE_BIN_PCT, MAX_SAMPLE_GAP_S, MIN_BIN_TIME_S],
+    ).fetchall()
     # DECIDED BY LOOKING, not asserted. The old string claimed "no DEM tile
     # covers this run", with a hard-coded corpus count, without checking
     # either half, and contradicted terrain_coverage in the same payload.
     ts = terrain_state(con, activity_id)
     n_enr = ts["enriched_records"]
     return {
-        "bins": [{"split_type": st, "grade_bin": b, "steps_per_min": spm,
-                  "weight_s": ws, "n": n} for st, b, spm, ws, n in rows],
+        "bins": [
+            {
+                "split_type": st,
+                "grade_bin": b,
+                "steps_per_min": spm,
+                "weight_s": ws,
+                "n": n,
+            }
+            for st, b, spm, ws, n in rows
+        ],
         "enriched_records": n_enr,
         "status_hint": "unavailable" if n_enr == 0 else "ok",
         "terrain_state": ts["state"],
         "reason": ts["reason"] if n_enr == 0 else None,
-        "filters": {**_cadence_filters(con, activity_id),
-                    "terrain_usable_required": True,
-                    "grade_required": True,
-                    "grade_bin_pct": GRADE_BIN_PCT,
-                    "min_bin_time_s": MIN_BIN_TIME_S,
-                    "quality_flags_excluded": True,
-                    "split_types_pooled": False,
-                    "weights_computed_before_filters": True,
-                    "source_table": "records JOIN records_enriched"},
+        "filters": {
+            **_cadence_filters(con, activity_id),
+            "terrain_usable_required": True,
+            "grade_required": True,
+            "grade_bin_pct": GRADE_BIN_PCT,
+            "min_bin_time_s": MIN_BIN_TIME_S,
+            "quality_flags_excluded": True,
+            "split_types_pooled": False,
+            "weights_computed_before_filters": True,
+            "source_table": "records JOIN records_enriched",
+        },
     }
 
 
@@ -1226,8 +1469,8 @@ def _cadence_filters(con, activity_id: str) -> dict:
         "cadence_formula": "(cadence_raw_rpm + fractional_cadence) x 2",
         "cadence_unit": "steps_per_minute",
         "cadence_formula_status": "confirmed against Garmin "
-                                  "averageRunningCadenceInStepsPerMinute and "
-                                  "maxRunningCadenceInStepsPerMinute (§9)",
+        "averageRunningCadenceInStepsPerMinute and "
+        "maxRunningCadenceInStepsPerMinute (§9)",
         "cadence_zero_excluded": True,
         "split_type": "rwd_run",
         "split_types_pooled": False,
@@ -1239,8 +1482,8 @@ def _cadence_filters(con, activity_id: str) -> dict:
         "grain": "records",
         "comparable_to_garmin_summary": False,
         "garmin_note": "Garmin's averageRunningCadence includes zero-cadence "
-                       "records despite its name (+3.64 spm difference); this "
-                       "figure is running-only and non-zero-only",
+        "records despite its name (+3.64 spm difference); this "
+        "figure is running-only and non-zero-only",
         **_flag_note(con, activity_id),
     }
 
@@ -1296,14 +1539,20 @@ def max_hr(con, activity_id: str) -> dict:
     figure for "how high did this heart go"; the record stream is the only one
     that can be placed in time or checked for cadence lock.
     """
-    rows = con.execute("""
+    rows = con.execute(
+        """
         SELECT timestamp, heart_rate FROM records
         WHERE activity_id = ? AND heart_rate IS NOT NULL AND heart_rate > 0
         ORDER BY timestamp
-    """, [activity_id]).fetchall()
-    device, avg_row = con.execute("""
+    """,
+        [activity_id],
+    ).fetchall()
+    device, avg_row = con.execute(
+        """
         SELECT session_max_hr, NULL FROM activities WHERE activity_id = ?
-    """, [activity_id]).fetchone() or (None, None)
+    """,
+        [activity_id],
+    ).fetchone() or (None, None)
     filters = _max_hr_filters(con, activity_id)
     if not rows:
         # THE SAME ASSERTED-CAUSE FAMILY, and it misfires the same way: of the
@@ -1311,26 +1560,38 @@ def max_hr(con, activity_id: str) -> dict:
         # all were watch swims (the optical sensor does not read underwater)
         # and one was the Strava file. It named the rare case as the certain
         # one.
-        _hr = con.execute("SELECT source, sport FROM activities "
-                          "WHERE activity_id = ?", [activity_id]).fetchone()
-        _src, _sport = (_hr if _hr is not None else (None, None))
-        _why = ("this is the strava_phone file, which carries no heart rate at "
-                "all -- NULL, not zero" if _src != "garmin_watch" else
-                f"the watch recorded this as {_sport!r} and wrote no heart "
-                f"rate; on a swim the optical sensor does not read underwater"
-                if _sport == "swimming" else
-                f"the watch recorded this as {_sport!r} and wrote no heart "
-                f"rate -- NULL, not zero. The cause is not determinable from "
-                f"the file")
-        return {"max_hr_recorded": {"value": None, "status_hint": "unavailable",
-                                    "reason": f"this activity records no heart "
-                                              f"rate: {_why}",
-                                    "source": "records.heart_rate"},
-                "max_hr_30s": {"value": None, "status_hint": "unavailable",
-                               "reason": "no heart rate to window",
-                               "source": f"records.heart_rate, {MAX_HR_WINDOW_S:.0f} s rolling mean"},
-                "session_max_hr": device, "session_agrees": None,
-                "filters": filters}
+        _hr = con.execute(
+            "SELECT source, sport FROM activities WHERE activity_id = ?", [activity_id]
+        ).fetchone()
+        _src, _sport = _hr if _hr is not None else (None, None)
+        _why = (
+            "this is the strava_phone file, which carries no heart rate at "
+            "all -- NULL, not zero"
+            if _src != "garmin_watch"
+            else f"the watch recorded this as {_sport!r} and wrote no heart "
+            f"rate; on a swim the optical sensor does not read underwater"
+            if _sport == "swimming"
+            else f"the watch recorded this as {_sport!r} and wrote no heart "
+            f"rate -- NULL, not zero. The cause is not determinable from "
+            f"the file"
+        )
+        return {
+            "max_hr_recorded": {
+                "value": None,
+                "status_hint": "unavailable",
+                "reason": f"this activity records no heart rate: {_why}",
+                "source": "records.heart_rate",
+            },
+            "max_hr_30s": {
+                "value": None,
+                "status_hint": "unavailable",
+                "reason": "no heart rate to window",
+                "source": f"records.heart_rate, {MAX_HR_WINDOW_S:.0f} s rolling mean",
+            },
+            "session_max_hr": device,
+            "session_agrees": None,
+            "filters": filters,
+        }
 
     peak = max(rows, key=lambda r: r[1])
     recorded = {
@@ -1340,7 +1601,7 @@ def max_hr(con, activity_id: str) -> dict:
         "reason": None,
         "source": "records.heart_rate, single highest sample",
         "caveat": "A SINGLE SAMPLE IS A SPIKE CANDIDATE. Quote max_hr_30s "
-                  "unless you specifically want what the watch displayed.",
+        "unless you specifically want what the watch displayed.",
     }
     window = _max_hr_window(con, activity_id, rows)
     agrees = None
@@ -1353,33 +1614,46 @@ def max_hr(con, activity_id: str) -> dict:
         "max_hr_30s": window,
         "session_max_hr": None if device is None else float(device),
         "session_agrees": agrees,
-        "session_note": (None if agrees is not False else
-                         f"the watch's session summary says {device:.0f} bpm "
-                         f"and its record stream peaks at "
-                         f"{recorded['value']:.0f}. BOTH ARE THE SAME WATCH, "
-                         f"same file. The summary is computed over continuous "
-                         f"internal sampling; the record stream is written on "
-                         f"the Smart Recording schedule and is a DECIMATED "
-                         f"view of it, so it can only understate. Not a tie to "
-                         f"break -- the summary is the better ceiling, the "
-                         f"records are the only thing placeable in time."),
+        "session_note": (
+            None
+            if agrees is not False
+            else f"the watch's session summary says {device:.0f} bpm "
+            f"and its record stream peaks at "
+            f"{recorded['value']:.0f}. BOTH ARE THE SAME WATCH, "
+            f"same file. The summary is computed over continuous "
+            f"internal sampling; the record stream is written on "
+            f"the Smart Recording schedule and is a DECIMATED "
+            f"view of it, so it can only understate. Not a tie to "
+            f"break -- the summary is the better ceiling, the "
+            f"records are the only thing placeable in time."
+        ),
         "filters": filters,
     }
 
 
 def _max_hr_window(con, activity_id: str, rows: list) -> dict:
     """Highest `MAX_HR_WINDOW_S` rolling mean, flagged records excluded."""
-    flagged = {r[0] for r in con.execute("""
+    flagged = {
+        r[0]
+        for r in con.execute(
+            """
         SELECT timestamp FROM records_enriched
         WHERE activity_id = ? AND coalesce(quality_flags, '') <> ''
-    """, [activity_id]).fetchall()}
+    """,
+            [activity_id],
+        ).fetchall()
+    }
     clean = [r for r in rows if r[0] not in flagged]
-    src = (f"records.heart_rate, highest {MAX_HR_WINDOW_S:.0f} s rolling mean"
-           + (", §15.4-flagged records excluded" if flagged else ""))
+    src = f"records.heart_rate, highest {MAX_HR_WINDOW_S:.0f} s rolling mean" + (
+        ", §15.4-flagged records excluded" if flagged else ""
+    )
     if len(clean) < 2:
-        return {"value": None, "status_hint": "unavailable",
-                "reason": "fewer than two unflagged heart-rate records",
-                "source": src}
+        return {
+            "value": None,
+            "status_hint": "unavailable",
+            "reason": "fewer than two unflagged heart-rate records",
+            "source": src,
+        }
     best = None
     for i, (t0, _) in enumerate(clean):
         j, total, weight = i, 0.0, 0.0
@@ -1394,15 +1668,18 @@ def _max_hr_window(con, activity_id: str, rows: list) -> dict:
             weight += dt
             j += 1
         if weight < MAX_HR_WINDOW_S * 0.8:
-            continue                       # a window that never filled
+            continue  # a window that never filled
         mean = total / weight
         if best is None or mean > best[0]:
             best = (mean, t0, clean[j][0], weight)
     if best is None:
-        return {"value": None, "status_hint": "gated",
-                "reason": f"no {MAX_HR_WINDOW_S:.0f} s window of unflagged "
-                          f"records could be filled on this run",
-                "source": src}
+        return {
+            "value": None,
+            "status_hint": "gated",
+            "reason": f"no {MAX_HR_WINDOW_S:.0f} s window of unflagged "
+            f"records could be filled on this run",
+            "source": src,
+        }
     mean, start, end, weight = best
     # THE FLAGGED FRACTION OF THE WINNING WINDOW, exactly as windowed_bests
     # reports it: a ceiling drawn from a stretch that was half-excluded is a
@@ -1424,27 +1701,29 @@ def _max_hr_window(con, activity_id: str, rows: list) -> dict:
 
 def _max_hr_filters(con, activity_id: str) -> dict:
     n_enriched = con.execute(
-        "SELECT count(*) FROM records_enriched WHERE activity_id = ?",
-        [activity_id]).fetchone()[0]
+        "SELECT count(*) FROM records_enriched WHERE activity_id = ?", [activity_id]
+    ).fetchone()[0]
     return {
         "hr_series": "RAW records.heart_rate -- NOT lag-shifted. The 40 s "
-                     "shift aligns HR to the effort that caused it, which is "
-                     "what matching needs; a ceiling wants the peak as "
-                     "recorded.",
+        "shift aligns HR to the effort that caused it, which is "
+        "what matching needs; a ceiling wants the peak as "
+        "recorded.",
         "window_s": MAX_HR_WINDOW_S,
         "window_weighting": "time-weighted; sampling is not uniform",
         "stopped_time_excluded": False,
         "stopped_time_note": "a peak during a stop is still a peak the heart "
-                             "reached; this is not a rate",
+        "reached; this is not a rate",
         "quality_flags_excluded": n_enriched > 0,
         "quality_flags_available": n_enriched > 0,
-        "quality_flags_reason":
-            ("§15.4-flagged records are excluded from the windowed figure; the "
-             "single-sample figure is NOT filtered, because it is defined as "
-             "what was recorded" if n_enriched > 0 else
-             "this run has no records_enriched rows, so no per-record flags "
-             "exist to apply -- the windowed figure is unfiltered and is NOT "
-             "§15.4-clean"),
+        "quality_flags_reason": (
+            "§15.4-flagged records are excluded from the windowed figure; the "
+            "single-sample figure is NOT filtered, because it is defined as "
+            "what was recorded"
+            if n_enriched > 0
+            else "this run has no records_enriched rows, so no per-record flags "
+            "exist to apply -- the windowed figure is unfiltered and is NOT "
+            "§15.4-clean"
+        ),
         "grain": "record",
     }
 
@@ -1472,8 +1751,12 @@ def summarise(values: list[float | None]) -> dict:
     def q(f):
         return pop[min(int(f * len(pop)), len(pop) - 1)]
 
-    return {"median": statistics.median(pop), "p25": q(0.25), "p75": q(0.75),
-            "n": len(pop)}
+    return {
+        "median": statistics.median(pop),
+        "p25": q(0.25),
+        "p75": q(0.75),
+        "n": len(pop),
+    }
 
 
 # --------------------------------------------------------------------------
@@ -1491,8 +1774,14 @@ EFFORT_WINDOWS_S = (10.0, 30.0)
 MIN_SAMPLES_PER_WINDOW = 3
 
 
-def effort_paces(con, activity_id: str, start_utc, end_utc,
-                 length_m: float | None, duration_s: float | None) -> dict:
+def effort_paces(
+    con,
+    activity_id: str,
+    start_utc,
+    end_utc,
+    length_m: float | None,
+    duration_s: float | None,
+) -> dict:
     """Effort-mean pace and the best windows INSIDE one segment effort.
 
     TWO DIFFERENT QUANTITIES, AND THE DISTINCTION IS THE POINT.
@@ -1512,42 +1801,69 @@ def effort_paces(con, activity_id: str, start_utc, end_utc,
     to run and a windowed best reports capacity.
     """
     out = {
-        "mean_mps": None, "mean_pace_per_mile": None,
-        "windows": [], "filters": _effort_pace_filters(con, activity_id),
+        "mean_mps": None,
+        "mean_pace_per_mile": None,
+        "windows": [],
+        "filters": _effort_pace_filters(con, activity_id),
     }
-    if length_m is not None and duration_s is not None and duration_s > 0 \
-            and length_m > 0:
+    if (
+        length_m is not None
+        and duration_s is not None
+        and duration_s > 0
+        and length_m > 0
+    ):
         out["mean_mps"] = length_m / duration_s
         out["mean_pace_per_mile"] = pace_per_mile(out["mean_mps"])
 
-    rows = con.execute("""
+    rows = con.execute(
+        """
         SELECT timestamp, distance_m FROM records
         WHERE activity_id = ? AND distance_m IS NOT NULL
           AND timestamp BETWEEN ? AND ? ORDER BY timestamp
-    """, [activity_id, start_utc, end_utc]).fetchall()
+    """,
+        [activity_id, start_utc, end_utc],
+    ).fetchall()
     for target in EFFORT_WINDOWS_S:
         out["windows"].append(
-            _effort_window(con, activity_id, rows, target, start_utc, end_utc))
+            _effort_window(con, activity_id, rows, target, start_utc, end_utc)
+        )
     return out
 
 
-def _effort_window(con, activity_id: str, rows: list, target_s: float,
-                   start_utc, end_utc) -> dict:
+def _effort_window(
+    con, activity_id: str, rows: list, target_s: float, start_utc, end_utc
+) -> dict:
     """One sliding window inside an effort, or a stated reason there is none."""
     import numpy as np
 
     label = f"best_{target_s:.0f}s"
     span = (end_utc - start_utc).total_seconds()
     if span < target_s:
-        return {"window": label, "target_s": target_s, "status": "unavailable",
-                "mps": None, "pace_per_mile": None, "n_samples": len(rows),
-                "reason": (f"the effort lasts {span:.0f} s, shorter than the "
-                           f"{target_s:.0f} s window")}
+        return {
+            "window": label,
+            "target_s": target_s,
+            "status": "unavailable",
+            "mps": None,
+            "pace_per_mile": None,
+            "n_samples": len(rows),
+            "reason": (
+                f"the effort lasts {span:.0f} s, shorter than the "
+                f"{target_s:.0f} s window"
+            ),
+        }
     if len(rows) < MIN_SAMPLES_PER_WINDOW:
-        return {"window": label, "target_s": target_s, "status": "unavailable",
-                "mps": None, "pace_per_mile": None, "n_samples": len(rows),
-                "reason": (f"{len(rows)} samples in the effort, below the "
-                           f"{MIN_SAMPLES_PER_WINDOW} a window needs")}
+        return {
+            "window": label,
+            "target_s": target_s,
+            "status": "unavailable",
+            "mps": None,
+            "pace_per_mile": None,
+            "n_samples": len(rows),
+            "reason": (
+                f"{len(rows)} samples in the effort, below the "
+                f"{MIN_SAMPLES_PER_WINDOW} a window needs"
+            ),
+        }
 
     t = np.array([(r[0] - rows[0][0]).total_seconds() for r in rows], dtype=float)
     d = np.maximum.accumulate(np.array([float(r[1]) for r in rows], dtype=float))
@@ -1580,17 +1896,19 @@ def _effort_window(con, activity_id: str, rows: list, target_s: float,
         if inside < MIN_SAMPLES_PER_WINDOW:
             w["status"] = "gated"
             w["mps"], w["pace_per_mile"] = None, None
-            w["reason"] = (f"only {inside} samples inside the {target_s:.0f} s "
-                           f"window; path-derived speed is an average over the "
-                           f"sampling interval, so this would be one or two "
-                           f"intervals read as a peak")
+            w["reason"] = (
+                f"only {inside} samples inside the {target_s:.0f} s "
+                f"window; path-derived speed is an average over the "
+                f"sampling interval, so this would be one or two "
+                f"intervals read as a peak"
+            )
     return w
 
 
 def _effort_pace_filters(con, activity_id: str) -> dict:
     regime = con.execute(
-        "SELECT sampling_regime FROM activities WHERE activity_id = ?",
-        [activity_id]).fetchone()
+        "SELECT sampling_regime FROM activities WHERE activity_id = ?", [activity_id]
+    ).fetchone()
     return {
         "mean_grain": "whole effort, summit to col, over moving time",
         "mean_source": "segment_efforts.length_m / duration_s",
@@ -1605,9 +1923,9 @@ def _effort_pace_filters(con, activity_id: str) -> dict:
         "comparable_across_sampling_regimes": False,
         "quality_flags_excluded": False,
         "note": "the mean and the windowed best are DIFFERENT QUANTITIES: the "
-                "mean is what the terrain cost over the whole slope, the "
-                "window is the part that was actually run fast. Never "
-                "substitute one for the other.",
+        "mean is what the terrain cost over the whole slope, the "
+        "window is the part that was actually run fast. Never "
+        "substitute one for the other.",
     }
 
 
@@ -1632,8 +1950,13 @@ GRADE_BAND_MODERATE_PCT = 5.0
 GRADE_BAND_GENTLE_PCT = 1.0
 
 
-def effort_profile(con, activity_id: str, start_distance_m: float | None,
-                   end_distance_m: float | None, direction: str) -> dict:
+def effort_profile(
+    con,
+    activity_id: str,
+    start_distance_m: float | None,
+    end_distance_m: float | None,
+    direction: str,
+) -> dict:
     """The grade composition of one effort, distance-weighted.
 
     WHY THIS EXISTS RATHER THAN A CHANGED BOUNDARY RULE. A stored
@@ -1662,19 +1985,29 @@ def effort_profile(con, activity_id: str, start_distance_m: float | None,
     over-weights exactly the varying sections it is meant to characterise.
     """
     out = {
-        "len_steep_m": None, "len_moderate_m": None, "len_gentle_m": None,
-        "len_flat_m": None, "wrong_sign_m": None,
-        "steep_mean_grade_pct": None, "tail_after_last_steep_m": None,
+        "len_steep_m": None,
+        "len_moderate_m": None,
+        "len_gentle_m": None,
+        "len_flat_m": None,
+        "wrong_sign_m": None,
+        "steep_mean_grade_pct": None,
+        "tail_after_last_steep_m": None,
         "grade_coverage_fraction": None,
     }
-    if start_distance_m is None or end_distance_m is None \
-            or end_distance_m <= start_distance_m:
+    if (
+        start_distance_m is None
+        or end_distance_m is None
+        or end_distance_m <= start_distance_m
+    ):
         return out
-    rows = con.execute("""
+    rows = con.execute(
+        """
         SELECT path_distance_m, grade_pct FROM records_enriched
         WHERE activity_id = ? AND path_distance_m BETWEEN ? AND ?
         ORDER BY path_distance_m
-    """, [activity_id, start_distance_m, end_distance_m]).fetchall()
+    """,
+        [activity_id, start_distance_m, end_distance_m],
+    ).fetchall()
     if len(rows) < 3:
         return out
 
@@ -1709,19 +2042,24 @@ def effort_profile(con, activity_id: str, start_distance_m: float | None,
             steep_num += g * w
             steep_den += w
             last_steep_d = d
-    out.update({
-        "len_steep_m": bands["steep"], "len_moderate_m": bands["moderate"],
-        "len_gentle_m": bands["gentle"], "len_flat_m": bands["flat"],
-        "wrong_sign_m": wrong,
-        "steep_mean_grade_pct": (steep_num / steep_den) if steep_den > 0 else None,
-        # The run-out: how much of the effort comes AFTER the last sample that
-        # was still steep. Descent-biased on the development trail, but not
-        # the typical case -- typically about a tenth of the length, and about
-        # one descent in six exceeded a third.
-        "tail_after_last_steep_m": (hi - last_steep_d) if last_steep_d is not None
-        else None,
-        "grade_coverage_fraction": covered / span if span > 0 else None,
-    })
+    out.update(
+        {
+            "len_steep_m": bands["steep"],
+            "len_moderate_m": bands["moderate"],
+            "len_gentle_m": bands["gentle"],
+            "len_flat_m": bands["flat"],
+            "wrong_sign_m": wrong,
+            "steep_mean_grade_pct": (steep_num / steep_den) if steep_den > 0 else None,
+            # The run-out: how much of the effort comes AFTER the last sample that
+            # was still steep. Descent-biased on the development trail, but not
+            # the typical case -- typically about a tenth of the length, and about
+            # one descent in six exceeded a third.
+            "tail_after_last_steep_m": (hi - last_steep_d)
+            if last_steep_d is not None
+            else None,
+            "grade_coverage_fraction": covered / span if span > 0 else None,
+        }
+    )
     return out
 
 
@@ -1729,9 +2067,9 @@ def profile_filters() -> dict:
     return {
         "weighting": "distance, midpoint intervals clipped to the effort span",
         "band_definition": f"SIGNED by the effort's own direction: an "
-                           f"ascent's steep band is >= +"
-                           f"{GRADE_BAND_STEEP_PCT:.0f}%, a descent's is <= "
-                           f"-{GRADE_BAND_STEEP_PCT:.0f}%",
+        f"ascent's steep band is >= +"
+        f"{GRADE_BAND_STEEP_PCT:.0f}%, a descent's is <= "
+        f"-{GRADE_BAND_STEEP_PCT:.0f}%",
         # steep_mean_grade_pct and tail_after_last_steep_m do NOT use the
         # steep band: they select moderate-or-steeper ground.
         "steep_threshold_pct": GRADE_BAND_MODERATE_PCT,
@@ -1741,33 +2079,35 @@ def profile_filters() -> dict:
             f"in the effort's own direction (an ascent's >= "
             f"+{GRADE_BAND_MODERATE_PCT:.0f}%, a descent's <= "
             f"-{GRADE_BAND_MODERATE_PCT:.0f}%), not the "
-            f"{GRADE_BAND_STEEP_PCT:.0f}% steep band"),
+            f"{GRADE_BAND_STEEP_PCT:.0f}% steep band"
+        ),
         "steep_mean_estimator": (
             "distance-weighted mean of the per-record grade_pct over that "
             "ground; each grade_pct is a short-window (25 m) grade, not the "
             "effort's end-to-end rise over run. On a short effort with few "
             "records the two estimators can differ, and the steep mean can "
             "read SHALLOWER than the effort's mean_grade_pct while keeping "
-            "its sign -- a property of the estimators, not a sign error"),
-        "bands_pct": {"steep": f">= {GRADE_BAND_STEEP_PCT:.0f}",
-                      "moderate": f"{GRADE_BAND_MODERATE_PCT:.0f}-"
-                                  f"{GRADE_BAND_STEEP_PCT:.0f}",
-                      "gentle": f"{GRADE_BAND_GENTLE_PCT:.0f}-"
-                                f"{GRADE_BAND_MODERATE_PCT:.0f}",
-                      "flat": f"< {GRADE_BAND_GENTLE_PCT:.0f} (includes "
-                              f"wrong-sign)"},
+            "its sign -- a property of the estimators, not a sign error"
+        ),
+        "bands_pct": {
+            "steep": f">= {GRADE_BAND_STEEP_PCT:.0f}",
+            "moderate": f"{GRADE_BAND_MODERATE_PCT:.0f}-{GRADE_BAND_STEEP_PCT:.0f}",
+            "gentle": f"{GRADE_BAND_GENTLE_PCT:.0f}-{GRADE_BAND_MODERATE_PCT:.0f}",
+            "flat": f"< {GRADE_BAND_GENTLE_PCT:.0f} (includes wrong-sign)",
+        },
         "grade_source": "records_enriched.grade_pct",
         "boundary_rule_unchanged": True,
         "note": "the profile is carried rather than the boundary moved: the "
-                "obvious detector fix mirrors the artifact onto descents "
-                "instead of removing it, and the residual needs a threshold "
-                "that one trail's data cannot fit (§5).",
+        "obvious detector fix mirrors the artifact onto descents "
+        "instead of removing it, and the residual needs a threshold "
+        "that one trail's data cannot fit (§5).",
     }
 
 
 # --------------------------------------------------------------------------
 # §6.0g per-effort pace BY DIRECTION -- the athlete's second focus metric
 # --------------------------------------------------------------------------
+
 
 def effort_pace_by_direction(con, activity_id: str) -> dict:
     """Every slope effort on one run, plus a distance-weighted split by direction.
@@ -1785,12 +2125,14 @@ def effort_pace_by_direction(con, activity_id: str) -> dict:
     descents on rolling terrain NEED NOT COVER THE SAME GROUND: on the
     development trail, several two-directional segments had an ascent more
     than twice the descent's length, because plateau absorption glues flat
-    ground onto the ascent direction (§14k). So an ascent-vs-descent pace difference is partly a
+    ground onto the ascent direction (§14k). So an ascent-vs-descent pace difference is
+    partly a
     difference of terrain, not of the athlete. `comparable_ground` reports how
     far apart the two directions' total distances are, so a reader can see how
     much of the gap that could explain.
     """
-    rows = con.execute("""
+    rows = con.execute(
+        """
         SELECT e.segment_id, e.slope_index, e.direction, e.length_m,
                e.duration_s, e.mean_grade_pct, e.avg_hr, e.vertical_m,
                e.start_utc, e.end_utc, t.start_distance_m, t.end_distance_m
@@ -1799,32 +2141,57 @@ def effort_pace_by_direction(con, activity_id: str) -> dict:
           ON t.activity_id = e.activity_id AND t.slope_index = e.slope_index
         WHERE e.activity_id = ?
         ORDER BY e.start_utc
-    """, [activity_id]).fetchall()
+    """,
+        [activity_id],
+    ).fetchall()
 
     efforts = []
-    for (sid, idx, direction, length_m, dur, grade, hr, vert,
-         s_utc, e_utc, d0, d1) in rows:
+    for (
+        sid,
+        idx,
+        direction,
+        length_m,
+        dur,
+        grade,
+        hr,
+        vert,
+        s_utc,
+        e_utc,
+        d0,
+        d1,
+    ) in rows:
         pace = effort_paces(con, activity_id, s_utc, e_utc, length_m, dur)
-        best30 = next((w for w in pace["windows"] if w["window"] == "best_30s"),
-                      None)
+        best30 = next((w for w in pace["windows"] if w["window"] == "best_30s"), None)
         prof = effort_profile(con, activity_id, d0, d1, direction)
-        efforts.append({
-            "segment_id": sid, "slope_index": idx, "direction": direction,
-            "length_m": length_m, "duration_s": dur,
-            "mean_grade_pct": grade, "vertical_m": vert, "avg_hr": hr,
-            "mean_mps": pace["mean_mps"],
-            "mean_pace_per_mile": pace["mean_pace_per_mile"],
-            "best_30s_pace_per_mile": (best30.get("pace_per_mile")
-                                       if best30 is not None else None),
-            "best_30s_status": (best30.get("status")
-                                if best30 is not None else None),
-            "steep_mean_grade_pct": prof["steep_mean_grade_pct"],
-        })
+        efforts.append(
+            {
+                "segment_id": sid,
+                "slope_index": idx,
+                "direction": direction,
+                "length_m": length_m,
+                "duration_s": dur,
+                "mean_grade_pct": grade,
+                "vertical_m": vert,
+                "avg_hr": hr,
+                "mean_mps": pace["mean_mps"],
+                "mean_pace_per_mile": pace["mean_pace_per_mile"],
+                "best_30s_pace_per_mile": (
+                    best30.get("pace_per_mile") if best30 is not None else None
+                ),
+                "best_30s_status": (
+                    best30.get("status") if best30 is not None else None
+                ),
+                "steep_mean_grade_pct": prof["steep_mean_grade_pct"],
+            }
+        )
 
     by_direction = {}
     for direction in ("ascent", "descent"):
-        sel = [e for e in efforts if e["direction"] == direction
-               and e["length_m"] and e["duration_s"]]
+        sel = [
+            e
+            for e in efforts
+            if e["direction"] == direction and e["length_m"] and e["duration_s"]
+        ]
         dist = sum(e["length_m"] for e in sel)
         secs = sum(e["duration_s"] for e in sel)
         hrs = [(e["avg_hr"], e["duration_s"]) for e in sel if e["avg_hr"]]
@@ -1839,8 +2206,11 @@ def effort_pace_by_direction(con, activity_id: str) -> dict:
             "mps": (dist / secs) if secs > 0 else None,
             "pace_per_mile": pace_per_mile(dist / secs) if secs > 0 else None,
             "avg_hr": (hr_num / hr_den) if hr_den > 0 else None,
-            "mean_grade_pct": (sum(e["mean_grade_pct"] * e["length_m"] for e in sel)
-                               / dist) if dist > 0 else None,
+            "mean_grade_pct": (
+                sum(e["mean_grade_pct"] * e["length_m"] for e in sel) / dist
+            )
+            if dist > 0
+            else None,
         }
 
     a, d = by_direction["ascent"]["distance_m"], by_direction["descent"]["distance_m"]
@@ -1849,19 +2219,22 @@ def effort_pace_by_direction(con, activity_id: str) -> dict:
         "efforts": efforts,
         "by_direction": by_direction,
         "comparable_ground": {
-            "ascent_distance_m": a, "descent_distance_m": d,
+            "ascent_distance_m": a,
+            "descent_distance_m": d,
             "length_ratio": ratio,
             "note": "ascents and descents need not cover the same ground -- "
-                    "plateau absorption glues flat ground onto the ascent "
-                    "direction (§14k). A ratio far from 1 means the "
-                    "direction difference is partly terrain, not the athlete.",
+            "plateau absorption glues flat ground onto the ascent "
+            "direction (§14k). A ratio far from 1 means the "
+            "direction difference is partly terrain, not the athlete.",
         },
-        "filters": {**_effort_pace_filters(con, activity_id),
-                    "grain": "segment efforts, grouped by direction",
-                    "aggregate_weighting": "distance (sum length / sum moving time)",
-                    "hr_weighting": "effort duration",
-                    "stopped_time_excluded": True,
-                    "quality_flags_excluded": False,
-                    "confound": "ascent and descent cover different ground; "
-                                "read comparable_ground.length_ratio"},
+        "filters": {
+            **_effort_pace_filters(con, activity_id),
+            "grain": "segment efforts, grouped by direction",
+            "aggregate_weighting": "distance (sum length / sum moving time)",
+            "hr_weighting": "effort duration",
+            "stopped_time_excluded": True,
+            "quality_flags_excluded": False,
+            "confound": "ascent and descent cover different ground; "
+            "read comparable_ground.length_ratio",
+        },
     }

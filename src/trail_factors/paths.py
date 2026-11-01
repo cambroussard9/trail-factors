@@ -46,24 +46,27 @@ ATHLETE_DIR = _env_path("TRAIL_FACTORS_ATHLETE_DIR", DATA_DIR / "athlete")
 # NOT CORPUS DATA, and the separate directory is the point (§10.1). Things
 # under here are LOOKUPS -- fetched to decide what to fetch next -- and are
 # never ingested, never joined to a run, and never read by anything in
-# src/trail_factors/analysis or src/trail_factors/ingest. Deleting it loses nothing but a re-fetch.
+# src/trail_factors/analysis or src/trail_factors/ingest. Deleting it loses nothing but
+# a re-fetch.
 LOOKUP_DIR = _env_path("TRAIL_FACTORS_LOOKUP_DIR", DATA_DIR / "lookup")
 # SYNC-JOB STATE: operational and regenerable, safe to delete, and kept apart
 # from ATHLETE_DIR so that a `rm` of one is never mistaken for the other.
 JOBS_FILE = _env_path("TRAIL_FACTORS_JOBS_FILE", DATA_DIR / "jobs.json")
-# The athlete configuration (src/trail_factors/config.py). Optional: absent means defaults.
-CONFIG_FILE = _env_path("TRAIL_FACTORS_CONFIG",
-                        REPO_ROOT / "config" / "athlete.yaml")
+# The athlete configuration (src/trail_factors/config.py). Optional: absent means
+# defaults.
+CONFIG_FILE = _env_path("TRAIL_FACTORS_CONFIG", REPO_ROOT / "config" / "athlete.yaml")
 
 # GARMIN CREDENTIALS LIVE OUTSIDE THE REPO, structurally. The token store holds
 # an OAuth token, and the auth-state file the 30-minute lockout after a failed
 # login. Neither may sit inside the working tree, where one `git add -A` would
 # publish it -- `garmin_api` refuses a path under REPO_ROOT rather than trusting
 # .gitignore to catch it.
-GARMIN_TOKENSTORE = _env_path("TRAIL_FACTORS_GARMIN_TOKENSTORE",
-                              Path.home() / ".garminconnect")
-GARMIN_AUTH_STATE = _env_path("TRAIL_FACTORS_GARMIN_AUTH_STATE",
-                              Path.home() / ".garminconnect_auth_state.json")
+GARMIN_TOKENSTORE = _env_path(
+    "TRAIL_FACTORS_GARMIN_TOKENSTORE", Path.home() / ".garminconnect"
+)
+GARMIN_AUTH_STATE = _env_path(
+    "TRAIL_FACTORS_GARMIN_AUTH_STATE", Path.home() / ".garminconnect_auth_state.json"
+)
 
 
 def inside_repo(p: Path) -> bool:

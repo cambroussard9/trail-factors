@@ -9,31 +9,49 @@ efforts, the run with the most complete run/walk cycles -- and the assertions
 are invariants, never one athlete's figures.
 """
 
+import contextlib
 import json
 import re
 import unittest
 
+from tests.corpus import (
+    CorpusTestCase,
+    corpus_path,
+    corpus_projection,
+    isolated,
+    one,
+    use_config,
+)
 from trail_factors.analysis import basic as B
 from trail_factors.analysis import over as O
 from trail_factors.analysis import versions as V
 from trail_factors.analysis.series import binned_series
-from tests.corpus import CorpusTestCase, connect, corpus_path, one, use_config, isolated, corpus_projection
 
 # --- isolation: never the real athlete state or config ----------------------
 PROJECTION = None
+
+
+# Entered in setUpModule, CLOSED in tearDownModule -- see tests/corpus.py
+# isolated() for why this is not unittest.enterModuleContext.
+_ISOLATION = contextlib.ExitStack()
 
 
 def setUpModule():
     global PROJECTION
     if corpus_path() is not None:
         PROJECTION = corpus_projection()
-        unittest.enterModuleContext(isolated(projection_crs=PROJECTION))
+        _ISOLATION.enter_context(isolated(projection_crs=PROJECTION))
+
+
+def tearDownModule():
+    _ISOLATION.close()
 
 
 def garmin_listing() -> dict:
     """Garmin's own activity summaries, keyed by Garmin id, from any cached
     listing under the raw directory. Empty when none is cached."""
     from trail_factors.paths import RAW_DIR
+
     out = {}
     for f in sorted((RAW_DIR / "garmin_api").glob("activities_*.json")):
         out.update({str(a["activityId"]): a for a in json.loads(f.read_text())})
@@ -42,7 +60,9 @@ def garmin_listing() -> dict:
 
 def most_efforts(con) -> str:
     """The watch run with the most slope efforts in both directions."""
-    return one(con, """
+    return one(
+        con,
+        """
         SELECT e.activity_id FROM segment_efforts e
         JOIN activities a USING (activity_id)
         WHERE a.source = 'garmin_watch' AND a.sport = 'running'
@@ -50,7 +70,8 @@ def most_efforts(con) -> str:
         HAVING count(*) FILTER (WHERE e.direction = 'ascent') > 0
            AND count(*) FILTER (WHERE e.direction = 'descent') > 0
         ORDER BY count(*) DESC, 1 LIMIT 1""",
-        what="watch run with slope efforts in both directions")[0]
+        what="watch run with slope efforts in both directions",
+    )[0]
 
 
 class TestLapsUseTimerTime(CorpusTestCase):
@@ -60,7 +81,8 @@ class TestLapsUseTimerTime(CorpusTestCase):
 
     def test_the_column_exists_and_is_populated(self):
         n, filled = self.con.execute(
-            "SELECT count(*), count(total_timer_time) FROM laps").fetchone()
+            "SELECT count(*), count(total_timer_time) FROM laps"
+        ).fetchone()
         if n == 0:
             self.skipTest("this corpus has no laps")
         self.assertEqual(n, filled, "every lap must carry total_timer_time")
@@ -69,8 +91,8 @@ class TestLapsUseTimerTime(CorpusTestCase):
         """Timer time is elapsed time minus pauses, so it can never be the
         larger -- on any lap, in any corpus."""
         n = self.con.execute(
-            "SELECT count(*) FROM laps "
-            "WHERE total_timer_time > duration_s + 0.5").fetchone()[0]
+            "SELECT count(*) FROM laps WHERE total_timer_time > duration_s + 0.5"
+        ).fetchone()[0]
         self.assertEqual(n, 0)
 
     def test_timer_time_reproduces_garmins_minimum_lap_on_every_activity(self):
@@ -79,33 +101,36 @@ class TestLapsUseTimerTime(CorpusTestCase):
             self.skipTest("no cached Garmin listing under the raw directory")
         checked = 0
         for aid, sf in self.con.execute(
-                "SELECT activity_id, source_file FROM activities "
-                "WHERE source = 'garmin_watch' AND sport = 'running'").fetchall():
+            "SELECT activity_id, source_file FROM activities "
+            "WHERE source = 'garmin_watch' AND sport = 'running'"
+        ).fetchall():
             g = re.search(r"(\d+)_ACTIVITY", sf or "")
             a = oracle.get(g.group(1)) if g else None
             if not a or a.get("minActivityLapDuration") is None:
                 continue
             got = self.con.execute(
-                "SELECT min(total_timer_time) FROM laps WHERE activity_id = ?",
-                [aid]).fetchone()[0]
+                "SELECT min(total_timer_time) FROM laps WHERE activity_id = ?", [aid]
+            ).fetchone()[0]
             if got is None:
                 continue
             checked += 1
-            self.assertAlmostEqual(got, a["minActivityLapDuration"], delta=0.5,
-                                   msg=aid)
+            self.assertAlmostEqual(got, a["minActivityLapDuration"], delta=0.5, msg=aid)
         if not checked:
-            self.skipTest("no cached summary carries a minimum lap for a run "
-                          "in this corpus")
+            self.skipTest(
+                "no cached summary carries a minimum lap for a run in this corpus"
+            )
 
     def test_elapsed_and_timer_actually_differ_somewhere(self):
         """THE PRESENCE TWIN. If they were identical everywhere the test above
         would pass against the old buggy column and prove nothing."""
         n = self.con.execute(
-            "SELECT count(*) FROM laps "
-            "WHERE abs(duration_s - total_timer_time) > 0.5").fetchone()[0]
+            "SELECT count(*) FROM laps WHERE abs(duration_s - total_timer_time) > 0.5"
+        ).fetchone()[0]
         if n == 0:
-            self.skipTest("no lap in this corpus contains a pause, so the two "
-                          "columns cannot be told apart here")
+            self.skipTest(
+                "no lap in this corpus contains a pause, so the two "
+                "columns cannot be told apart here"
+            )
         self.assertGreater(n, 0)
 
 
@@ -131,31 +156,38 @@ class TestCalcVersionCoversTheDriftAndTauGates(unittest.TestCase):
         """Registering a stale copy would be worse than not registering."""
         from trail_factors.analysis import primitives as PR
         from trail_factors.analysis import recovery as RC
+
         p = V.calc_params()
         self.assertEqual(p["drift_speed_tol_mps"], PR.DRIFT_SPEED_TOL_MPS)
         self.assertEqual(p["tau_max_cv"], RC.MAX_TAU_CV)
 
 
 class TestEveryOkPrimitiveStatesItsFilters(CorpusTestCase):
-
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
         from trail_factors.analysis import report as REP
-        aid = one(cls.con, """
+
+        aid = one(
+            cls.con,
+            """
             SELECT activity_id FROM activities
             WHERE source = 'garmin_watch' AND sport = 'running'
-            ORDER BY start_time_utc DESC LIMIT 1""", what="watch run")[0]
+            ORDER BY start_time_utc DESC LIMIT 1""",
+            what="watch run",
+        )[0]
         cls.rep = REP.build(cls.con, aid)
 
     def test_no_ok_primitive_lacks_applied_filters(self):
-        bare = [p["name"] for p in self.rep["primitives"]
-                if p["status"] == "ok" and not p.get("applied_filters")]
+        bare = [
+            p["name"]
+            for p in self.rep["primitives"]
+            if p["status"] == "ok" and not p.get("applied_filters")
+        ]
         self.assertEqual(bare, [])
 
     def test_delta_hr_names_its_direction_and_its_incomparability(self):
-        got = [p for p in self.rep["primitives"]
-               if p["name"].startswith("delta_hr_")]
+        got = [p for p in self.rep["primitives"] if p["name"].startswith("delta_hr_")]
         self.assertEqual(len(got), 2)
         for p in got:
             if p["status"] != "ok":
@@ -179,8 +211,12 @@ class TestHillPaceByDirection(CorpusTestCase):
         self.assertTrue(self.r["efforts"])
         for e in self.r["efforts"]:
             self.assertIn(e["direction"], ("ascent", "descent"))
-            for k in ("mean_pace_per_mile", "best_30s_pace_per_mile",
-                      "mean_grade_pct", "avg_hr"):
+            for k in (
+                "mean_pace_per_mile",
+                "best_30s_pace_per_mile",
+                "mean_grade_pct",
+                "avg_hr",
+            ):
                 self.assertIn(k, e)
 
     def test_both_directions_aggregate(self):
@@ -192,8 +228,11 @@ class TestHillPaceByDirection(CorpusTestCase):
     def test_the_aggregate_is_distance_weighted_not_a_mean_of_paces(self):
         """A short effort and a long one do not carry equal evidence."""
         for d in ("ascent", "descent"):
-            sel = [e for e in self.r["efforts"] if e["direction"] == d
-                   and e["length_m"] and e["duration_s"]]
+            sel = [
+                e
+                for e in self.r["efforts"]
+                if e["direction"] == d and e["length_m"] and e["duration_s"]
+            ]
             want = sum(e["length_m"] for e in sel) / sum(e["duration_s"] for e in sel)
             self.assertAlmostEqual(self.r["by_direction"][d]["mps"], want, places=9)
 
@@ -209,6 +248,7 @@ class TestHillPaceByDirection(CorpusTestCase):
 
     def test_the_report_renders_it(self):
         from trail_factors.analysis import report as REP
+
         out = REP.render(REP.build(self.con, self.aid))
         self.assertIn("HILL PACE BY DIRECTION", out)
         self.assertIn("ground ratio", out)
@@ -225,6 +265,7 @@ class TestDirectionAwareDrift(CorpusTestCase):
     def setUpClass(cls):
         super().setUpClass()
         from trail_factors.analysis.report import cluster_of
+
         cls.cluster = cluster_of(cls.con, most_efforts(cls.con))
 
     def drift(self, d):
@@ -246,7 +287,10 @@ class TestDirectionAwareDrift(CorpusTestCase):
     def test_pairs_are_same_direction_by_construction(self):
         from trail_factors.analysis import primitives as PR
         from trail_factors.paths import REPO_ROOT
-        src = (REPO_ROOT / "src" / "trail_factors" / "analysis" / "primitives.py").read_text()
+
+        src = (
+            REPO_ROOT / "src" / "trail_factors" / "analysis" / "primitives.py"
+        ).read_text()
         self.assertIn("a.direction = b.direction", src)
         self.assertTrue(PR.segment_drift_filters()["same_direction_pairs_only"])
 
@@ -260,11 +304,13 @@ class TestDirectionAwareDrift(CorpusTestCase):
     def test_6_7_still_refuses_a_direction(self):
         """The negative twin: the honest split lives here, so §6.7 must not
         quietly grow one."""
-        from trail_factors.analysis import primitives as PR
         import inspect
+
+        from trail_factors.analysis import primitives as PR
+
         self.assertNotIn(
-            "direction",
-            inspect.signature(PR.matched_terrain_drift).parameters)
+            "direction", inspect.signature(PR.matched_terrain_drift).parameters
+        )
 
 
 class TestBinnedSeries(CorpusTestCase):
@@ -356,10 +402,13 @@ class TestRunWalkCycles(CorpusTestCase):
     def setUpClass(cls):
         super().setUpClass()
         from trail_factors.analysis.cycles import cycles
+
         # staticmethod: a bare function stored on the class becomes a bound
         # method and swallows `self` as its first argument.
         cls.cycles = staticmethod(cycles)
-        cls.aid = one(cls.con, r"""
+        cls.aid = one(
+            cls.con,
+            r"""
             SELECT s.activity_id FROM splits s
             JOIN activities a USING (activity_id)
             WHERE a.source = 'garmin_watch' AND a.sport = 'running'
@@ -369,7 +418,9 @@ class TestRunWalkCycles(CorpusTestCase):
                AND arg_max(s.split_type, s.start_time)
                    FILTER (WHERE s.split_type <> 'rwd_stand') = 'rwd_run'
             ORDER BY count(*) FILTER (WHERE s.split_type = 'rwd_walk') DESC, 1
-            LIMIT 1""", what="watch run with 4+ walks ending on a run block")[0]
+            LIMIT 1""",
+            what="watch run with 4+ walks ending on a run block",
+        )[0]
         cls.r = cycles(cls.con, cls.aid)
 
     def test_cycles_reconstruct_on_the_subject_run(self):
@@ -379,8 +430,7 @@ class TestRunWalkCycles(CorpusTestCase):
     def test_a_cycle_is_a_run_block_plus_the_walk_that_follows(self):
         for c in self.r["cycles"]:
             self.assertGreater(c["run_duration_s"], 0)
-        complete = [c for c in self.r["cycles"]
-                    if c["walk_duration_s"] is not None]
+        complete = [c for c in self.r["cycles"] if c["walk_duration_s"] is not None]
         self.assertEqual(len(complete), self.r["n_complete_cycles"])
 
     def test_a_run_block_with_no_following_walk_is_none_not_zero(self):
@@ -417,7 +467,9 @@ class TestRunWalkCycles(CorpusTestCase):
             checked += 1
             self.assertAlmostEqual(
                 c["hr_recovered_bpm"],
-                c["hr_at_walk_start"] - c["hr_at_walk_end"], places=6)
+                c["hr_at_walk_start"] - c["hr_at_walk_end"],
+                places=6,
+            )
         if not checked:
             self.skipTest("no walk on the subject outlasts the HR lag")
 
@@ -454,7 +506,9 @@ class TestRunWalkCycles(CorpusTestCase):
             self.assertGreater(r["n_cycles"], 0, aid)
 
     def test_a_run_with_no_walking_is_gated_not_broken(self):
-        aid = one(self.con, """
+        aid = one(
+            self.con,
+            """
             SELECT a.activity_id FROM activities a
             WHERE a.source = 'garmin_watch' AND a.sport = 'running'
               AND EXISTS (SELECT 1 FROM splits s WHERE s.activity_id = a.activity_id
@@ -463,16 +517,19 @@ class TestRunWalkCycles(CorpusTestCase):
                               WHERE s.activity_id = a.activity_id
                                 AND s.split_type = 'rwd_walk')
             ORDER BY a.activity_id LIMIT 1""",
-            what="watch run that never walks")[0]
+            what="watch run that never walks",
+        )[0]
         r = self.cycles(self.con, aid)
         self.assertEqual(r["status_hint"], "gated")
         self.assertEqual(r["n_complete_cycles"], 0)
         self.assertIsNone(r["summary"]["median_walk_duration_s"])
 
     def test_a_source_with_no_splits_is_unavailable(self):
-        aid = one(self.con, "SELECT activity_id FROM activities "
-                            "WHERE source = 'strava_phone' LIMIT 1",
-                  what="phone activity")[0]
+        aid = one(
+            self.con,
+            "SELECT activity_id FROM activities WHERE source = 'strava_phone' LIMIT 1",
+            what="phone activity",
+        )[0]
         r = self.cycles(self.con, aid)
         self.assertEqual(r["status_hint"], "unavailable")
         self.assertIn("no rwd_* splits", r["reason"])
@@ -483,6 +540,7 @@ class TestRunWalkCycles(CorpusTestCase):
 
     def test_the_report_renders_it(self):
         from trail_factors.analysis import report as REP
+
         out = REP.render(REP.build(self.con, self.aid))
         self.assertIn("RUN/WALK CYCLES", out)
         self.assertIn("does the walk buy anything", out)

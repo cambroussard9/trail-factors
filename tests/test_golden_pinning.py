@@ -50,12 +50,12 @@ def _require_pinned() -> list[str]:
             f"no {capture.PINNED_NAME} in ${capture.GOLDEN_ENV} (default "
             f"data/golden/): the golden files are captured per corpus and are "
             f"not committed. Run `python tests/golden/capture.py --pin` and "
-            f"then `capture.py` against your corpus to create them.")
+            f"then `capture.py` against your corpus to create them."
+        )
     return capture.pinned_activities()
 
 
 class _PinnedCorpus(unittest.TestCase):
-
     @classmethod
     def setUpClass(cls):
         require_corpus()
@@ -74,7 +74,6 @@ class _PinnedCorpus(unittest.TestCase):
 
 
 class TestPinnedSet(_PinnedCorpus):
-
     def test_the_pinned_set_is_read_from_the_file_that_documents_it(self):
         self.assertTrue(capture.pinned_file().exists())
         self.assertGreater(len(self.ids), 0)
@@ -83,8 +82,10 @@ class TestPinnedSet(_PinnedCorpus):
     def test_every_pinned_activity_is_still_in_the_corpus(self):
         """A rebuild that dropped a file would otherwise shrink the comparison,
         still pass, and take the guarantee with it."""
-        have = {r[0] for r in self.con.execute(
-            "SELECT activity_id FROM activities").fetchall()}
+        have = {
+            r[0]
+            for r in self.con.execute("SELECT activity_id FROM activities").fetchall()
+        }
         self.assertEqual([a for a in self.ids if a not in have], [])
 
     def test_the_corpus_has_grown_past_the_pinned_set(self):
@@ -95,8 +96,10 @@ class TestPinnedSet(_PinnedCorpus):
         A corpus pinned today has not grown yet; that is a state, not a
         failure, so it skips and says so."""
         if not self._corpus_has_grown():
-            self.skipTest("the corpus has not grown since pinning, so this "
-                          "test cannot yet demonstrate insensitivity")
+            self.skipTest(
+                "the corpus has not grown since pinning, so this "
+                "test cannot yet demonstrate insensitivity"
+            )
 
 
 class TestScopingActuallyRestricts(unittest.TestCase):
@@ -107,8 +110,7 @@ class TestScopingActuallyRestricts(unittest.TestCase):
     def test_every_query_carries_a_pin_marker(self):
         """A query with no marker would silently run corpus-wide."""
         for name, sql in capture.QUERIES.items():
-            self.assertTrue(any(m in sql for m in MARKERS),
-                            f"{name} is not pinned")
+            self.assertTrue(any(m in sql for m in MARKERS), f"{name} is not pinned")
 
     def test_scoping_changes_the_sql(self):
         for name, sql in capture.QUERIES.items():
@@ -126,28 +128,30 @@ class TestScopingActuallyRestricts(unittest.TestCase):
 
 
 class TestThePinBitesOnTheCorpus(_PinnedCorpus):
-
     def test_the_scoped_answer_differs_from_the_corpus_wide_one(self):
         """THE MEASUREMENT THAT PROVES THE PIN BITES. If the two agreed, the
         new runs would not have been contributing and the pin would be
         untested."""
         if not self._corpus_has_grown():
-            self.skipTest("the corpus has not grown since pinning, so the "
-                          "scoped and corpus-wide answers must agree")
+            self.skipTest(
+                "the corpus has not grown since pinning, so the "
+                "scoped and corpus-wide answers must agree"
+            )
         differing = 0
-        for name, sql in capture.QUERIES.items():
+        for _name, sql in capture.QUERIES.items():
             wide = sql
             for m in MARKERS:
                 wide = wide.replace(m, "")
-            if (capture.render(self.con, wide)
-                    != capture.render(self.con, capture.scope(sql, self.ids))):
+            if capture.render(self.con, wide) != capture.render(
+                self.con, capture.scope(sql, self.ids)
+            ):
                 differing += 1
-        self.assertGreater(differing, 0,
-                           "scoping changed no answer, so the pin is untested")
+        self.assertGreater(
+            differing, 0, "scoping changed no answer, so the pin is untested"
+        )
 
 
 class TestTheGoldenFilesStillMatch(_PinnedCorpus):
-
     def test_the_check_passes(self):
         """The guard itself. A failure here means the CODE changed an answer
         for runs whose answer was already known -- never that a new run
@@ -165,14 +169,14 @@ class TestTheGoldenFilesStillMatch(_PinnedCorpus):
             for f in src.iterdir():
                 if f.is_file():
                     shutil.copy(f, d / f.name)
-            self.assertEqual(_main(check=True, db=require_corpus(),
-                                          directory=d), 0,
-                             "the unaltered copy must pass, or the twin "
-                             "below proves nothing")
+            self.assertEqual(
+                _main(check=True, db=require_corpus(), directory=d),
+                0,
+                "the unaltered copy must pass, or the twin below proves nothing",
+            )
             victim = d / f"{next(iter(capture.QUERIES))}.tsv"
             victim.write_text(victim.read_text() + "altered\t0\n")
-            self.assertEqual(_main(check=True, db=require_corpus(),
-                                          directory=d), 1)
+            self.assertEqual(_main(check=True, db=require_corpus(), directory=d), 1)
 
 
 class TestTheGoldenDirectoryIsConfigurable(unittest.TestCase):
@@ -180,11 +184,13 @@ class TestTheGoldenDirectoryIsConfigurable(unittest.TestCase):
 
     def test_the_default_is_under_data_and_out_of_the_repository(self):
         from trail_factors.paths import DATA_DIR
+
         with mock.patch.dict(os.environ, {capture.GOLDEN_ENV: ""}):
             self.assertEqual(capture.golden_dir(), DATA_DIR / "golden")
 
     def test_the_environment_variable_redirects_it(self):
         from trail_factors.paths import REPO_ROOT
+
         with tempfile.TemporaryDirectory() as d:
             with mock.patch.dict(os.environ, {capture.GOLDEN_ENV: d}):
                 self.assertEqual(capture.golden_dir(), Path(d))
@@ -214,7 +220,8 @@ class TestTheGoldenDirectoryIsConfigurable(unittest.TestCase):
             con.execute("INSERT INTO activities VALUES ('act-000000001')")
             con.close()
             capture.pinned_file(d).write_text(
-                "# synthetic\nact-000000001\nact-000000002\n")
+                "# synthetic\nact-000000001\nact-000000002\n"
+            )
             self.assertEqual(_main(check=True, db=db, directory=d), 1)
 
 

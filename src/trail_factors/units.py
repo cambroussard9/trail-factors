@@ -45,8 +45,9 @@ def pace_per_mile(mps: float | None, placeholder: str | None = None) -> str | No
     return mmss(METERS_PER_MILE / mps)
 
 
-def pace_over(seconds: float | None, meters: float | None,
-              placeholder: str | None = None) -> str | None:
+def pace_over(
+    seconds: float | None, meters: float | None, placeholder: str | None = None
+) -> str | None:
     """Pace M:SS per mile over a duration and a distance.
 
     Takes the two measured quantities rather than a precomputed speed so the

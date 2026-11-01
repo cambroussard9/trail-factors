@@ -12,8 +12,8 @@ The route-fingerprint gate is checked here on a real DEM-covered run as well
 import json
 import unittest
 
-from trail_factors import mcp_server as M
 from tests.corpus import CorpusTestCase, one, use_config
+from trail_factors import mcp_server as M
 
 DYNAMICS_RUN = """
     SELECT a.run_id FROM activities a
@@ -34,8 +34,9 @@ class TestDynamicsAreOptIn(CorpusTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        run = one(cls.con, DYNAMICS_RUN,
-                  what="watch run with running-dynamics records")[0]
+        run = one(
+            cls.con, DYNAMICS_RUN, what="watch run with running-dynamics records"
+        )[0]
         cls.raw_default = M.session_series(run=run)
         cls.raw_full = M.session_series(run=run, include_dynamics=True)
         cls.default = json.loads(cls.raw_default)["payload"]
@@ -43,14 +44,14 @@ class TestDynamicsAreOptIn(CorpusTestCase):
 
     def test_the_default_omits_them_from_every_bin_and_says_so(self):
         self.assertFalse(self.default["dynamics_included"])
-        self.assertIn("include_dynamics=true",
-                      self.default["dynamics_included_note"])
+        self.assertIn("include_dynamics=true", self.default["dynamics_included_note"])
         self.assertFalse([b for b in self.default["bins"] if "dynamics" in b])
 
     def test_availability_is_still_reported_without_them(self):
         self.assertTrue(self.full["dynamics_available"])
-        self.assertEqual(self.default["dynamics_available"],
-                         self.full["dynamics_available"])
+        self.assertEqual(
+            self.default["dynamics_available"], self.full["dynamics_available"]
+        )
 
     def test_positive_twin_opt_in_carries_them_on_every_bin(self):
         self.assertTrue(self.full["dynamics_included"])
@@ -58,10 +59,15 @@ class TestDynamicsAreOptIn(CorpusTestCase):
         self.assertTrue(all("dynamics" in b for b in self.full["bins"]))
 
     def test_everything_else_is_identical(self):
-        strip = lambda b: {k: v for k, v in b.items()
-                           if k not in ("dynamics", "dynamics_reason")}
-        self.assertEqual([strip(b) for b in self.default["bins"]],
-                         [strip(b) for b in self.full["bins"]])
+        def strip(b):
+            return {
+                k: v for k, v in b.items() if k not in ("dynamics", "dynamics_reason")
+            }
+
+        self.assertEqual(
+            [strip(b) for b in self.default["bins"]],
+            [strip(b) for b in self.full["bins"]],
+        )
 
     def test_the_default_response_is_smaller(self):
         self.assertLess(len(self.raw_default), len(self.raw_full) * 0.8)

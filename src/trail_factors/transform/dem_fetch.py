@@ -47,8 +47,14 @@ import tifffile
 
 from trail_factors import config
 from trail_factors.paths import DEM_DIR
-from trail_factors.transform.dem import (TILE_SPAN_M, WGS84, transformer, usgs_grid_crs,
-                               usgs_grid_for_zone, zone_label)
+from trail_factors.transform.dem import (
+    TILE_SPAN_M,
+    WGS84,
+    transformer,
+    usgs_grid_crs,
+    usgs_grid_for_zone,
+    zone_label,
+)
 
 INDEX_URL = "https://tnmaccess.nationalmap.gov/api/v1/products"
 DATASET = "Digital Elevation Model (DEM) 1 meter"
@@ -75,12 +81,12 @@ CHUNK = 1 << 20
 # holds nothing outside the US, so the dataset restriction is the structural
 # guarantee. This one stops a query about foreign ground from being SENT.
 US_BOXES = (
-    ("CONUS",        24.0,  49.5, -125.5,  -66.5),
-    ("Alaska",       51.0,  72.0, -180.0, -129.0),
-    ("Hawaii",       18.5,  22.5, -161.0, -154.5),
-    ("PR/USVI",      17.5,  18.6,  -68.0,  -64.5),
-    ("Guam/CNMI",    13.2,  20.6,  144.5,  146.2),
-    ("Am. Samoa",   -14.6, -14.1, -171.1, -169.4),
+    ("CONUS", 24.0, 49.5, -125.5, -66.5),
+    ("Alaska", 51.0, 72.0, -180.0, -129.0),
+    ("Hawaii", 18.5, 22.5, -161.0, -154.5),
+    ("PR/USVI", 17.5, 18.6, -68.0, -64.5),
+    ("Guam/CNMI", 13.2, 20.6, 144.5, 146.2),
+    ("Am. Samoa", -14.6, -14.1, -171.1, -169.4),
 )
 
 
@@ -106,15 +112,20 @@ class OffAllowlist(ValueError):
     before any byte of the response was written anywhere."""
 
 
-def _check_url(url: str, allowed: tuple[str, ...], what: str,
-               schemes: tuple[str, ...] = ALLOWED_SCHEMES) -> None:
+def _check_url(
+    url: str,
+    allowed: tuple[str, ...],
+    what: str,
+    schemes: tuple[str, ...] = ALLOWED_SCHEMES,
+) -> None:
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in schemes or parsed.netloc not in allowed:
         raise OffAllowlist(
             f"refused {what} to {parsed.netloc or url!r} "
             f"({parsed.scheme or 'no scheme'}): only "
             f"{', '.join(f'{s}://{h}' for s in schemes for h in allowed)} "
-            f"is allowed. Nothing was written.")
+            f"is allowed. Nothing was written."
+        )
 
 
 class _AllowlistRedirects(urllib.request.HTTPRedirectHandler):
@@ -124,16 +135,20 @@ class _AllowlistRedirects(urllib.request.HTTPRedirectHandler):
     3xx, so refusing here means the off-list host is never contacted.
     """
 
-    def __init__(self, allowed: tuple[str, ...],
-                 schemes: tuple[str, ...] = ALLOWED_SCHEMES):
+    def __init__(
+        self, allowed: tuple[str, ...], schemes: tuple[str, ...] = ALLOWED_SCHEMES
+    ):
         super().__init__()
         self.allowed, self.schemes = tuple(allowed), tuple(schemes)
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         try:
-            _check_url(newurl, self.allowed, f"a {code} redirect from "
-                       f"{urllib.parse.urlparse(req.full_url).netloc}",
-                       self.schemes)
+            _check_url(
+                newurl,
+                self.allowed,
+                f"a {code} redirect from {urllib.parse.urlparse(req.full_url).netloc}",
+                self.schemes,
+            )
         except OffAllowlist:
             if fp is not None:
                 fp.close()
@@ -141,13 +156,16 @@ class _AllowlistRedirects(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def _build_opener(allowed: tuple[str, ...],
-                  schemes: tuple[str, ...] = ALLOWED_SCHEMES):
+def _build_opener(allowed: tuple[str, ...], schemes: tuple[str, ...] = ALLOWED_SCHEMES):
     return urllib.request.build_opener(_AllowlistRedirects(allowed, schemes))
 
 
-def _open(url: str, allowed: tuple[str, ...], timeout: float,
-          schemes: tuple[str, ...] = ALLOWED_SCHEMES):
+def _open(
+    url: str,
+    allowed: tuple[str, ...],
+    timeout: float,
+    schemes: tuple[str, ...] = ALLOWED_SCHEMES,
+):
     """Open `url` with the allowlist enforced before, during and after.
 
     Before: the URL itself. During: every redirect hop (_AllowlistRedirects).
@@ -158,8 +176,12 @@ def _open(url: str, allowed: tuple[str, ...], timeout: float,
     resp = _build_opener(allowed, schemes).open(url, timeout=timeout)
     final = resp.geturl() if hasattr(resp, "geturl") else getattr(resp, "url", None)
     try:
-        _check_url(final if final is not None else "", allowed,
-                   "the final URL of a request", schemes)
+        _check_url(
+            final if final is not None else "",
+            allowed,
+            "the final URL of a request",
+            schemes,
+        )
     except OffAllowlist:
         resp.close()
         raise
@@ -177,8 +199,9 @@ def _open(url: str, allowed: tuple[str, ...], timeout: float,
 # northern grid, on ground that can be inside the US and pass every guard
 # below. So the zone is set as (zone, is_north), with no default hemisphere,
 # and a southern one is refused in `grid_crs` before any request.
-_DERIVED_ZONE: contextvars.ContextVar[tuple[int, bool] | None] = \
-    contextvars.ContextVar("derived_zone", default=None)
+_DERIVED_ZONE: contextvars.ContextVar[tuple[int, bool] | None] = contextvars.ContextVar(
+    "derived_zone", default=None
+)
 
 
 @contextlib.contextmanager
@@ -189,8 +212,10 @@ def derived_zone(zone: int | None, north: bool | None):
     zone is: there is no default hemisphere, for the reason above.
     """
     if zone is not None and north is None:
-        raise ValueError(f"UTM zone {zone} was given without its hemisphere; "
-                         f"pass north=True or north=False")
+        raise ValueError(
+            f"UTM zone {zone} was given without its hemisphere; "
+            f"pass north=True or north=False"
+        )
     token = _DERIVED_ZONE.set(None if zone is None else (zone, north))
     try:
         yield
@@ -212,7 +237,8 @@ def grid_crs() -> str:
                 "like x40y500 means nothing without the UTM zone it was "
                 "computed in. Pass the zone the coverage report names "
                 "(`fetch-tile x40y500 --zone NN`, as its fetch_command "
-                "prints it), or set projection_crs. No request was sent.")
+                "prints it), or set projection_crs. No request was sent."
+            )
         zone, north = derived
         grid = usgs_grid_for_zone(zone, north)
         if grid is not None:
@@ -221,11 +247,13 @@ def grid_crs() -> str:
             f"no USGS grid exists for UTM zone {zone_label(zone, north)}: "
             f"NAD83 / UTM is defined for northern zones 1-23 only, so no USGS "
             f"tile can be named in it; 3DEP holds US data only, and no "
-            f"request was sent")
+            f"request was sent"
+        )
     raise NotInTheUS(
         f"projection_crs {crs} is not a northern UTM zone that NAD83 / UTM "
         f"covers, so it implies no USGS tile grid; 3DEP holds US data only, "
-        f"and no request was sent")
+        f"and no request was sent"
+    )
 
 
 def parse_cell(name: str) -> tuple[int, int]:
@@ -246,7 +274,8 @@ def parse_cell(name: str) -> tuple[int, int]:
         raise ValueError(
             f"{name!r} is named in UTM zone {parts[2]}, not the configured "
             f"grid this corpus indexes by. Pass the cell as `dem` reports it "
-            f"(for example x40y500) and the real filename will be resolved.")
+            f"(for example x40y500) and the real filename will be resolved."
+        )
     token = next((p for p in parts if p.startswith("x") and "y" in p), stem)
     if not token.startswith("x") or "y" not in token:
         raise ValueError(f"{name!r} is not a tile name like x40y500")
@@ -294,15 +323,17 @@ def resolve(tx: int, ty: int) -> list[dict]:
     if where is None:
         raise NotInTheUS(
             f"cell x{tx}y{ty + 1} is outside US territory; 3DEP holds US data "
-            f"only, and no request was sent")
-    query = urllib.parse.urlencode({
-        "datasets": DATASET,
-        "bbox": ",".join(f"{v:.6f}" for v in bbox),
-        "prodFormats": "GeoTIFF",
-        "max": 50,
-    })
-    with _open(f"{INDEX_URL}?{query}", INDEX_HOSTS,
-               INDEX_TIMEOUT_S) as resp:
+            f"only, and no request was sent"
+        )
+    query = urllib.parse.urlencode(
+        {
+            "datasets": DATASET,
+            "bbox": ",".join(f"{v:.6f}" for v in bbox),
+            "prodFormats": "GeoTIFF",
+            "max": 50,
+        }
+    )
+    with _open(f"{INDEX_URL}?{query}", INDEX_HOSTS, INDEX_TIMEOUT_S) as resp:
         payload = json.load(resp)
 
     clon, clat = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
@@ -319,22 +350,28 @@ def resolve(tx: int, ty: int) -> list[dict]:
         host = urllib.parse.urlparse(url).netloc
         if host not in ALLOWED_HOSTS:
             continue
-        out.append({"title": item.get("title"),
-                    "url": url,
-                    "filename": Path(urllib.parse.urlparse(url).path).name,
-                    "size_bytes": int(item.get("sizeInBytes") or 0),
-                    "published": item.get("publicationDate"),
-                    "region": where})
+        out.append(
+            {
+                "title": item.get("title"),
+                "url": url,
+                "filename": Path(urllib.parse.urlparse(url).path).name,
+                "size_bytes": int(item.get("sizeInBytes") or 0),
+                "published": item.get("publicationDate"),
+                "region": where,
+            }
+        )
     if not out:
         raise NoProductCovers(
             f"3DEP publishes no 1 m GeoTIFF covering cell x{tx}y{ty + 1} "
             f"({payload.get('total', 0)} nearby products, none containing it). "
-            f"That ground has no 1 m lidar; terrain stays refused there.")
+            f"That ground has no 1 m lidar; terrain stays refused there."
+        )
     return sorted(out, key=lambda p: -p["size_bytes"])
 
 
-def verify_tile(path: Path, cell: tuple[int, int] | None = None,
-                expect_bytes: int = 0) -> dict:
+def verify_tile(
+    path: Path, cell: tuple[int, int] | None = None, expect_bytes: int = 0
+) -> dict:
     """Open it as a georeferenced GeoTIFF, or refuse to keep it.
 
     A TRUNCATED DOWNLOAD AND AN HTML ERROR PAGE BOTH ARRIVE AS A FILE. Size
@@ -362,9 +399,13 @@ def verify_tile(path: Path, cell: tuple[int, int] | None = None,
             meta = tf.geotiff_metadata or {}
             epsg = meta.get("ProjectedCSTypeGeoKey")
             height, width = page.shape
-            last_byte = max((int(o) + int(c) for o, c
-                             in zip(page.dataoffsets, page.databytecounts)),
-                            default=0)
+            last_byte = max(
+                (
+                    int(o) + int(c)
+                    for o, c in zip(page.dataoffsets, page.databytecounts, strict=False)
+                ),
+                default=0,
+            )
     except Exception as exc:
         raise NotAGeoTIFF(f"{path.name} is not a readable TIFF: {exc}") from exc
     on_disk = path.stat().st_size
@@ -372,36 +413,49 @@ def verify_tile(path: Path, cell: tuple[int, int] | None = None,
         raise NotAGeoTIFF(
             f"{path.name} is {on_disk:,} bytes; the 3DEP index declares "
             f"{expect_bytes:,}. A short file is a truncated download, not a "
-            f"tile — the tags at the front of it read perfectly well.")
+            f"tile — the tags at the front of it read perfectly well."
+        )
     if last_byte > on_disk:
         raise NotAGeoTIFF(
             f"{path.name} claims image data out to byte {last_byte:,} but the "
-            f"file ends at {on_disk:,}. Truncated.")
+            f"file ends at {on_disk:,}. Truncated."
+        )
     if epsg is None:
-        raise NotAGeoTIFF(f"{path.name} carries no ProjectedCSTypeGeoKey, so "
-                          f"nothing can say where its pixels are")
+        raise NotAGeoTIFF(
+            f"{path.name} carries no ProjectedCSTypeGeoKey, so "
+            f"nothing can say where its pixels are"
+        )
     ox, oy = float(tie[3]), float(tie[4])
-    info = {"crs": f"EPSG:{int(epsg)}", "width": int(width), "height": int(height),
-            "pixel_m": float(scale[0]),
-            "size_bytes": on_disk,
-            "easting_range": [ox, ox + width * float(scale[0])],
-            "northing_range": [oy - height * float(scale[1]), oy]}
+    info = {
+        "crs": f"EPSG:{int(epsg)}",
+        "width": int(width),
+        "height": int(height),
+        "pixel_m": float(scale[0]),
+        "size_bytes": on_disk,
+        "easting_range": [ox, ox + width * float(scale[0])],
+        "northing_range": [oy - height * float(scale[1]), oy],
+    }
     if cell is not None:
         tf_back = transformer(info["crs"], WGS84)
-        lon, lat = tf_back.transform(ox + width * float(scale[0]) / 2,
-                                     oy - height * float(scale[1]) / 2)
+        lon, lat = tf_back.transform(
+            ox + width * float(scale[0]) / 2, oy - height * float(scale[1]) / 2
+        )
         lon0, lat0, lon1, lat1 = cell_bbox(*cell)
         pad = 0.2
         if not (lon0 - pad <= lon <= lon1 + pad and lat0 - pad <= lat <= lat1 + pad):
             raise NotAGeoTIFF(
                 f"{path.name} is a valid GeoTIFF but its centre is not on the "
-                f"ground cell x{cell[0]}y{cell[1] + 1} describes")
+                f"ground cell x{cell[0]}y{cell[1] + 1} describes"
+            )
     return info
 
 
-def download(product: dict, dest_dir: Path = DEM_DIR,
-             cell: tuple[int, int] | None = None,
-             progress=print) -> dict:
+def download(
+    product: dict,
+    dest_dir: Path = DEM_DIR,
+    cell: tuple[int, int] | None = None,
+    progress=print,
+) -> dict:
     """Fetch one product, verify it, and only then put it in data/dem/.
 
     Downloads to a `.part` file and `os.replace`s it into place after
@@ -415,8 +469,7 @@ def download(product: dict, dest_dir: Path = DEM_DIR,
     dest_dir.mkdir(parents=True, exist_ok=True)
     final = dest_dir / product["filename"]
     if final.exists():
-        return {"status": "already_present", "path": final,
-                **verify_tile(final, cell)}
+        return {"status": "already_present", "path": final, **verify_tile(final, cell)}
     part = final.with_suffix(final.suffix + ".part")
     expected = product.get("size_bytes") or 0
     got = 0
@@ -439,8 +492,10 @@ def download(product: dict, dest_dir: Path = DEM_DIR,
         # _open refuses an off-list redirect or final URL BEFORE `part` is
         # opened, so a refusal leaves nothing behind (and the except below
         # would remove it if it did).
-        with _open(url, ALLOWED_HOSTS, DOWNLOAD_TIMEOUT_S) as resp, \
-                open(part, "wb") as fh:
+        with (
+            _open(url, ALLOWED_HOSTS, DOWNLOAD_TIMEOUT_S) as resp,
+            open(part, "wb") as fh,
+        ):
             headers = getattr(resp, "headers", None)
             length = headers.get("Content-Length") if headers is not None else None
             served = int(length) if length is not None else None
@@ -448,7 +503,8 @@ def download(product: dict, dest_dir: Path = DEM_DIR,
                 raise NotAGeoTIFF(
                     f"{part.name}: the server sent no Content-Length, so "
                     f"there is nothing to measure completeness against. "
-                    f"Refused rather than assumed complete; retry later.")
+                    f"Refused rather than assumed complete; retry later."
+                )
             total = served
             while True:
                 chunk = resp.read(CHUNK)
@@ -461,12 +517,18 @@ def download(product: dict, dest_dir: Path = DEM_DIR,
         if got != served:
             raise NotAGeoTIFF(
                 f"{part.name}: received {got:,} of the {served:,} bytes the "
-                f"server declared. Truncated.")
+                f"server declared. Truncated."
+            )
         info = verify_tile(part, cell, expect_bytes=served)
     except BaseException:
         part.unlink(missing_ok=True)
         raise
     os.replace(part, final)
-    return {"status": "fetched", "path": final, **info,
-            "served_bytes": served, "index_declared_bytes": expected,
-            "index_size_agrees": (served == expected if expected else None)}
+    return {
+        "status": "fetched",
+        "path": final,
+        **info,
+        "served_bytes": served,
+        "index_declared_bytes": expected,
+        "index_size_agrees": (served == expected if expected else None),
+    }

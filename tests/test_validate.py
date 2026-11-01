@@ -40,17 +40,20 @@ class TimestampValidationTest(unittest.TestCase):
 
     def test_span_exceeding_session_is_fatal_even_without_one_big_gap(self):
         """Corruption spread across many gaps still trips the span check."""
-        recs = records([600.0] * 50)          # 30000 s of span
+        recs = records([600.0] * 50)  # 30000 s of span
         fatal, _ = check_timestamps(recs, {"total_elapsed_time": 2000.0})
         self.assertTrue(any("span" in f for f in fatal))
 
     def test_median_is_robust_so_regime_detection_cannot_catch_this(self):
         """Why this check exists at all: the median ignores the outlier."""
         import statistics
+
         recs = records([5.0] * 100 + [WEEKS_GAP_S] + [5.0] * 100)
         stamps = [r["timestamp"] for r in recs]
-        gaps = [(b - a).total_seconds() for a, b in zip(stamps, stamps[1:])]
-        self.assertEqual(statistics.median(gaps), 5.0)   # regime looks fine
+        gaps = [
+            (b - a).total_seconds() for a, b in zip(stamps, stamps[1:], strict=False)
+        ]
+        self.assertEqual(statistics.median(gaps), 5.0)  # regime looks fine
         self.assertTrue(check_timestamps(recs, {"total_elapsed_time": 2484.0})[0])
 
     def test_large_but_survivable_gap_warns_rather_than_rejects(self):
@@ -72,8 +75,9 @@ class TimestampValidationTest(unittest.TestCase):
         """The ingest path reaches check_timestamps through bronze_checks: a
         fatal timestamp problem must arrive as a FATAL `timestamp_integrity`
         Finding, which is what makes ingest reject the file."""
-        found = bronze_checks(records([5.0] * 10 + [WEEKS_GAP_S]),
-                              {"total_elapsed_time": 100.0}, {})
+        found = bronze_checks(
+            records([5.0] * 10 + [WEEKS_GAP_S]), {"total_elapsed_time": 100.0}, {}
+        )
         ts = [f for f in found if f.check == "timestamp_integrity"]
         self.assertTrue(ts)
         for f in ts:
@@ -83,13 +87,15 @@ class TimestampValidationTest(unittest.TestCase):
 
     def test_a_clean_file_carries_no_timestamp_finding(self):
         """THE TWIN: the check must not fire on normal spacing."""
-        found = bronze_checks(records([5.0] * 50),
-                              {"total_elapsed_time": 300.0}, {})
+        found = bronze_checks(records([5.0] * 50), {"total_elapsed_time": 300.0}, {})
         self.assertFalse([f for f in found if f.check.startswith("timestamp")])
 
     def test_a_survivable_gap_is_a_stored_warning_not_a_rejection(self):
-        found = bronze_checks(records([5.0] * 100 + [400.0] + [5.0] * 100),
-                              {"total_elapsed_time": 1500.0}, {})
+        found = bronze_checks(
+            records([5.0] * 100 + [400.0] + [5.0] * 100),
+            {"total_elapsed_time": 1500.0},
+            {},
+        )
         gap = [f for f in found if f.check == "timestamp_gap"]
         self.assertEqual(len(gap), 1)
         self.assertFalse(gap[0].is_fatal)

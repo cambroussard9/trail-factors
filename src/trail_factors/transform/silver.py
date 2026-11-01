@@ -19,13 +19,13 @@ from trail_factors.transform.dem import project
 
 CALC_VERSION = 1
 
-GRADE_WINDOW_M = 25.0          # §9: the scale grade acts on, not a preference
+GRADE_WINDOW_M = 25.0  # §9: the scale grade acts on, not a preference
 GRADE_HALF_M = GRADE_WINDOW_M / 2
-ELEV_SMOOTH_M = 25.0           # rolling median over DISTANCE, not samples
-BLOCK_MAX_GAP_S = 30.0         # §14c positioned-block definition
+ELEV_SMOOTH_M = 25.0  # rolling median over DISTANCE, not samples
+BLOCK_MAX_GAP_S = 30.0  # §14c positioned-block definition
 BLOCK_MIN_SPAN_S = 60.0
 BLOCK_MIN_DIST_M = 200.0
-PROMINENCE_MIN_M = 8.0         # §5.0; stable across 0-50 m smoothing here
+PROMINENCE_MIN_M = 8.0  # §5.0; stable across 0-50 m smoothing here
 
 
 def path_distance(lats, lons, crs: str | None = None) -> np.ndarray:
@@ -51,7 +51,7 @@ def smooth_by_distance(values, cum, window_m=ELEV_SMOOTH_M) -> np.ndarray:
     for i in range(len(values)):
         lo = np.searchsorted(cum, cum[i] - window_m / 2)
         hi = np.searchsorted(cum, cum[i] + window_m / 2)
-        out[i] = np.median(values[lo:max(hi, lo + 1)])
+        out[i] = np.median(values[lo : max(hi, lo + 1)])
     return out
 
 
@@ -60,13 +60,17 @@ def positioned_blocks(timestamps, cum) -> list[tuple[int, int, bool]]:
     when the block spans >=60 s and >=200 m."""
     blocks, start = [], 0
     for i in range(1, len(timestamps) + 1):
-        gap = ((timestamps[i] - timestamps[i - 1]).total_seconds()
-               if i < len(timestamps) else float("inf"))
+        gap = (
+            (timestamps[i] - timestamps[i - 1]).total_seconds()
+            if i < len(timestamps)
+            else float("inf")
+        )
         if gap > BLOCK_MAX_GAP_S:
             span = (timestamps[i - 1] - timestamps[start]).total_seconds()
             dist = cum[i - 1] - cum[start]
-            blocks.append((start, i - 1,
-                           span >= BLOCK_MIN_SPAN_S and dist >= BLOCK_MIN_DIST_M))
+            blocks.append(
+                (start, i - 1, span >= BLOCK_MIN_SPAN_S and dist >= BLOCK_MIN_DIST_M)
+            )
             start = i
     return blocks
 
@@ -110,7 +114,7 @@ def gap_series(speed_mps, grade_pct) -> np.ndarray:
     """Grade-adjusted pace. NaN wherever grade is NaN — GAP inherits the
     trustworthiness of the grade it is built on."""
     out = np.full(len(speed_mps), np.nan)
-    for i, (v, g) in enumerate(zip(speed_mps, grade_pct)):
+    for i, (v, g) in enumerate(zip(speed_mps, grade_pct, strict=False)):
         if v is None or np.isnan(g):
             continue
         out[i] = v * minetti_cost(g / 100.0) / _FLAT_COST
@@ -131,11 +135,11 @@ def prominences(elev) -> list[tuple[int, float, float]]:
         j = i
         while j > 0 and elev[j - 1] <= elev[i]:
             j -= 1
-        left = elev[j:i + 1].min() if j < i else elev[i]
+        left = elev[j : i + 1].min() if j < i else elev[i]
         k = i
         while k < n - 1 and elev[k + 1] <= elev[i]:
             k += 1
-        right = elev[i:k + 1].min() if k > i else elev[i]
+        right = elev[i : k + 1].min() if k > i else elev[i]
         out.append((i, float(elev[i]), float(elev[i] - max(left, right))))
     return out
 
@@ -147,18 +151,30 @@ def detect_hills(elev_smooth, cum, min_prominence=PROMINENCE_MIN_M) -> list[dict
         if prom < min_prominence:
             continue
         j = i
-        while j > 0 and elev_smooth[j - 1] <= elev_smooth[i] and top - elev_smooth[j] < prom:
+        while (
+            j > 0
+            and elev_smooth[j - 1] <= elev_smooth[i]
+            and top - elev_smooth[j] < prom
+        ):
             j -= 1
         k = i
-        while (k < len(elev_smooth) - 1 and elev_smooth[k + 1] <= elev_smooth[i]
-               and top - elev_smooth[k] < prom):
+        while (
+            k < len(elev_smooth) - 1
+            and elev_smooth[k + 1] <= elev_smooth[i]
+            and top - elev_smooth[k] < prom
+        ):
             k += 1
-        hills.append({
-            "peak_index": i, "peak_distance_m": float(cum[i]),
-            "peak_elevation_m": top, "prominence_m": prom,
-            "start_index": j, "end_index": k,
-            "length_m": float(cum[k] - cum[j]),
-        })
+        hills.append(
+            {
+                "peak_index": i,
+                "peak_distance_m": float(cum[i]),
+                "peak_elevation_m": top,
+                "prominence_m": prom,
+                "start_index": j,
+                "end_index": k,
+                "length_m": float(cum[k] - cum[j]),
+            }
+        )
 
     # DOUBLE-TOP DEDUP. A broad summit with two local maxima of equal height
     # emits one entry per maximum, and the prominence walk finds the SAME key
@@ -200,11 +216,11 @@ def detect_hills(elev_smooth, cum, min_prominence=PROMINENCE_MIN_M) -> list[dict
 # recovery after climbing slope X against recovery after descending slope X,
 # same ground.
 
-SLOPE_ENTER_PCT = 3.0          # §5 hysteresis: enter a sustained stretch
-SLOPE_EXIT_PCT = 1.0           # §5 hysteresis: leave it. Reused as the floor
-                               # on a MERGED slope's mean grade -- see the
-                               # merge veto in detect_slopes.
-SLOPE_MIN_VERTICAL_M = PROMINENCE_MIN_M   # significance, REUSED not re-picked
+SLOPE_ENTER_PCT = 3.0  # §5 hysteresis: enter a sustained stretch
+SLOPE_EXIT_PCT = 1.0  # §5 hysteresis: leave it. Reused as the floor
+# on a MERGED slope's mean grade -- see the
+# merge veto in detect_slopes.
+SLOPE_MIN_VERTICAL_M = PROMINENCE_MIN_M  # significance, REUSED not re-picked
 
 # An interruption is absorbed only if it is BOTH short and insignificant.
 #
@@ -258,8 +274,9 @@ def _state_runs(state) -> list[list]:
     return runs
 
 
-def detect_slopes(elev, cum, grade=None, bench_max_m=BENCH_MAX_M,
-                  min_vertical_m=SLOPE_MIN_VERTICAL_M) -> list[dict]:
+def detect_slopes(
+    elev, cum, grade=None, bench_max_m=BENCH_MAX_M, min_vertical_m=SLOPE_MIN_VERTICAL_M
+) -> list[dict]:
     """Monotonic slopes along one run. Returns direction-normalised endpoints.
 
     A SINGLE-PASS THREE-STATE PARTITION. Every sample is ascent, descent or
@@ -278,9 +295,13 @@ def detect_slopes(elev, cum, grade=None, bench_max_m=BENCH_MAX_M,
         grade = profile_grade(elev, cum)
     grade = np.asarray(grade, dtype=float)
 
-    state = np.where(np.isnan(grade), 0,
-                     np.where(grade >= SLOPE_ENTER_PCT, 1,
-                              np.where(grade <= -SLOPE_ENTER_PCT, -1, 0)))
+    state = np.where(
+        np.isnan(grade),
+        0,
+        np.where(
+            grade >= SLOPE_ENTER_PCT, 1, np.where(grade <= -SLOPE_ENTER_PCT, -1, 0)
+        ),
+    )
     runs = _state_runs(state)
 
     # An interruption is the WHOLE span between two runs of the same state, not
@@ -294,20 +315,20 @@ def detect_slopes(elev, cum, grade=None, bench_max_m=BENCH_MAX_M,
         for k in range(len(runs) - 1):
             if runs[k][2] == 0:
                 continue
-            nxt = next((j for j in range(k + 1, len(runs))
-                        if runs[j][2] == runs[k][2]), None)
+            nxt = next(
+                (j for j in range(k + 1, len(runs)) if runs[j][2] == runs[k][2]), None
+            )
             if nxt is None or nxt == k + 1:
                 continue
             a, b = runs[k][1], runs[nxt][0]
             gap = cum[b] - cum[a]
             if gap > bench_max_m:
                 continue
-            inner = elev[a:b + 1]
+            inner = elev[a : b + 1]
             # How far the profile moves AGAINST the enclosing direction.
             # Reusing the prominence threshold: a reversal smaller than a
             # significant feature is texture, not a boundary.
-            rev = (elev[a] - inner.min() if runs[k][2] > 0
-                   else inner.max() - elev[a])
+            rev = elev[a] - inner.min() if runs[k][2] > 0 else inner.max() - elev[a]
             if rev >= min_vertical_m:
                 continue
             # MERGE VETO. Absorption iterates, so several benches can chain and
@@ -321,7 +342,7 @@ def detect_slopes(elev, cum, grade=None, bench_max_m=BENCH_MAX_M,
             if span <= 0 or abs(100.0 * (elev[m1] - elev[m0]) / span) < SLOPE_EXIT_PCT:
                 continue
             runs[k] = [runs[k][0], runs[nxt][1], runs[k][2]]
-            del runs[k + 1:nxt + 1]
+            del runs[k + 1 : nxt + 1]
             changed = True
             break
 
@@ -331,7 +352,8 @@ def detect_slopes(elev, cum, grade=None, bench_max_m=BENCH_MAX_M,
     # feature of the terrain and is not symmetric: climbing a face you enter
     # the sustained state at a different point than you leave it descending the
     # same face. Measured before this step, only about a tenth of segments
-    # carried both directions -- low endpoints agreed to 4-30 m but high endpoints differed
+    # carried both directions -- low endpoints agreed to 4-30 m but high endpoints
+    # differed
     # by 25-70 m, and ascents ran systematically longer than the matching
     # descents. That defeats the whole point of keying a slope on its
     # endpoints (§5): the ascent and descent of one face must be ONE segment.
@@ -383,17 +405,24 @@ def detect_slopes(elev, cum, grade=None, bench_max_m=BENCH_MAX_M,
         # and end. That is what lets one slope carry both an ascent effort and
         # a descent effort (§5, amended).
         lo_i, hi_i = (a, b) if elev[a] <= elev[b] else (b, a)
-        slopes.append({
-            "start_index": a, "end_index": b,
-            "low_index": lo_i, "high_index": hi_i,
-            "direction": "ascent" if s > 0 else "descent",
-            "start_distance_m": float(cum[a]), "end_distance_m": float(cum[b]),
-            "low_elevation_m": float(elev[lo_i]),
-            "high_elevation_m": float(elev[hi_i]),
-            "vertical_m": float(vertical), "length_m": float(length),
-            "mean_grade_pct": (100.0 * (elev[b] - elev[a]) / length
-                               if length > 0 else 0.0),
-        })
+        slopes.append(
+            {
+                "start_index": a,
+                "end_index": b,
+                "low_index": lo_i,
+                "high_index": hi_i,
+                "direction": "ascent" if s > 0 else "descent",
+                "start_distance_m": float(cum[a]),
+                "end_distance_m": float(cum[b]),
+                "low_elevation_m": float(elev[lo_i]),
+                "high_elevation_m": float(elev[hi_i]),
+                "vertical_m": float(vertical),
+                "length_m": float(length),
+                "mean_grade_pct": (
+                    100.0 * (elev[b] - elev[a]) / length if length > 0 else 0.0
+                ),
+            }
+        )
     return slopes
 
 
@@ -450,8 +479,13 @@ SPLIT_TRANSITION_S = 3
 # real instability instead. A flag for it would encode an unsupported
 # hypothesis as data. It stays unflagged until something measures it, and
 # §14a's transient caveat is a RESOLUTION LIMIT, not an artifact (§15.4).
-ALL_FLAGS = ("gps_jitter", "speed_discontinuity", "cadence_dropout",
-             "cadence_stuck", "split_transition")
+ALL_FLAGS = (
+    "gps_jitter",
+    "speed_discontinuity",
+    "cadence_dropout",
+    "cadence_stuck",
+    "split_transition",
+)
 
 
 def quality_flags(timestamps, xs, ys, speeds, cadences, split_types):
@@ -493,8 +527,11 @@ def quality_flags(timestamps, xs, ys, speeds, cadences, split_types):
 
     # --- cadence dropout ---------------------------------------------------
     for i in range(n):
-        if cadences[i] == 0 and speeds[i] is not None \
-                and speeds[i] > CADENCE_DROPOUT_SPEED_MPS:
+        if (
+            cadences[i] == 0
+            and speeds[i] is not None
+            and speeds[i] > CADENCE_DROPOUT_SPEED_MPS
+        ):
             flags[i].add("cadence_dropout")
 
     # --- cadence lock ------------------------------------------------------

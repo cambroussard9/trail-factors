@@ -32,8 +32,9 @@ class TestBestWindowBounds(unittest.TestCase):
     def test_a_window_that_must_cross_a_stand_counts_it(self):
         w = self.best(150.0)
         self.assertAlmostEqual(w["seconds"], 35.0, places=9)
-        self.assertNotAlmostEqual(w["seconds"], 25.0, places=3,
-                                  msg="the first-to-first interpolation")
+        self.assertNotAlmostEqual(
+            w["seconds"], 25.0, places=3, msg="the first-to-first interpolation"
+        )
 
     def test_a_start_on_the_stand_leaves_at_its_LAST_time(self):
         """100 m starting AT 100 m departs at t=30, not t=10."""

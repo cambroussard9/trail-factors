@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import unittest
 
-from trail_factors.analysis import report as R
 from tests.corpus import CorpusTestCase
+from trail_factors.analysis import report as R
 
 
 class TestTheVerifiedCrasherOkNullSweep(CorpusTestCase):
@@ -20,8 +20,10 @@ class TestTheVerifiedCrasherOkNullSweep(CorpusTestCase):
 
     def test_no_primitive_reports_ok_with_a_null_value(self):
         """THE CONTRACT ITSELF, over the whole corpus rather than one run."""
-        acts = [r[0] for r in self.con.execute(
-            "SELECT activity_id FROM activities").fetchall()]
+        acts = [
+            r[0]
+            for r in self.con.execute("SELECT activity_id FROM activities").fetchall()
+        ]
         self.assertTrue(acts, "the corpus has no activities")
         offenders = []
         for aid in acts:

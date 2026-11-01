@@ -17,11 +17,11 @@ from unittest import mock
 
 import duckdb
 
+from tests.corpus import CorpusTestCase, connect, one, use_config
 from trail_factors.analysis import primitives as P
 from trail_factors.analysis import report as REP
 from trail_factors.paths import REPO_ROOT
 from trail_factors.units import pace_over, pace_per_mile
-from tests.corpus import CorpusTestCase, connect, one, use_config
 
 # The subject of the single-run checks: the watch running activity with the
 # most slope traversals, so it exercises the terrain primitives.
@@ -48,8 +48,9 @@ class TestPercentile(unittest.TestCase):
         self.assertLess(P.percentile_of(0.0, [1.0, 2.0, 3.0, 4.0]), 10)
 
     def test_the_median_scores_near_fifty(self):
-        self.assertAlmostEqual(P.percentile_of(3.0, [1.0, 2.0, 3.0, 4.0, 5.0]),
-                               50.0, delta=15)
+        self.assertAlmostEqual(
+            P.percentile_of(3.0, [1.0, 2.0, 3.0, 4.0, 5.0]), 50.0, delta=15
+        )
 
     def test_too_small_a_population_gives_no_percentile(self):
         """A percentile against two runs would invent a scale that is not there."""
@@ -87,14 +88,15 @@ class TestComparisonSet(CorpusTestCase):
         and §9 records that startLatitude is the first KNOWN position, not the
         start."""
         import inspect
+
         src = inspect.getsource(REP.cluster_of)
         self.assertIn("median(lat)", src)
         self.assertNotIn("ORDER BY timestamp LIMIT 1", src)
 
     def test_a_gps_less_run_falls_back_rather_than_crashing(self):
         aid = self.con.execute(
-            "SELECT activity_id FROM activities WHERE coverage_fraction = 0 "
-            "LIMIT 1").fetchone()
+            "SELECT activity_id FROM activities WHERE coverage_fraction = 0 LIMIT 1"
+        ).fetchone()
         if aid:
             self.assertEqual(REP.cluster_of(self.con, aid[0]), "NO_GPS")
 
@@ -102,10 +104,9 @@ class TestComparisonSet(CorpusTestCase):
         """Whatever config is in force, every label is a configured cluster
         name, OTHER or NO_GPS -- never a position."""
         from trail_factors import config
-        allowed = ({c.name for c in config.get().clusters}
-                   | {"OTHER", "NO_GPS"})
-        for (aid,) in self.con.execute(
-                "SELECT activity_id FROM activities").fetchall():
+
+        allowed = {c.name for c in config.get().clusters} | {"OTHER", "NO_GPS"}
+        for (aid,) in self.con.execute("SELECT activity_id FROM activities").fetchall():
             label = REP.cluster_of(self.con, aid)
             self.assertIn(label, allowed, aid)
             self.assertNotRegex(label, r"\d+\.\d+", aid)
@@ -114,11 +115,12 @@ class TestComparisonSet(CorpusTestCase):
 def _positions(lat, lon):
     """A synthetic corpus of one activity: a short trace at (lat, lon)."""
     con = duckdb.connect(":memory:")
-    con.execute("CREATE TABLE records (activity_id VARCHAR, lat DOUBLE, "
-                "lon DOUBLE)")
+    con.execute("CREATE TABLE records (activity_id VARCHAR, lat DOUBLE, lon DOUBLE)")
     if lat is not None:
-        con.executemany("INSERT INTO records VALUES ('a', ?, ?)",
-                        [(lat + i * 1e-4, lon + i * 1e-4) for i in range(5)])
+        con.executemany(
+            "INSERT INTO records VALUES ('a', ?, ?)",
+            [(lat + i * 1e-4, lon + i * 1e-4) for i in range(5)],
+        )
     else:
         con.execute("INSERT INTO records VALUES ('a', NULL, NULL)")
     return con
@@ -158,8 +160,10 @@ class TestClusterLabelsNeverCarryAPosition(unittest.TestCase):
     def test_a_coordinate_bearing_label_from_the_classifier_is_collapsed(self):
         """cluster_of trusts only configured names: anything else the
         classifier returns (the old OTHER(lat,lon) shape) becomes OTHER."""
-        with mock.patch("trail_factors.cli.report.assign_cluster",
-                        lambda lat, lon: "OTHER(-33.90,18.40)"):
+        with mock.patch(
+            "trail_factors.cli.report.assign_cluster",
+            lambda lat, lon: "OTHER(-33.90,18.40)",
+        ):
             label = self.label(-33.9, 18.4)
         self.assertEqual(label, "OTHER")
         self.assertIsNone(re.search(r"\d", label))
@@ -180,40 +184,55 @@ class TestDerivedTablesAgree(CorpusTestCase):
                               WHERE r.activity_id = e.activity_id
                                 AND r.slope_index = e.slope_index)
         """).fetchone()[0]
-        self.assertEqual(missing, 0,
-                         "segment_recovery is stale -- run `recovery` after `match`")
+        self.assertEqual(
+            missing, 0, "segment_recovery is stale -- run `recovery` after `match`"
+        )
 
     def test_delta_hr_and_the_climb_signature_agree_per_run(self):
         """The exact contradiction that surfaced: signature says 7 ascents and
         7 descents, delta_hr says none."""
         for (aid,) in self.con.execute(
-                "SELECT activity_id FROM activities WHERE source = 'garmin_watch' "
-                "AND activity_id IN (SELECT activity_id FROM slope_traversals)"
+            "SELECT activity_id FROM activities WHERE source = 'garmin_watch' "
+            "AND activity_id IN (SELECT activity_id FROM slope_traversals)"
         ).fetchall():
             sig = P.climb_signature(self.con, aid)
-            rec = dict(self.con.execute(
-                "SELECT direction, count(*) FROM segment_recovery "
-                "WHERE activity_id = ? GROUP BY 1", [aid]).fetchall())
-            eff = dict(self.con.execute(
-                "SELECT direction, count(*) FROM segment_efforts "
-                "WHERE activity_id = ? GROUP BY 1", [aid]).fetchall())
+            rec = dict(
+                self.con.execute(
+                    "SELECT direction, count(*) FROM segment_recovery "
+                    "WHERE activity_id = ? GROUP BY 1",
+                    [aid],
+                ).fetchall()
+            )
+            eff = dict(
+                self.con.execute(
+                    "SELECT direction, count(*) FROM segment_efforts "
+                    "WHERE activity_id = ? GROUP BY 1",
+                    [aid],
+                ).fetchall()
+            )
             self.assertEqual(rec, eff, f"{aid}: recovery disagrees with efforts")
-            self.assertEqual(sum(eff.values()), sig["n_slopes"] if False
-                             else sum(eff.values()))
+            self.assertEqual(
+                sum(eff.values()), sig["n_slopes"] if False else sum(eff.values())
+            )
 
     def test_direction_values_are_the_slope_vocabulary_everywhere(self):
         """After the slope refactor, forward/reverse must be gone."""
         for table in ("segment_efforts", "segment_recovery", "slope_traversals"):
-            vals = {r[0] for r in self.con.execute(
-                f"SELECT DISTINCT direction FROM {table}").fetchall()}
+            vals = {
+                r[0]
+                for r in self.con.execute(
+                    f"SELECT DISTINCT direction FROM {table}"
+                ).fetchall()
+            }
             self.assertTrue(vals <= {"ascent", "descent"}, f"{table}: {vals}")
 
     def test_the_sync_pipeline_runs_recovery_after_match(self):
         """Structural: the ordering that keeps the two tables consistent."""
         src = (REPO_ROOT / "src" / "trail_factors" / "mcp_server.py").read_text()
         self.assertIn("recovery_build", src)
-        self.assertLess(src.index('"match", match_build'),
-                        src.index('"recovery", recovery_build'))
+        self.assertLess(
+            src.index('"match", match_build'), src.index('"recovery", recovery_build')
+        )
 
 
 class TestNotable(unittest.TestCase):
@@ -223,9 +242,15 @@ class TestNotable(unittest.TestCase):
         return {"flags": list(flags), "primitives": list(prims)}
 
     def _prim(self, name, pct, value=1.0, status=REP.OK, reason=None):
-        return {"name": name, "unit": "bpm", "value": value, "status": status,
-                "reason": reason, "percentile": pct,
-                "history": {"median": 1.0, "p25": 0.5, "p75": 2.0, "n": 8}}
+        return {
+            "name": name,
+            "unit": "bpm",
+            "value": value,
+            "status": status,
+            "reason": reason,
+            "percentile": pct,
+            "history": {"median": 1.0, "p25": 0.5, "p75": 2.0, "n": 8},
+        }
 
     def test_a_high_percentile_is_notable(self):
         out = REP.notable(self._rep(prims=[self._prim("x", 95.0)]))
@@ -246,39 +271,57 @@ class TestNotable(unittest.TestCase):
         self.assertEqual(REP.notable(self._rep(prims=[self._prim("x", None)])), [])
 
     def test_a_failed_gate_is_notable(self):
-        out = REP.notable(self._rep(prims=[
-            self._prim("x", None, value=None, status=REP.GATED, reason="gate said no")]))
+        out = REP.notable(
+            self._rep(
+                prims=[
+                    self._prim(
+                        "x", None, value=None, status=REP.GATED, reason="gate said no"
+                    )
+                ]
+            )
+        )
         self.assertEqual(out[0]["kind"], "gate")
         self.assertIn("not the same as the run being bad", out[0]["text"])
 
     def test_refused_and_unavailable_are_not_notable(self):
         """§15.4: a refusal is not a finding and must not be surfaced as one."""
         for status in (REP.REFUSED, REP.UNAVAILABLE):
-            out = REP.notable(self._rep(prims=[
-                self._prim("x", None, value=None, status=status, reason="r")]))
+            out = REP.notable(
+                self._rep(
+                    prims=[self._prim("x", None, value=None, status=status, reason="r")]
+                )
+            )
             self.assertEqual(out, [], status)
 
     def test_every_validation_flag_is_notable(self):
-        out = REP.notable(self._rep(flags=[
-            {"check": "c", "severity": "warning", "message": "m"}]))
+        out = REP.notable(
+            self._rep(flags=[{"check": "c", "severity": "warning", "message": "m"}])
+        )
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0]["kind"], "flag")
 
     def test_salience_order_fatal_then_extreme_then_gate_then_warning(self):
-        out = REP.notable(self._rep(
-            flags=[{"check": "w", "severity": "warning", "message": "m"},
-                   {"check": "f", "severity": "fatal", "message": "m"}],
-            prims=[self._prim("hi", 99.0),
-                   self._prim("g", None, value=None, status=REP.GATED,
-                              reason="r")]))
+        out = REP.notable(
+            self._rep(
+                flags=[
+                    {"check": "w", "severity": "warning", "message": "m"},
+                    {"check": "f", "severity": "fatal", "message": "m"},
+                ],
+                prims=[
+                    self._prim("hi", 99.0),
+                    self._prim("g", None, value=None, status=REP.GATED, reason="r"),
+                ],
+            )
+        )
         kinds = [i["kind"] for i in out]
         self.assertEqual(kinds, ["flag", "extreme", "gate", "flag"])
         self.assertEqual(out[0]["severity"], "fatal")
         self.assertEqual(out[-1]["severity"], "warning")
 
     def test_a_more_extreme_percentile_outranks_a_less_extreme_one(self):
-        out = REP.notable(self._rep(prims=[self._prim("mild", 91.0),
-                                           self._prim("wild", 100.0)]))
+        out = REP.notable(
+            self._rep(prims=[self._prim("mild", 91.0), self._prim("wild", 100.0)])
+        )
         self.assertEqual([i["text"].split()[0] for i in out], ["wild", "mild"])
 
     def test_notable_appears_in_the_rendered_report(self):
@@ -289,8 +332,11 @@ class TestNotable(unittest.TestCase):
         finally:
             con.close()
         self.assertIn("NOTABLE", out)
-        self.assertLess(out.index("NOTABLE"), out.index("PRIMITIVES"),
-                        "notable must come FIRST -- it says where to look")
+        self.assertLess(
+            out.index("NOTABLE"),
+            out.index("PRIMITIVES"),
+            "notable must come FIRST -- it says where to look",
+        )
 
     def test_the_corpus_actually_produces_extremes_somewhere(self):
         """Otherwise every test above is synthetic and the feature is untested
@@ -299,8 +345,8 @@ class TestNotable(unittest.TestCase):
         found = 0
         try:
             for (aid,) in con.execute(
-                    "SELECT activity_id FROM activities "
-                    "WHERE source = 'garmin_watch'").fetchall():
+                "SELECT activity_id FROM activities WHERE source = 'garmin_watch'"
+            ).fetchall():
                 rep = REP.build(con, aid)
                 found += sum(1 for i in rep["notable"] if i["kind"] == "extreme")
                 if found:
@@ -355,21 +401,22 @@ class TestReportContract(CorpusTestCase):
         requires a number, and anything else requires a reason. The verdict
         itself belongs to the data and moves with it.
         """
-        tau = next(p for p in self.rep["primitives"]
-                   if p["name"] == "climb_recovery_tau")
+        tau = next(
+            p for p in self.rep["primitives"] if p["name"] == "climb_recovery_tau"
+        )
         if tau["status"] == REP.OK:
             self.assertIsNotNone(tau["value"])
             # AND IT CARRIES WHAT THE GATE STOOD ON.
             self.assertIn("n_groups_supporting", tau["gate_basis"])
         else:
-            self.assertIn(tau["status"],
-                          (REP.REFUSED, REP.GATED, REP.UNAVAILABLE))
+            self.assertIn(tau["status"], (REP.REFUSED, REP.GATED, REP.UNAVAILABLE))
             self.assertTrue(tau["reason"])
             self.assertIsNone(tau["value"])
 
     def test_gap_is_refused_until_the_personal_refit(self):
-        gap = next(p for p in self.rep["primitives"]
-                   if p["name"] == "grade_adjusted_pace")
+        gap = next(
+            p for p in self.rep["primitives"] if p["name"] == "grade_adjusted_pace"
+        )
         self.assertEqual(gap["status"], REP.REFUSED)
 
     def test_percentile_is_withheld_when_the_history_is_too_thin(self):
@@ -384,13 +431,16 @@ class TestReportContract(CorpusTestCase):
         self.assertTrue(kinds <= {"rwd_run", "rwd_walk"})
         # The subject is the run with the most slope traversals, so its
         # table spans more than one grade bin.
-        self.assertGreater(len({g["grade_bin"]
-                                for g in self.rep["grade_table"]}), 1)
+        self.assertGreater(len({g["grade_bin"] for g in self.rep["grade_table"]}), 1)
 
     def test_provenance_travels_with_the_numbers(self):
         pv = self.rep["provenance"]
-        for key in ("sampling_regime", "coverage_fraction", "weather_source",
-                    "weather_is_final"):
+        for key in (
+            "sampling_regime",
+            "coverage_fraction",
+            "weather_source",
+            "weather_is_final",
+        ):
             self.assertIn(key, pv)
 
     def test_what_cannot_be_enforced_is_stated(self):
@@ -404,8 +454,10 @@ class TestReportContract(CorpusTestCase):
         athlete after the run, and no staleness of an answer that is never
         collected."""
         a = self.rep["athlete"]
-        self.assertEqual(set(a), {"garmin_self_evaluation", "notes",
-                                  "notes_status", "notes_projection"})
+        self.assertEqual(
+            set(a),
+            {"garmin_self_evaluation", "notes", "notes_status", "notes_projection"},
+        )
         self.assertNotIn("do_not_pool", a["garmin_self_evaluation"])
 
     def test_a_run_with_no_note_is_normal_not_a_deficiency(self):
@@ -423,13 +475,15 @@ class TestReportContract(CorpusTestCase):
         """garmin_rpe x timer minutes, in the payload with the filters that
         say so -- and in the rendered text either way."""
         from trail_factors.analysis import session_load as SL
+
         sl = self.rep["session_load"]
         self.assertIn(sl["status"], {REP.OK, REP.UNAVAILABLE})
         self.assertEqual(sl["filters"], SL.filters())
         self.assertFalse(sl["filters"]["feel_used"])
         if sl["status"] == REP.OK:
-            self.assertAlmostEqual(sl["foster_load_au"],
-                                   sl["garmin_rpe"] * sl["duration_min"])
+            self.assertAlmostEqual(
+                sl["foster_load_au"], sl["garmin_rpe"] * sl["duration_min"]
+            )
         else:
             self.assertIsNone(sl["foster_load_au"])
             self.assertTrue(sl["reason"])
@@ -447,7 +501,8 @@ class TestReportContract(CorpusTestCase):
         is a lie."""
         aid = self.con.execute(
             "SELECT activity_id FROM weather_records "
-            "WHERE weather_source = 'assumed_indoor' LIMIT 1").fetchone()
+            "WHERE weather_source = 'assumed_indoor' LIMIT 1"
+        ).fetchone()
         if aid:
             out = REP.render(REP.build(self.con, aid[0]))
             self.assertIn("ASSUMED", out)
@@ -474,10 +529,12 @@ class TestReportContract(CorpusTestCase):
         """The chat reads the structure, not the text, so the structure must
         carry the pace too — otherwise it converts by hand and gets 13.45."""
         m = self.rep["measured"]
-        self.assertEqual(m["elapsed_pace_per_mile"],
-                         pace_over(m["elapsed_s"], m["distance_m"]))
-        self.assertEqual(m["moving_pace_per_mile"],
-                         pace_over(m["moving_s"], m["distance_m"]))
+        self.assertEqual(
+            m["elapsed_pace_per_mile"], pace_over(m["elapsed_s"], m["distance_m"])
+        )
+        self.assertEqual(
+            m["moving_pace_per_mile"], pace_over(m["moving_s"], m["distance_m"])
+        )
 
     def test_the_grade_table_shows_pace_as_minutes_and_seconds(self):
         """The grade-binned table is the densest pace display in the report."""

@@ -33,9 +33,9 @@ from unittest import mock
 
 import duckdb
 
+from tests.corpus import CorpusTestCase, isolated, one, use_config
 from trail_factors.analysis import queries as Q
 from trail_factors.ingest import ride_blocks as RB
-from tests.corpus import CorpusTestCase, isolated, one, use_config
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -54,6 +54,7 @@ def _scratch_db(directory: Path, with_ride: bool = False) -> Path:
     `with_ride` adds one synthetic ride for a ride-block read to place.
     """
     from trail_factors.ingest.schema import DDL
+
     db = directory / "scratch.duckdb"
     con = duckdb.connect(str(db))
     try:
@@ -62,24 +63,33 @@ def _scratch_db(directory: Path, with_ride: bool = False) -> Path:
             con.execute(
                 "INSERT INTO runs (run_id, start_time_utc, local_tz, sport, "
                 "created_at) VALUES (?, TIMESTAMP '2025-01-15 07:00:00', 0.0, "
-                "'cycling', TIMESTAMP '2025-01-15 09:00:00')", [RIDE_RUN_ID])
+                "'cycling', TIMESTAMP '2025-01-15 09:00:00')",
+                [RIDE_RUN_ID],
+            )
             con.execute(
                 "INSERT INTO activities (activity_id, run_id, file_hash, "
                 "source_file, start_time_utc, local_tz, source, sport, "
                 "timer_time_s, sampling_regime, pipeline_version) VALUES "
                 "(?, ?, 'h1', 'x.fit', TIMESTAMP '2025-01-15 07:00:00', 0.0, "
                 "'garmin_watch', 'cycling', 3000.0, '1hz', 1)",
-                [RIDE_AID, RIDE_RUN_ID])
+                [RIDE_AID, RIDE_RUN_ID],
+            )
     finally:
         con.close()
     return db
 
 
 def _payload(blocks=None) -> dict:
-    return {"run_id": RIDE_RUN_ID, "raw_text": "synthetic fixture",
-            "blocks": blocks if blocks is not None else [
-                {"resistance": 7.0, "rpm": [90, 95], "end_min": 30},
-                {"resistance": 9.25, "rpm": [80, 90], "end_min": 50}]}
+    return {
+        "run_id": RIDE_RUN_ID,
+        "raw_text": "synthetic fixture",
+        "blocks": blocks
+        if blocks is not None
+        else [
+            {"resistance": 7.0, "rpm": [90, 95], "end_min": 30},
+            {"resistance": 9.25, "rpm": [80, 90], "end_min": 50},
+        ],
+    }
 
 
 def _read_in_a_fresh_process(script: str, *args: str) -> dict:
@@ -88,8 +98,9 @@ def _read_in_a_fresh_process(script: str, *args: str) -> dict:
     Nothing is shared with this process: not the connection, not the module
     state, not DuckDB's catalog cache.
     """
-    proc = subprocess.run([sys.executable, "-c", script, *args],
-                          capture_output=True, text=True, cwd=REPO)
+    proc = subprocess.run(
+        [sys.executable, "-c", script, *args], capture_output=True, text=True, cwd=REPO
+    )
     if proc.returncode != 0:
         raise AssertionError(f"child failed:\n{proc.stdout}\n{proc.stderr}")
     return json.loads(proc.stdout.strip().splitlines()[-1])
@@ -119,9 +130,10 @@ class _RideStore:
 
     def __init__(self, directory: Path):
         self.path = directory / "ride_blocks.json"
-        self._p = [mock.patch.object(RB, "RIDE_BLOCKS", self.path),
-                   mock.patch.object(RB, "BIKE_CONFIG",
-                                     directory / "bike_config.json")]
+        self._p = [
+            mock.patch.object(RB, "RIDE_BLOCKS", self.path),
+            mock.patch.object(RB, "BIKE_CONFIG", directory / "bike_config.json"),
+        ]
 
     def __enter__(self):
         for p in self._p:
@@ -142,8 +154,7 @@ class TestASaveIsVisibleToTheNextREAD(unittest.TestCase):
             db = _scratch_db(Path(d), with_ride=True)
             with _RideStore(Path(d)) as store:
                 RB.save_ride_blocks(_payload(), duration_min=50.0)
-            seen = _read_in_a_fresh_process(RIDE_CHILD, str(store.path),
-                                            str(db))
+            seen = _read_in_a_fresh_process(RIDE_CHILD, str(store.path), str(db))
         self.assertEqual(seen["n_weeks"], 1)
         self.assertEqual(seen["total_min"], [50.0])
 
@@ -155,9 +166,10 @@ class TestASaveIsVisibleToTheNextREAD(unittest.TestCase):
                 RB.save_ride_blocks(_payload(), duration_min=50.0)
                 RB.save_ride_blocks(
                     _payload([{"resistance": 7.0, "end_min": 40}]),
-                    duration_min=50.0, supersede=True)
-            seen = _read_in_a_fresh_process(RIDE_CHILD, str(store.path),
-                                            str(db))
+                    duration_min=50.0,
+                    supersede=True,
+                )
+            seen = _read_in_a_fresh_process(RIDE_CHILD, str(store.path), str(db))
         self.assertEqual(seen["total_min"], [40.0])
 
     def test_an_EMPTY_store_reads_as_empty_in_a_separate_process(self):
@@ -167,7 +179,8 @@ class TestASaveIsVisibleToTheNextREAD(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             db = _scratch_db(Path(d), with_ride=True)
             seen = _read_in_a_fresh_process(
-                RIDE_CHILD, str(Path(d) / "ride_blocks.json"), str(db))
+                RIDE_CHILD, str(Path(d) / "ride_blocks.json"), str(db)
+            )
         self.assertEqual(seen["n_weeks"], 0)
         self.assertEqual(seen["total_min"], [])
 
@@ -182,11 +195,14 @@ class TestTheSaveToolAssertsItsOwnVisibility(unittest.TestCase):
     # created on a clone.
     def setUp(self):
         from trail_factors import mcp_server as M
+
         self._tmp = tempfile.TemporaryDirectory()
         d = Path(self._tmp.name)
-        self._patches = [mock.patch.object(M, "DB_FILE",
-                                           _scratch_db(d, with_ride=True)),
-                         _RideStore(d), use_config()]
+        self._patches = [
+            mock.patch.object(M, "DB_FILE", _scratch_db(d, with_ride=True)),
+            _RideStore(d),
+            use_config(),
+        ]
         for p in self._patches:
             p.__enter__()
 
@@ -197,6 +213,7 @@ class TestTheSaveToolAssertsItsOwnVisibility(unittest.TestCase):
 
     def _save(self, payload, **kw):
         from trail_factors import mcp_server as M
+
         return json.loads(M.save_ride_blocks(payload=json.dumps(payload), **kw))
 
     def test_the_response_carries_the_read_back(self):
@@ -210,8 +227,7 @@ class TestTheSaveToolAssertsItsOwnVisibility(unittest.TestCase):
     def test_the_read_back_follows_a_SUPERSEDE_to_the_new_revision(self):
         """The twin that a hardcoded `revision: 0` would fail."""
         self._save(_payload())
-        out = self._save(_payload([{"resistance": 7.0, "end_min": 40}]),
-                         supersede=True)
+        out = self._save(_payload([{"resistance": 7.0, "end_min": 40}]), supersede=True)
         self.assertEqual(out["outcome"], "result", out)
         seen = out["payload"]["visible_to_read"]
         self.assertEqual(seen["revision"], 1)
@@ -221,9 +237,10 @@ class TestTheSaveToolAssertsItsOwnVisibility(unittest.TestCase):
         """THE NEGATIVE TWIN, with the read path stubbed to the empty answer
         the bug produced. It must not read as a rejection either: the payload
         was fine and the write happened, so re-sending it would be wrong."""
-        with mock.patch("trail_factors.analysis.rides.ride_blocks",
-                        return_value={"status": "unavailable",
-                                      "revision": None}):
+        with mock.patch(
+            "trail_factors.analysis.rides.ride_blocks",
+            return_value={"status": "unavailable", "revision": None},
+        ):
             out = self._save(_payload())
         self.assertEqual(out["outcome"], "broken")
         self.assertIn("WRITTEN", out["text"])
@@ -240,6 +257,7 @@ class TestAStaleProjectionSaysSoRatherThanReturningEmpty(unittest.TestCase):
 
     def _con(self):
         from trail_factors.ingest.schema import DDL
+
         con = duckdb.connect(":memory:")
         con.execute(DDL)
         return con
@@ -249,9 +267,14 @@ class TestAStaleProjectionSaysSoRatherThanReturningEmpty(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as d:
                 notes = Path(d) / "notes.json"
-                notes.write_text(json.dumps(
-                    [{"run_id": "r1", "note": "a", "noted_at": "2025-01-15"},
-                     {"run_id": "r2", "note": "b", "noted_at": "2025-01-15"}]))
+                notes.write_text(
+                    json.dumps(
+                        [
+                            {"run_id": "r1", "note": "a", "noted_at": "2025-01-15"},
+                            {"run_id": "r2", "note": "b", "noted_at": "2025-01-15"},
+                        ]
+                    )
+                )
                 with mock.patch("trail_factors.ingest.athlete_state.NOTES", notes):
                     status = Q.projection_status(con, "annotations")
             self.assertEqual(status["status"], "stale_projection")
@@ -271,7 +294,8 @@ class TestAStaleProjectionSaysSoRatherThanReturningEmpty(unittest.TestCase):
                 notes.write_text("[]")
                 with mock.patch("trail_factors.ingest.athlete_state.NOTES", notes):
                     self.assertEqual(
-                        Q.projection_status(con, "annotations")["status"], "ok")
+                        Q.projection_status(con, "annotations")["status"], "ok"
+                    )
         finally:
             con.close()
 
@@ -279,8 +303,11 @@ class TestAStaleProjectionSaysSoRatherThanReturningEmpty(unittest.TestCase):
         con = self._con()
         try:
             for table in ("annotations", "window_confirmations"):
-                self.assertIn(Q.projection_status(con, table)["status"],
-                              ("ok", "stale_projection"), table)
+                self.assertIn(
+                    Q.projection_status(con, table)["status"],
+                    ("ok", "stale_projection"),
+                    table,
+                )
         finally:
             con.close()
 
@@ -297,21 +324,29 @@ class TestTheReportSurfacesTheProjectionState(CorpusTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.aid = one(cls.con,
-                      "SELECT activity_id FROM activities "
-                      "WHERE source = 'garmin_watch' "
-                      "ORDER BY start_time_utc DESC LIMIT 1",
-                      what="garmin_watch activity")[0]
+        cls.aid = one(
+            cls.con,
+            "SELECT activity_id FROM activities "
+            "WHERE source = 'garmin_watch' "
+            "ORDER BY start_time_utc DESC LIMIT 1",
+            what="garmin_watch activity",
+        )[0]
         cls.n_annotations = cls.con.execute(
-            "SELECT count(*) FROM annotations").fetchone()[0]
+            "SELECT count(*) FROM annotations"
+        ).fetchone()[0]
 
     @staticmethod
     def _notes(n: int) -> str:
-        return json.dumps([{"run_id": f"r{i}", "note": "synthetic",
-                            "noted_at": "2025-01-15"} for i in range(n)])
+        return json.dumps(
+            [
+                {"run_id": f"r{i}", "note": "synthetic", "noted_at": "2025-01-15"}
+                for i in range(n)
+            ]
+        )
 
     def test_the_report_surfaces_a_stale_notes_projection(self):
         from trail_factors.analysis.report import build
+
         with isolated() as d:
             # One MORE note than the table holds: stale on any corpus.
             (d / "notes.json").write_text(self._notes(self.n_annotations + 1))
@@ -323,6 +358,7 @@ class TestTheReportSurfacesTheProjectionState(CorpusTestCase):
     def test_the_report_says_ok_when_the_projection_agrees(self):
         """THE TWIN."""
         from trail_factors.analysis.report import build
+
         with isolated() as d:
             (d / "notes.json").write_text(self._notes(self.n_annotations))
             rep = build(self.con, self.aid)
@@ -341,10 +377,10 @@ class TestALockedDatabaseFailsFast(unittest.TestCase):
 
     def setUp(self):
         from trail_factors import mcp_server as M
+
         self._tmp = tempfile.TemporaryDirectory()
         self.db = _scratch_db(Path(self._tmp.name))
-        self._patches = [mock.patch.object(M, "DB_FILE", self.db),
-                         use_config()]
+        self._patches = [mock.patch.object(M, "DB_FILE", self.db), use_config()]
         for p in self._patches:
             p.__enter__()
 
@@ -357,11 +393,19 @@ class TestALockedDatabaseFailsFast(unittest.TestCase):
         import time
 
         from trail_factors import mcp_server as M
+
         holder = subprocess.Popen(
-            [sys.executable, "-c",
-             "import sys, duckdb, time; c = duckdb.connect(sys.argv[1]); "
-             "print('held', flush=True); time.sleep(30)", str(self.db)],
-            cwd=REPO, stdout=subprocess.PIPE, text=True)
+            [
+                sys.executable,
+                "-c",
+                "import sys, duckdb, time; c = duckdb.connect(sys.argv[1]); "
+                "print('held', flush=True); time.sleep(30)",
+                str(self.db),
+            ],
+            cwd=REPO,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
         try:
             self.assertEqual(holder.stdout.readline().strip(), "held")
             started = time.monotonic()
@@ -383,6 +427,7 @@ class TestALockedDatabaseFailsFast(unittest.TestCase):
         """THE POSITIVE TWIN: without it, a server that always reported a lock
         would pass the test above."""
         from trail_factors import mcp_server as M
+
         out = json.loads(M.list_runs())
         self.assertEqual(out["outcome"], "result", out)
 

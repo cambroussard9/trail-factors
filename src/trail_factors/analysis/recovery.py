@@ -69,8 +69,12 @@ def tau_estimate(tail: list[tuple], clear_window_s: float) -> dict:
     `tail` is [(timestamp, heart_rate)] after the effort ends, already trimmed
     to the clear window. Returns a dict that ALWAYS records why it declined.
     """
-    out = {"tau_s": None, "drop_bpm": None, "clear_window_s": clear_window_s,
-           "reason": None}
+    out = {
+        "tau_s": None,
+        "drop_bpm": None,
+        "clear_window_s": clear_window_s,
+        "reason": None,
+    }
     if clear_window_s < MIN_CLEAR_WINDOW_S:
         out["reason"] = f"only {clear_window_s:.0f}s clear before the next effort"
         return out
@@ -97,8 +101,9 @@ def tau_estimate(tail: list[tuple], clear_window_s: float) -> dict:
     return out
 
 
-def effort_recovery(hr_during: list[int | None], tail: list[tuple],
-                    clear_window_s: float) -> dict:
+def effort_recovery(
+    hr_during: list[int | None], tail: list[tuple], clear_window_s: float
+) -> dict:
     """One effort's (delta-HR, tau). NEVER returns tau without delta-HR."""
     d = delta_hr(hr_during)
     est = tau_estimate(tail, clear_window_s)
@@ -106,8 +111,10 @@ def effort_recovery(hr_during: list[int | None], tail: list[tuple],
         est["tau_s"], est["reason"] = None, "no usable HR during the effort"
     elif d < MIN_DELTA_HR_BPM and est["tau_s"] is not None:
         est["tau_s"] = None
-        est["reason"] = (f"delta-HR {d:.0f} bpm is below the {MIN_DELTA_HR_BPM:.0f} "
-                         f"bpm floor -- nothing to recover from")
+        est["reason"] = (
+            f"delta-HR {d:.0f} bpm is below the {MIN_DELTA_HR_BPM:.0f} "
+            f"bpm floor -- nothing to recover from"
+        )
     est["delta_hr_bpm"] = d
     return est
 
@@ -120,19 +127,31 @@ def tau_is_reportable(taus_by_group: dict[tuple, list[float]]) -> dict:
     """
     groups = {k: v for k, v in taus_by_group.items() if len(v) >= 3}
     if not groups:
-        return {"reportable": False, "cv": None, "n_groups": 0,
-                "reason": "no slope has 3+ efforts with a tau estimate"}
+        return {
+            "reportable": False,
+            "cv": None,
+            "n_groups": 0,
+            "reason": "no slope has 3+ efforts with a tau estimate",
+        }
     sds = [statistics.pstdev(v) for v in groups.values()]
     meds = [statistics.median(v) for v in groups.values()]
     med_sd = statistics.median(sds)
     med_tau = statistics.median(meds)
     cv = med_sd / med_tau if med_tau else None
     ok = cv is not None and cv <= MAX_TAU_CV
-    return {"reportable": ok, "cv": cv, "n_groups": len(groups),
-            "median_tau_s": med_tau, "median_within_group_sd_s": med_sd,
-            "reason": None if ok else
-            (f"within-slope SD {med_sd:.0f}s against a median tau of "
-             f"{med_tau:.0f}s (CV {cv:.2f} > {MAX_TAU_CV}) -- tau is noise here")}
+    return {
+        "reportable": ok,
+        "cv": cv,
+        "n_groups": len(groups),
+        "median_tau_s": med_tau,
+        "median_within_group_sd_s": med_sd,
+        "reason": None
+        if ok
+        else (
+            f"within-slope SD {med_sd:.0f}s against a median tau of "
+            f"{med_tau:.0f}s (CV {cv:.2f} > {MAX_TAU_CV}) -- tau is noise here"
+        ),
+    }
 
 
 def summarise(efforts: list[dict]) -> dict:

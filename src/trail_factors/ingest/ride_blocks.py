@@ -82,10 +82,11 @@ RESISTANCE_STEP_OBSERVED = 0.25
 #
 # Do not quietly promote this number to a measurement.
 RESISTANCE_MAX_DECLARED = 20.0
-RESISTANCE_MAX_DEFINED_IN = ("src/trail_factors/ingest/ride_blocks.py "
-                             "RESISTANCE_MAX_DECLARED")
+RESISTANCE_MAX_DEFINED_IN = (
+    "src/trail_factors/ingest/ride_blocks.py RESISTANCE_MAX_DECLARED"
+)
 
-MINUTE_MAX = 600.0          # 10 hours; a bound on typos, not on training
+MINUTE_MAX = 600.0  # 10 hours; a bound on typos, not on training
 
 
 class RideBlockError(ValueError):
@@ -103,8 +104,9 @@ def resistance_max() -> tuple[float, str]:
 
 def resistance_max_defined_in() -> str:
     """WHERE the live ceiling comes from, as a path a reader can open."""
-    return (display_path(BIKE_CONFIG) if BIKE_CONFIG.exists()
-            else RESISTANCE_MAX_DEFINED_IN)
+    return (
+        display_path(BIKE_CONFIG) if BIKE_CONFIG.exists() else RESISTANCE_MAX_DEFINED_IN
+    )
 
 
 def load_ride_blocks() -> dict:
@@ -127,17 +129,16 @@ def normalise_rpm(v, where: str) -> list | None:
         return None
     if isinstance(v, (list, tuple)):
         if len(v) != 2 or _num(v[0]) is None or _num(v[1]) is None:
-            raise RideBlockError(f"{where}: rpm range must be [low, high] "
-                                 f"numbers, got {v!r}")
+            raise RideBlockError(
+                f"{where}: rpm range must be [low, high] numbers, got {v!r}"
+            )
         lo, hi = float(v[0]), float(v[1])
         if lo > hi:
-            raise RideBlockError(f"{where}: rpm range [{lo}, {hi}] is "
-                                 f"backwards")
+            raise RideBlockError(f"{where}: rpm range [{lo}, {hi}] is backwards")
         return [lo, hi]
     n = _num(v)
     if n is None:
-        raise RideBlockError(f"{where}: rpm must be a number or [low, high], "
-                             f"got {v!r}")
+        raise RideBlockError(f"{where}: rpm must be a number or [low, high], got {v!r}")
     return [float(n), float(n)]
 
 
@@ -155,8 +156,9 @@ def derive_blocks(entries: list) -> list:
     boundary means no way for two statements to disagree.
     """
     if not isinstance(entries, list) or not entries:
-        raise RideBlockError("blocks must be a non-empty list of "
-                             "{resistance, end_min, rpm?} entries")
+        raise RideBlockError(
+            "blocks must be a non-empty list of {resistance, end_min, rpm?} entries"
+        )
     out, prev_end = [], 0.0
     ceiling, ceiling_source = resistance_max()
     for i, e in enumerate(entries):
@@ -167,23 +169,26 @@ def derive_blocks(entries: list) -> list:
             raise RideBlockError(
                 f"{where}: start_min is DERIVED from the previous entry's "
                 f"end_min and must not be supplied. Blocks are end-anchored: "
-                f"give (resistance, end_min, rpm?) and the start follows.")
+                f"give (resistance, end_min, rpm?) and the start follows."
+            )
         end = _num(e.get("end_min"))
         if end is None:
-            raise RideBlockError(f"{where}: end_min is required and must be a "
-                                 f"number")
+            raise RideBlockError(f"{where}: end_min is required and must be a number")
         if end <= prev_end:
             raise RideBlockError(
                 f"{where}: end_min {end} does not advance past the previous "
                 f"block's end ({prev_end}). Two entries claim the same "
-                f"minutes; blocks cannot overlap and cannot be zero length.")
+                f"minutes; blocks cannot overlap and cannot be zero length."
+            )
         if end > MINUTE_MAX:
-            raise RideBlockError(f"{where}: end_min {end} exceeds "
-                                 f"{MINUTE_MAX:.0f} minutes")
+            raise RideBlockError(
+                f"{where}: end_min {end} exceeds {MINUTE_MAX:.0f} minutes"
+            )
         r = _num(e.get("resistance"))
         if r is None:
-            raise RideBlockError(f"{where}: resistance is required "
-                                 f"(knob turns from closed, decimal)")
+            raise RideBlockError(
+                f"{where}: resistance is required (knob turns from closed, decimal)"
+            )
         if not 0.0 <= r <= ceiling:
             raise RideBlockError(
                 f"{where}: resistance {r} is outside [0, {ceiling}]. That "
@@ -191,16 +196,24 @@ def derive_blocks(entries: list) -> list:
                 f"defined in {resistance_max_defined_in()}. If the knob really "
                 f"goes past it, create {display_path(BIKE_CONFIG)} with "
                 f'{{"resistance_max_turns": <measured>}} -- that file does not '
-                f"exist yet -- rather than widening the declared default.")
+                f"exist yet -- rather than widening the declared default."
+            )
         unknown = set(e) - {"resistance", "end_min", "rpm"}
         if unknown:
-            raise RideBlockError(f"{where}: unknown field(s): "
-                                 f"{', '.join(sorted(unknown))}")
-        out.append({"start_min": prev_end, "end_min": float(end),
-                    "resistance": float(r),
-                    "rpm": normalise_rpm(e.get("rpm"), where),
-                    "rpm_stated_as": (None if e.get("rpm") is None
-                                      else json.dumps(e["rpm"]))})
+            raise RideBlockError(
+                f"{where}: unknown field(s): {', '.join(sorted(unknown))}"
+            )
+        out.append(
+            {
+                "start_min": prev_end,
+                "end_min": float(end),
+                "resistance": float(r),
+                "rpm": normalise_rpm(e.get("rpm"), where),
+                "rpm_stated_as": (
+                    None if e.get("rpm") is None else json.dumps(e["rpm"])
+                ),
+            }
+        )
         prev_end = float(end)
     return out
 
@@ -216,15 +229,20 @@ def _validate_events(events) -> list:
             raise RideBlockError(f"event {i}: needs a non-empty `text`")
         unknown = set(e) - {"minute", "text", "duration_min"}
         if unknown:
-            raise RideBlockError(f"event {i}: unknown field(s): "
-                                 f"{', '.join(sorted(unknown))}")
+            raise RideBlockError(
+                f"event {i}: unknown field(s): {', '.join(sorted(unknown))}"
+            )
         minute = _num(e.get("minute"))
         dur = _num(e.get("duration_min"))
         # NEVER PARSED INTO ANYTHING. It is stored and surfaced beside the
         # per-block HR, and that is the whole contract.
-        out.append({"minute": None if minute is None else float(minute),
-                    "duration_min": None if dur is None else float(dur),
-                    "text": str(e["text"]).strip()})
+        out.append(
+            {
+                "minute": None if minute is None else float(minute),
+                "duration_min": None if dur is None else float(dur),
+                "text": str(e["text"]).strip(),
+            }
+        )
     return out
 
 
@@ -235,22 +253,26 @@ def _validate_machine_totals(mt) -> dict | None:
         raise RideBlockError("machine_totals must be an object")
     unknown = set(mt) - {"distance", "distance_unit", "avg_rpm"}
     if unknown:
-        raise RideBlockError(f"machine_totals: unknown field(s): "
-                             f"{', '.join(sorted(unknown))}")
+        raise RideBlockError(
+            f"machine_totals: unknown field(s): {', '.join(sorted(unknown))}"
+        )
     out = {}
     if "distance" in mt:
         d = _num(mt["distance"])
         if d is None or d < 0:
-            raise RideBlockError("machine_totals.distance must be a "
-                                 "non-negative number")
+            raise RideBlockError(
+                "machine_totals.distance must be a non-negative number"
+            )
         # THE UNIT IS REQUIRED WITH THE NUMBER. A bare distance whose unit is
         # assumed is the decimal-minutes bug class: every value looks
         # plausible and nothing downstream can detect the error.
         unit = mt.get("distance_unit")
         if unit not in ("mi", "km"):
-            raise RideBlockError("machine_totals.distance needs "
-                                 "distance_unit 'mi' or 'km'; a distance "
-                                 "without its unit is not a measurement")
+            raise RideBlockError(
+                "machine_totals.distance needs "
+                "distance_unit 'mi' or 'km'; a distance "
+                "without its unit is not a measurement"
+            )
         out["distance"] = float(d)
         out["distance_unit"] = unit
     if "avg_rpm" in mt:
@@ -267,10 +289,10 @@ PROVENANCE = {
     "events": "athlete_recalled",
     "machine_totals": "machine_reported",
     "heart_rate": "NOT STORED HERE -- records.heart_rate is authoritative and "
-                  "already in the corpus",
+    "already in the corpus",
     "note": "blocks and events are RECALLED, not measured. machine_totals is "
-            "the console readout. Neither is sensor-grade; they are different "
-            "reliabilities and must not be pooled as one.",
+    "the console readout. Neither is sensor-grade; they are different "
+    "reliabilities and must not be pooled as one.",
 }
 
 
@@ -278,21 +300,30 @@ def validate(payload: dict) -> list[str]:
     """Every problem at once. Pure over the payload: the duration bound needs
     the corpus and is checked in save_ride_blocks, never here."""
     problems = []
-    allowed = {"run_id", "activity_id", "raw_text", "blocks", "events",
-               "machine_totals"}
+    allowed = {
+        "run_id",
+        "activity_id",
+        "raw_text",
+        "blocks",
+        "events",
+        "machine_totals",
+    }
     unknown = set(payload) - allowed
     if unknown:
         problems.append(f"unknown field(s): {', '.join(sorted(unknown))}")
     if not str(payload.get("raw_text", "")).strip():
         problems.append(
             "raw_text is REQUIRED and must be the athlete's log verbatim. The "
-            "parsed blocks are an interpretation of it; the text is the record.")
+            "parsed blocks are an interpretation of it; the text is the record."
+        )
     for f in ("blocks", "raw_text"):
         if f not in payload:
             problems.append(f"{f} is required")
-    for check, arg in ((derive_blocks, payload.get("blocks")),
-                       (_validate_events, payload.get("events")),
-                       (_validate_machine_totals, payload.get("machine_totals"))):
+    for check, arg in (
+        (derive_blocks, payload.get("blocks")),
+        (_validate_events, payload.get("events")),
+        (_validate_machine_totals, payload.get("machine_totals")),
+    ):
         if arg is None and check is not derive_blocks:
             continue
         try:
@@ -302,8 +333,9 @@ def validate(payload: dict) -> list[str]:
     return problems
 
 
-def save_ride_blocks(payload: dict, duration_min: float | None = None,
-                     supersede: bool = False) -> dict:
+def save_ride_blocks(
+    payload: dict, duration_min: float | None = None, supersede: bool = False
+) -> dict:
     """Validate, bound against the activity, then write ATOMICALLY.
 
     `duration_min` is the activity's own timer time and comes from the caller
@@ -320,17 +352,25 @@ def save_ride_blocks(payload: dict, duration_min: float | None = None,
             f"the last block ends at {last:g} min but the activity is only "
             f"{duration_min:.2f} min long (timer time). A block cannot "
             f"describe minutes the ride does not contain; check the end_min "
-            f"values against the recorded duration.")
+            f"values against the recorded duration."
+        )
     events = _validate_events(payload.get("events"))
     for e in events:
-        if e["minute"] is not None and duration_min is not None \
-                and e["minute"] > duration_min + 1e-9:
+        if (
+            e["minute"] is not None
+            and duration_min is not None
+            and e["minute"] > duration_min + 1e-9
+        ):
             raise RideBlockError(
                 f"event at minute {e['minute']:g} falls outside the "
-                f"activity's {duration_min:.2f} min")
+                f"activity's {duration_min:.2f} min"
+            )
 
-    key = (payload["run_id"] if payload.get("run_id") is not None
-           else payload.get("activity_id"))
+    key = (
+        payload["run_id"]
+        if payload.get("run_id") is not None
+        else payload.get("activity_id")
+    )
     if not key:
         raise RideBlockError("run_id or activity_id is required")
     stored = load_ride_blocks()
@@ -341,7 +381,8 @@ def save_ride_blocks(payload: dict, duration_min: float | None = None,
             f"{previous.get('revision', 0)}, recorded "
             f"{previous.get('recorded_at')}). Pass supersede=true AS AN "
             f"ARGUMENT BESIDE the payload, not as a field inside it; the "
-            f"existing entry is kept in the record.")
+            f"existing entry is kept in the record."
+        )
 
     ceiling, ceiling_source = resistance_max()
     entry = {
@@ -363,8 +404,9 @@ def save_ride_blocks(payload: dict, duration_min: float | None = None,
         },
         "source": SOURCE,
         "schema_version": SCHEMA_VERSION,
-        "recorded_at": (datetime.datetime.now(datetime.timezone.utc)
-                        .replace(tzinfo=None).isoformat()),
+        "recorded_at": (
+            datetime.datetime.now(datetime.UTC).replace(tzinfo=None).isoformat()
+        ),
     }
     revise(previous, entry)
     stored[key] = entry

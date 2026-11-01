@@ -15,9 +15,11 @@ these checks.
 from __future__ import annotations
 
 import statistics
+from datetime import UTC
+
+from trail_factors.units import pace_per_mile
 
 from .fit_file import semicircles_to_degrees
-from trail_factors.units import pace_per_mile
 
 # Record span may exceed the session's own elapsed time a little (the session
 # message is written after the last record), but not by much.
@@ -67,11 +69,12 @@ def check_timestamps(records: list[dict], session: dict) -> tuple[list[str], lis
         if span_s > limit:
             fatal.append(
                 f"record span {span_s:,.0f} s exceeds session.total_elapsed_time "
-                f"{reported:,.0f} s by more than {SPAN_FACTOR}x (+{SPAN_TOLERANCE_S:.0f} s "
+                f"{reported:,.0f} s by more than {SPAN_FACTOR}x "
+                f"(+{SPAN_TOLERANCE_S:.0f} s "
                 f"tolerance); timestamps are corrupt"
             )
 
-    gaps = [(b - a).total_seconds() for a, b in zip(stamps, stamps[1:])]
+    gaps = [(b - a).total_seconds() for a, b in zip(stamps, stamps[1:], strict=False)]
     median_gap = statistics.median(gaps)
     biggest = max(gaps)
     if biggest > MAX_GAP_S:
@@ -110,8 +113,8 @@ FATAL, WARNING, INFO = "fatal", "warning", "info"
 BRONZE, SILVER, GOLD = "bronze", "silver", "gold"
 
 # Pace bounds for RUNNING. Generic human limits, not fitted to anyone.
-PACE_FATAL_MPS = 1609.344 / 240      # 4:00/mi
-PACE_WARN_MPS = 1609.344 / 300       # 5:00/mi
+PACE_FATAL_MPS = 1609.344 / 240  # 4:00/mi
+PACE_WARN_MPS = 1609.344 / 300  # 5:00/mi
 # A SUSTAINED impossibility means a unit error and is fatal; a single sample is
 # a GPS glitch: a single re-fix sample far above 4:00/mi can sit in an
 # otherwise usable run, and rejecting that file would be wrong.
@@ -125,8 +128,7 @@ COVERAGE_WARN = 0.99
 class Finding:
     """One validation result, ready to be persisted."""
 
-    def __init__(self, check, severity, layer, message,
-                 observed=None, expected=None):
+    def __init__(self, check, severity, layer, message, observed=None, expected=None):
         self.check, self.severity, self.layer = check, severity, layer
         self.message, self.observed, self.expected = message, observed, expected
 
@@ -160,23 +162,38 @@ def bronze_checks(records: list[dict], session: dict, messages: dict) -> list[Fi
         if abs(lat) > LAT_MAX or abs(lon) > LON_MAX:
             bad += 1
     if bad:
-        out.append(Finding(
-            "coordinate_range", FATAL, BRONZE,
-            f"{bad} records outside plausible degree range; semicircle "
-            f"conversion is wrong (degrees = semicircles x 180 / 2^31)",
-            observed=float(bad), expected=0.0))
+        out.append(
+            Finding(
+                "coordinate_range",
+                FATAL,
+                BRONZE,
+                f"{bad} records outside plausible degree range; semicircle "
+                f"conversion is wrong (degrees = semicircles x 180 / 2^31)",
+                observed=float(bad),
+                expected=0.0,
+            )
+        )
 
     # --- duplicate timestamps within one activity (§9 Strava dedup) ---
     stamps = [r["timestamp"] for r in records if r.get("timestamp")]
     dupes = len(stamps) - len(set(stamps))
     if dupes:
-        out.append(Finding("duplicate_timestamps", WARNING, BRONZE,
-                           f"{dupes} duplicate timestamps after coalescing",
-                           observed=float(dupes), expected=0.0))
+        out.append(
+            Finding(
+                "duplicate_timestamps",
+                WARNING,
+                BRONZE,
+                f"{dupes} duplicate timestamps after coalescing",
+                observed=float(dupes),
+                expected=0.0,
+            )
+        )
 
     # --- distance must not go backwards ---
     prev, back = None, 0
-    for r in sorted((r for r in records if r.get("timestamp")), key=lambda r: r["timestamp"]):
+    for r in sorted(
+        (r for r in records if r.get("timestamp")), key=lambda r: r["timestamp"]
+    ):
         d = r.get("distance")
         if d is None:
             continue
@@ -184,40 +201,70 @@ def bronze_checks(records: list[dict], session: dict, messages: dict) -> list[Fi
             back += 1
         prev = d
     if back:
-        out.append(Finding("distance_monotonic", FATAL, BRONZE,
-                           f"distance decreases at {back} points",
-                           observed=float(back), expected=0.0))
+        out.append(
+            Finding(
+                "distance_monotonic",
+                FATAL,
+                BRONZE,
+                f"distance decreases at {back} points",
+                observed=float(back),
+                expected=0.0,
+            )
+        )
 
     # --- a non-null but constant column: catches cycle_length16 (§9) ---
-    candidates = ("cycle_length16", "cadence", "heart_rate", "enhanced_speed",
-                  "enhanced_altitude", "distance", "gps_accuracy")
+    candidates = (
+        "cycle_length16",
+        "cadence",
+        "heart_rate",
+        "enhanced_speed",
+        "enhanced_altitude",
+        "distance",
+        "gps_accuracy",
+    )
     for col in candidates:
         vals = [r[col] for r in records if r.get(col) is not None]
         if len(vals) >= 50 and len(set(vals)) == 1:
-            out.append(Finding(
-                "constant_column", WARNING, BRONZE,
-                f"'{col}' is non-null in {len(vals)} records and constant at "
-                f"{vals[0]!r}; it carries no information and must not be treated "
-                f"as a measurement",
-                observed=float(len(vals)), expected=None))
+            out.append(
+                Finding(
+                    "constant_column",
+                    WARNING,
+                    BRONZE,
+                    f"'{col}' is non-null in {len(vals)} records and constant at "
+                    f"{vals[0]!r}; it carries no information and must not be treated "
+                    f"as a measurement",
+                    observed=float(len(vals)),
+                    expected=None,
+                )
+            )
 
     # --- record count vs duration and sampling regime ---
-    regime, median_gap = None, None
+    median_gap = None
     if len(stamps) > 2:
         import statistics
-        g = sorted((b - a).total_seconds() for a, b in zip(sorted(stamps), sorted(stamps)[1:]))
+
+        g = sorted(
+            (b - a).total_seconds()
+            for a, b in zip(sorted(stamps), sorted(stamps)[1:], strict=False)
+        )
         median_gap = statistics.median(g)
         elapsed = session.get("total_elapsed_time")
         if elapsed and median_gap:
             expected = elapsed / median_gap
             ratio = len(stamps) / expected if expected else 0
             if ratio > 1.5 or ratio < 0.5:
-                out.append(Finding(
-                    "record_count_plausible", WARNING, BRONZE,
-                    f"{len(stamps)} records against ~{expected:,.0f} expected from "
-                    f"{elapsed:,.0f} s at a {median_gap:.1f} s median gap "
-                    f"(ratio {ratio:.2f}); un-coalesced records look like this",
-                    observed=float(len(stamps)), expected=float(expected)))
+                out.append(
+                    Finding(
+                        "record_count_plausible",
+                        WARNING,
+                        BRONZE,
+                        f"{len(stamps)} records against ~{expected:,.0f} expected from "
+                        f"{elapsed:,.0f} s at a {median_gap:.1f} s median gap "
+                        f"(ratio {ratio:.2f}); un-coalesced records look like this",
+                        observed=float(len(stamps)),
+                        expected=float(expected),
+                    )
+                )
 
     # --- internal cross-message consistency: the same quantity, stated twice ---
     #
@@ -234,8 +281,9 @@ def bronze_checks(records: list[dict], session: dict, messages: dict) -> list[Fi
     for name, key in (("lap", "total_distance"), ("split", "total_distance")):
         msgs = messages.get(name, [])
         if name == "split":
-            partition = [m for m in msgs
-                         if str(m.get("split_type", "")).startswith("rwd_")]
+            partition = [
+                m for m in msgs if str(m.get("split_type", "")).startswith("rwd_")
+            ]
             other = [m for m in msgs if m not in partition]
             msgs = partition
         else:
@@ -246,14 +294,24 @@ def bronze_checks(records: list[dict], session: dict, messages: dict) -> list[Fi
             total = sum(vals)
             rel = abs(total - sess) / sess
             if rel > 0.02:
-                extra = (f"; {len(other)} non-partition split(s) "
-                         f"({', '.join(sorted({str(m.get('split_type')) for m in other}))}) "
-                         f"were excluded from the sum" if other else "")
-                out.append(Finding(
-                    f"{name}_distance_consistency", WARNING, BRONZE,
-                    f"{name}s sum to {total:,.1f} m against session {sess:,.1f} m "
-                    f"({rel * 100:.1f}% apart){extra}",
-                    observed=total, expected=sess))
+                extra = (
+                    f"; {len(other)} non-partition split(s) "
+                    f"({', '.join(sorted({str(m.get('split_type')) for m in other}))}) "
+                    f"were excluded from the sum"
+                    if other
+                    else ""
+                )
+                out.append(
+                    Finding(
+                        f"{name}_distance_consistency",
+                        WARNING,
+                        BRONZE,
+                        f"{name}s sum to {total:,.1f} m against session {sess:,.1f} m "
+                        f"({rel * 100:.1f}% apart){extra}",
+                        observed=total,
+                        expected=sess,
+                    )
+                )
     return out
 
 
@@ -276,13 +334,15 @@ def impossible_speed_blocks(ordered: list[dict]) -> list[dict]:
         v = r.get("enhanced_speed")
         if v is None:
             continue
-        dt = ((ordered[i + 1]["timestamp"] - r["timestamp"]).total_seconds()
-              if i + 1 < len(ordered) else 0.0)
+        dt = (
+            (ordered[i + 1]["timestamp"] - r["timestamp"]).total_seconds()
+            if i + 1 < len(ordered)
+            else 0.0
+        )
         dt = min(dt, PACE_SAMPLE_DT_CAP_S)
         if v > PACE_FATAL_MPS:
             if cur is None:
-                cur = {"start_idx": i, "end_idx": i, "span_s": 0.0,
-                       "n_records": 0}
+                cur = {"start_idx": i, "end_idx": i, "span_s": 0.0, "n_records": 0}
             cur["end_idx"] = i
             cur["span_s"] += dt
             cur["n_records"] += 1
@@ -306,12 +366,15 @@ VEHICLE_EDGE_FOOT_MAX_S = 300.0
 def _on_foot(rec) -> bool:
     """Steps and a speed between standing and the running bound."""
     v, cad = rec.get("enhanced_speed"), rec.get("cadence")
-    return (v is not None and STOP_SPEED_MPS < v <= PACE_FATAL_MPS
-            and cad is not None and cad > 0)
+    return (
+        v is not None
+        and STOP_SPEED_MPS < v <= PACE_FATAL_MPS
+        and cad is not None
+        and cad > 0
+    )
 
 
-def suggest_vehicle_window(records: list[dict],
-                           sport: str | None = "running") -> dict:
+def suggest_vehicle_window(records: list[dict], sport: str | None = "running") -> dict:
     """A window that removes a LEADING or TRAILING vehicle block.
 
     THE GAP THIS CLOSES. `detect_movement_ceased` suggests a window for a
@@ -346,12 +409,22 @@ def suggest_vehicle_window(records: list[dict],
     `n_on_foot_records` / `has_cadence` are None where there was no block to
     examine.
     """
-    rs = sorted((r for r in records if r.get("timestamp")),
-                key=lambda r: r["timestamp"])
-    out = {"suggested_valid_start": None, "suggested_valid_end": None,
-           "trailing_s": 0.0, "leading_s": 0.0, "midrun_blocks": 0,
-           "n_blocks": 0, "n_on_foot_records": None, "has_cadence": None,
-           "cut_end": None, "cut_start": None, "cut": None}
+    rs = sorted(
+        (r for r in records if r.get("timestamp")), key=lambda r: r["timestamp"]
+    )
+    out = {
+        "suggested_valid_start": None,
+        "suggested_valid_end": None,
+        "trailing_s": 0.0,
+        "leading_s": 0.0,
+        "midrun_blocks": 0,
+        "n_blocks": 0,
+        "n_on_foot_records": None,
+        "has_cadence": None,
+        "cut_end": None,
+        "cut_start": None,
+        "cut": None,
+    }
     blocks = sustained_impossible_blocks(rs, sport)
     if not blocks:
         return out
@@ -364,43 +437,56 @@ def suggest_vehicle_window(records: list[dict],
     out["n_on_foot_records"] = sum(1 for r in rs if _on_foot(r))
     foot_dt = []
     for i, r in enumerate(rs):
-        dt = ((rs[i + 1]["timestamp"] - r["timestamp"]).total_seconds()
-              if i + 1 < len(rs) else 0.0)
+        dt = (
+            (rs[i + 1]["timestamp"] - r["timestamp"]).total_seconds()
+            if i + 1 < len(rs)
+            else 0.0
+        )
         foot_dt.append(min(dt, MAX_SAMPLE_DT_S) if _on_foot(r) else 0.0)
-    after = [0.0] * (len(rs) + 1)              # on-foot seconds from i onward
+    after = [0.0] * (len(rs) + 1)  # on-foot seconds from i onward
     for i in range(len(rs) - 1, -1, -1):
         after[i] = after[i + 1] + foot_dt[i]
-    before_end = [0.0] * len(rs)               # on-foot seconds up to i
+    before_end = [0.0] * len(rs)  # on-foot seconds up to i
     acc = 0.0
     for i in range(len(rs)):
         acc += foot_dt[i]
         before_end[i] = acc
 
-    trailing = next((b for b in blocks
-                     if after[b["start_idx"]] < VEHICLE_EDGE_FOOT_MAX_S), None)
-    leading = next((b for b in reversed(blocks)
-                    if before_end[b["end_idx"]] < VEHICLE_EDGE_FOOT_MAX_S), None)
+    trailing = next(
+        (b for b in blocks if after[b["start_idx"]] < VEHICLE_EDGE_FOOT_MAX_S), None
+    )
+    leading = next(
+        (
+            b
+            for b in reversed(blocks)
+            if before_end[b["end_idx"]] < VEHICLE_EDGE_FOOT_MAX_S
+        ),
+        None,
+    )
     if trailing is not None:
         k = trailing["start_idx"] - 1
         while k >= 0 and not _on_foot(rs[k]):
             k -= 1
         if k >= 0:
             out["suggested_valid_end"] = rs[k]["timestamp"]
-            out["trailing_s"] = (rs[-1]["timestamp"]
-                                 - rs[k]["timestamp"]).total_seconds()
+            out["trailing_s"] = (
+                rs[-1]["timestamp"] - rs[k]["timestamp"]
+            ).total_seconds()
     if leading is not None and leading is not trailing:
         k = leading["end_idx"] + 1
         while k < len(rs) and not _on_foot(rs[k]):
             k += 1
         if k < len(rs):
             out["suggested_valid_start"] = rs[k]["timestamp"]
-            out["leading_s"] = (rs[k]["timestamp"]
-                                - rs[0]["timestamp"]).total_seconds()
+            out["leading_s"] = (rs[k]["timestamp"] - rs[0]["timestamp"]).total_seconds()
     edge = {id(b) for b in (trailing, leading) if b is not None}
     lo = leading["end_idx"] if leading is not None else -1
     hi = trailing["start_idx"] if trailing is not None else len(rs)
-    out["midrun_blocks"] = sum(1 for b in blocks if id(b) not in edge
-                               and lo < b["start_idx"] and b["end_idx"] < hi)
+    out["midrun_blocks"] = sum(
+        1
+        for b in blocks
+        if id(b) not in edge and lo < b["start_idx"] and b["end_idx"] < hi
+    )
 
     # THE CUTS. after[k + 1] / before_end[k - 1] count only the on-foot
     # seconds BEYOND the kept record, so a clean trailing drive's cut_end is
@@ -409,22 +495,29 @@ def suggest_vehicle_window(records: list[dict],
     while k >= 0 and not _on_foot(rs[k]):
         k -= 1
     if k >= 0:
-        out["cut_end"] = {"bound": "end", "at": rs[k]["timestamp"],
-                          "discards_on_foot_s": after[k + 1]}
+        out["cut_end"] = {
+            "bound": "end",
+            "at": rs[k]["timestamp"],
+            "discards_on_foot_s": after[k + 1],
+        }
     k = blocks[-1]["end_idx"] + 1
     while k < len(rs) and not _on_foot(rs[k]):
         k += 1
     if k < len(rs):
-        out["cut_start"] = {"bound": "start", "at": rs[k]["timestamp"],
-                            "discards_on_foot_s": before_end[k - 1]}
+        out["cut_start"] = {
+            "bound": "start",
+            "at": rs[k]["timestamp"],
+            "discards_on_foot_s": before_end[k - 1],
+        }
     cuts = [c for c in (out["cut_end"], out["cut_start"]) if c is not None]
     if cuts:
         out["cut"] = min(cuts, key=lambda c: c["discards_on_foot_s"])
     return out
 
 
-def sustained_impossible_blocks(records: list[dict],
-                                sport: str | None = "running") -> list[dict]:
+def sustained_impossible_blocks(
+    records: list[dict], sport: str | None = "running"
+) -> list[dict]:
     """The blocks pace_sustained_impossible rejects a file for, in time order.
 
     The one definition the fatal check, the window suggestion and the
@@ -432,19 +525,20 @@ def sustained_impossible_blocks(records: list[dict],
     of these inside it does not clear the file. Empty for a sport the pace
     bound does not reach (PACE_BOUND_SPORTS).
     """
-    rs = sorted((r for r in records if r.get("timestamp")),
-                key=lambda r: r["timestamp"])
+    rs = sorted(
+        (r for r in records if r.get("timestamp")), key=lambda r: r["timestamp"]
+    )
     if sport not in PACE_BOUND_SPORTS or len(rs) < 2:
         return []
-    return [b for b in impossible_speed_blocks(rs)
-            if b["span_s"] >= PACE_SUSTAINED_S]
+    return [b for b in impossible_speed_blocks(rs) if b["span_s"] >= PACE_SUSTAINED_S]
 
 
 # THE PACE BOUNDS ARE A RUNNING BOUND, AND ONLY RUNNING IS BOUND BY THEM.
 #
 # A running pace bound is a fact about RUNNING. Applied sport-blind it rejects
 # legitimate bike rides at the door: a descent over 24 km/h (4:00/mi) is
-# ordinary cycling, not a unit error. §4.1 is download broadly, model strictly: a FATAL check that refuses
+# ordinary cycling, not a unit error. §4.1 is download broadly, model strictly: a FATAL
+# check that refuses
 # to write bronze rows is the door, and the door must not encode one sport's
 # physiology.
 #
@@ -455,8 +549,9 @@ def sustained_impossible_blocks(records: list[dict],
 PACE_BOUND_SPORTS = ("running",)
 
 
-def silver_checks(records: list[dict], coverage: dict,
-                  sport: str | None = "running") -> list[Finding]:
+def silver_checks(
+    records: list[dict], coverage: dict, sport: str | None = "running"
+) -> list[Finding]:
     """Physical plausibility: are the derived values possible? (§3 silver)
 
     `sport` gates the pace bounds only. It defaults to "running" so an existing
@@ -464,7 +559,9 @@ def silver_checks(records: list[dict], coverage: dict,
     session.sport.
     """
     out: list[Finding] = []
-    ordered = sorted((r for r in records if r.get("timestamp")), key=lambda r: r["timestamp"])
+    ordered = sorted(
+        (r for r in records if r.get("timestamp")), key=lambda r: r["timestamp"]
+    )
 
     # --- pace bounds -------------------------------------------------------
     # A single impossible sample is a GPS glitch and must NOT reject the file;
@@ -476,40 +573,67 @@ def silver_checks(records: list[dict], coverage: dict,
     blocks = impossible_speed_blocks(ordered) if bound else []
     sustained_s = max((b["span_s"] for b in blocks), default=0.0)
     spikes = sum(b["n_records"] for b in blocks)
-    warn_spikes = sum(1 for r in (ordered if bound else [])
-                      if r.get("enhanced_speed") is not None
-                      and r["enhanced_speed"] > PACE_WARN_MPS)
+    warn_spikes = sum(
+        1
+        for r in (ordered if bound else [])
+        if r.get("enhanced_speed") is not None and r["enhanced_speed"] > PACE_WARN_MPS
+    )
     if sustained_s >= PACE_SUSTAINED_S:
-        out.append(Finding(
-            "pace_sustained_impossible", FATAL, SILVER,
-            f"speed exceeded 4:00/mi for {sustained_s:.0f} s continuously; a "
-            f"sustained impossibility is a vehicle (the watch still recording "
-            f"after the run, or before it) or a unit error, not a GPS glitch",
-            observed=sustained_s, expected=PACE_SUSTAINED_S))
+        out.append(
+            Finding(
+                "pace_sustained_impossible",
+                FATAL,
+                SILVER,
+                f"speed exceeded 4:00/mi for {sustained_s:.0f} s continuously; a "
+                f"sustained impossibility is a vehicle (the watch still recording "
+                f"after the run, or before it) or a unit error, not a GPS glitch",
+                observed=sustained_s,
+                expected=PACE_SUSTAINED_S,
+            )
+        )
     elif spikes:
-        fastest = max(r["enhanced_speed"] for r in ordered
-                      if r.get("enhanced_speed") is not None)
-        out.append(Finding(
-            "pace_spike", WARNING, SILVER,
-            f"{spikes} sample(s) faster than 4:00/mi, peak {fastest:.2f} m/s "
-            f"({pace_per_mile(fastest, '--:--')}/mi) — GPS glitch, "
-            f"exclude the sample",
-            observed=fastest, expected=PACE_FATAL_MPS))
+        fastest = max(
+            r["enhanced_speed"] for r in ordered if r.get("enhanced_speed") is not None
+        )
+        out.append(
+            Finding(
+                "pace_spike",
+                WARNING,
+                SILVER,
+                f"{spikes} sample(s) faster than 4:00/mi, peak {fastest:.2f} m/s "
+                f"({pace_per_mile(fastest, '--:--')}/mi) — GPS glitch, "
+                f"exclude the sample",
+                observed=fastest,
+                expected=PACE_FATAL_MPS,
+            )
+        )
     elif warn_spikes:
-        out.append(Finding(
-            "pace_spike", WARNING, SILVER,
-            f"{warn_spikes} sample(s) faster than 5:00/mi",
-            observed=float(warn_spikes), expected=0.0))
+        out.append(
+            Finding(
+                "pace_spike",
+                WARNING,
+                SILVER,
+                f"{warn_spikes} sample(s) faster than 5:00/mi",
+                observed=float(warn_spikes),
+                expected=0.0,
+            )
+        )
 
     # --- heart rate bounds -------------------------------------------------
     hrs = [r["heart_rate"] for r in ordered if r.get("heart_rate") is not None]
     bad = [h for h in hrs if h < HR_MIN or h > HR_MAX]
     if bad:
-        out.append(Finding(
-            "heart_rate_range", WARNING, SILVER,
-            f"{len(bad)} heart-rate samples outside {HR_MIN}-{HR_MAX} bpm "
-            f"(min {min(bad)}, max {max(bad)})",
-            observed=float(len(bad)), expected=0.0))
+        out.append(
+            Finding(
+                "heart_rate_range",
+                WARNING,
+                SILVER,
+                f"{len(bad)} heart-rate samples outside {HR_MIN}-{HR_MAX} bpm "
+                f"(min {min(bad)}, max {max(bad)})",
+                observed=float(len(bad)),
+                expected=0.0,
+            )
+        )
 
     out.extend(movement_checks(ordered))
 
@@ -523,28 +647,45 @@ def silver_checks(records: list[dict], coverage: dict,
     frac = coverage.get("coverage_fraction")
     if frac is not None and frac < COVERAGE_WARN:
         from trail_factors.analysis.select import MIN_COVERAGE_FOR_TERRAIN as cross_min
+
         gated = (
             f"BELOW {cross_min:.0%}, so this run is EXCLUDED from cross-run "
             f"terrain comparisons (select_runs: matched_terrain_drift, "
             f"segment_effort_drift, efficiency_factor, grade_binned_pace and "
             f"the other terrain primitives over a selection)"
-            if frac < cross_min else
-            f"at or above {cross_min:.0%}, so NOTHING is gated: this run still "
-            f"enters cross-run terrain comparisons")
-        out.append(Finding(
-            "gps_coverage", WARNING, SILVER,
-            f"only {frac * 100:.0f}% of records carry position"
-            + ("" if coverage.get("contiguous") else
-               f" across {coverage.get('islands')} separate blocks")
-            + f"; {gated}. This run's OWN terrain results are computed from "
-              f"its positioned portion (§14c) and are not gated by this "
-              f"warning",
-            observed=frac, expected=COVERAGE_WARN))
+            if frac < cross_min
+            else f"at or above {cross_min:.0%}, so NOTHING is gated: this run still "
+            f"enters cross-run terrain comparisons"
+        )
+        out.append(
+            Finding(
+                "gps_coverage",
+                WARNING,
+                SILVER,
+                f"only {frac * 100:.0f}% of records carry position"
+                + (
+                    ""
+                    if coverage.get("contiguous")
+                    else f" across {coverage.get('islands')} separate blocks"
+                )
+                + f"; {gated}. This run's OWN terrain results are computed from "
+                f"its positioned portion (§14c) and are not gated by this "
+                f"warning",
+                observed=frac,
+                expected=COVERAGE_WARN,
+            )
+        )
     if not coverage.get("contiguous") and frac:
-        out.append(Finding(
-            "gps_scattered", WARNING, SILVER,
-            f"positioned records fall in {coverage.get('islands')} blocks, not one",
-            observed=float(coverage.get("islands") or 0), expected=1.0))
+        out.append(
+            Finding(
+                "gps_scattered",
+                WARNING,
+                SILVER,
+                f"positioned records fall in {coverage.get('islands')} blocks, not one",
+                observed=float(coverage.get("islands") or 0),
+                expected=1.0,
+            )
+        )
     return out
 
 
@@ -562,11 +703,23 @@ def gold_checks(con) -> list[tuple]:
         SELECT run_id, source, count(*) FROM activities
         GROUP BY 1, 2 HAVING count(*) > 1
     """).fetchall():
-        out.append((None, None, run_id, Finding(
-            "run_source_uniqueness", FATAL, GOLD,
-            f"run {run_id} holds {n} activities from source '{source}'; pairing "
-            f"is broken (§4: a run never takes two files from the same source)",
-            observed=float(n), expected=1.0)))
+        out.append(
+            (
+                None,
+                None,
+                run_id,
+                Finding(
+                    "run_source_uniqueness",
+                    FATAL,
+                    GOLD,
+                    f"run {run_id} holds {n} activities from source '{source}'; "
+                    "pairing "
+                    f"is broken (§4: a run never takes two files from the same source)",
+                    observed=float(n),
+                    expected=1.0,
+                ),
+            )
+        )
 
     # --- weather must be present on every OUTDOOR run (§8) -----------------
     #
@@ -582,11 +735,22 @@ def gold_checks(con) -> list[tuple]:
           AND NOT EXISTS (SELECT 1 FROM weather_records w
                           WHERE w.activity_id = a.activity_id)
     """).fetchall():
-        out.append((fh, aid, rid, Finding(
-            "weather_missing", WARNING, GOLD,
-            "outdoor run has no weather; §8 treats this as a fetch failure, "
-            "not a gap -- run `weather` to fetch it",
-            observed=0.0, expected=1.0)))
+        out.append(
+            (
+                fh,
+                aid,
+                rid,
+                Finding(
+                    "weather_missing",
+                    WARNING,
+                    GOLD,
+                    "outdoor run has no weather; §8 treats this as a fetch failure, "
+                    "not a gap -- run `weather` to fetch it",
+                    observed=0.0,
+                    expected=1.0,
+                ),
+            )
+        )
 
     # --- provisional weather awaiting archive backfill (§8) ----------------
     for aid, fh, rid, n in con.execute("""
@@ -594,11 +758,21 @@ def gold_checks(con) -> list[tuple]:
         FROM weather_records w JOIN activities a USING (activity_id)
         WHERE NOT w.is_final GROUP BY 1, 2, 3
     """).fetchall():
-        out.append((fh, aid, rid, Finding(
-            "weather_provisional", INFO, GOLD,
-            "weather came from the forecast endpoint because the archive lags "
-            "several days; re-run `weather --refetch` once it catches up (§8)",
-            observed=float(n))))
+        out.append(
+            (
+                fh,
+                aid,
+                rid,
+                Finding(
+                    "weather_provisional",
+                    INFO,
+                    GOLD,
+                    "weather came from the forecast endpoint because the archive lags "
+                    "several days; re-run `weather --refetch` once it catches up (§8)",
+                    observed=float(n),
+                ),
+            )
+        )
 
     # --- distance/duration against the corpus distribution ----------------
     rows = con.execute("""
@@ -607,6 +781,7 @@ def gold_checks(con) -> list[tuple]:
     """).fetchall()
     if len(rows) >= 8:
         import statistics
+
         speeds = [r[4] / r[5] for r in rows if r[5]]
         med = statistics.median(speeds)
         # A fixed 2.5x factor could NEVER fire: one runner's ratios stay well inside 2x
@@ -619,24 +794,47 @@ def gold_checks(con) -> list[tuple]:
                 continue
             v = dist / dur
             if v > hi or v < lo:
-                out.append((fh, aid, rid, Finding(
-                    "mean_speed_vs_corpus", WARNING, GOLD,
-                    f"mean speed {v:.2f} m/s is outside median +/- 5*MAD "
-                    f"({lo:.2f}-{hi:.2f} m/s; median {med:.2f}, MAD {mad:.3f})",
-                    observed=v, expected=med)))
+                out.append(
+                    (
+                        fh,
+                        aid,
+                        rid,
+                        Finding(
+                            "mean_speed_vs_corpus",
+                            WARNING,
+                            GOLD,
+                            f"mean speed {v:.2f} m/s is outside median +/- 5*MAD "
+                            f"({lo:.2f}-{hi:.2f} m/s; median {med:.2f}, MAD {mad:.3f})",
+                            observed=v,
+                            expected=med,
+                        ),
+                    )
+                )
     return out
 
 
 def persist(con, file_sha256, activity_id, run_id, findings) -> None:
     """Idempotent: replace this file's rows rather than appending (§3)."""
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    from datetime import datetime
+
+    now = datetime.now(UTC).replace(tzinfo=None)
     con.execute("DELETE FROM validation_results WHERE file_sha256 = ?", [file_sha256])
     for f in findings:
         con.execute(
             "INSERT INTO validation_results VALUES (?,?,?,?,?,?,?,?,?,?)",
-            [file_sha256, activity_id, run_id, f.check, f.severity, f.layer,
-             f.message, f.observed, f.expected, now])
+            [
+                file_sha256,
+                activity_id,
+                run_id,
+                f.check,
+                f.severity,
+                f.layer,
+                f.message,
+                f.observed,
+                f.expected,
+                now,
+            ],
+        )
 
 
 def oracle_checks(activity_row: dict, api: dict) -> list[Finding]:
@@ -657,29 +855,53 @@ def oracle_checks(activity_row: dict, api: dict) -> list[Finding]:
             continue
         rel = abs(ours - theirs) / theirs
         if rel > tol:
-            out.append(Finding(
-                f"oracle_{label}", WARNING, GOLD,
-                f"our {label} {ours:,.2f} differs from Garmin's {theirs:,.2f} "
-                f"by {rel * 100:.2f}%",
-                observed=ours, expected=theirs))
+            out.append(
+                Finding(
+                    f"oracle_{label}",
+                    WARNING,
+                    GOLD,
+                    f"our {label} {ours:,.2f} differs from Garmin's {theirs:,.2f} "
+                    f"by {rel * 100:.2f}%",
+                    observed=ours,
+                    expected=theirs,
+                )
+            )
         else:
-            out.append(Finding(
-                f"oracle_{label}", INFO, GOLD,
-                f"{label} matches Garmin's reported value ({theirs:,.2f})",
-                observed=ours, expected=theirs))
+            out.append(
+                Finding(
+                    f"oracle_{label}",
+                    INFO,
+                    GOLD,
+                    f"{label} matches Garmin's reported value ({theirs:,.2f})",
+                    observed=ours,
+                    expected=theirs,
+                )
+            )
     return out
 
 
 def persist_gold(con, findings) -> None:
     """Replace all gold-layer rows. Gold is a corpus-wide pass (see §3)."""
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    from datetime import datetime
+
+    now = datetime.now(UTC).replace(tzinfo=None)
     con.execute("DELETE FROM validation_results WHERE layer = ?", [GOLD])
     for file_sha, aid, rid, f in findings:
         con.execute(
             "INSERT INTO validation_results VALUES (?,?,?,?,?,?,?,?,?,?)",
-            [file_sha or "", aid, rid, f.check, f.severity, f.layer,
-             f.message, f.observed, f.expected, now])
+            [
+                file_sha or "",
+                aid,
+                rid,
+                f.check,
+                f.severity,
+                f.layer,
+                f.message,
+                f.observed,
+                f.expected,
+                now,
+            ],
+        )
 
 
 # --- Movement-ceased detection (SPEC.md §4.3) -------------------------------
@@ -696,7 +918,7 @@ STOP_SPEED_MPS = 0.20
 # cap would miss.
 # 0.10 m/s is an order of magnitude below walking (~1.3 m/s).
 STOP_DRIFT_MPS = 0.10
-STOP_MIN_S = 120.0         # shorter than this is a normal pause, not a stop
+STOP_MIN_S = 120.0  # shorter than this is a normal pause, not a stop
 
 
 def _drift_ok(a, b, span):
@@ -721,15 +943,24 @@ def _moved(a, b):
 def _is_stopped(rec):
     spd = rec.get("enhanced_speed")
     cad = rec.get("cadence")
-    return (spd is not None and spd <= STOP_SPEED_MPS) and (cad is not None and cad == 0)
+    return (spd is not None and spd <= STOP_SPEED_MPS) and (
+        cad is not None and cad == 0
+    )
 
 
 def detect_movement_ceased(records: list[dict]) -> dict:
     """Find leading, trailing and mid-run blocks where movement stopped."""
-    rs = sorted((r for r in records if r.get("timestamp")), key=lambda r: r["timestamp"])
-    out = {"trailing_s": 0.0, "leading_s": 0.0, "midrun_s": 0.0,
-           "suggested_valid_end": None, "suggested_valid_start": None,
-           "trailing_distance_m": 0.0}
+    rs = sorted(
+        (r for r in records if r.get("timestamp")), key=lambda r: r["timestamp"]
+    )
+    out = {
+        "trailing_s": 0.0,
+        "leading_s": 0.0,
+        "midrun_s": 0.0,
+        "suggested_valid_end": None,
+        "suggested_valid_start": None,
+        "trailing_distance_m": 0.0,
+    }
     if len(rs) < 10:
         return out
     flags = [_is_stopped(r) for r in rs]
@@ -765,7 +996,12 @@ def detect_movement_ceased(records: list[dict]) -> dict:
             run_start = k
         elif not f and run_start is not None:
             if run_start > 0 and k < len(rs) - 1:
-                longest = max(longest, (rs[k - 1]["timestamp"] - rs[run_start]["timestamp"]).total_seconds())
+                longest = max(
+                    longest,
+                    (
+                        rs[k - 1]["timestamp"] - rs[run_start]["timestamp"]
+                    ).total_seconds(),
+                )
             run_start = None
     out["midrun_s"] = longest
     return out
@@ -776,24 +1012,44 @@ def movement_checks(records: list[dict]) -> list[Finding]:
     m = detect_movement_ceased(records)
     out: list[Finding] = []
     if m["trailing_s"]:
-        out.append(Finding(
-            "trailing_stop", WARNING, SILVER,
-            f"movement ceased {m['trailing_s']:.0f} s before the recording ended "
-            f"(distance moved {m['trailing_distance_m']:.1f} m); suggested "
-            f"valid_end_utc {m['suggested_valid_end']}. NOT applied — confirm first",
-            observed=m["trailing_s"], expected=0.0))
+        out.append(
+            Finding(
+                "trailing_stop",
+                WARNING,
+                SILVER,
+                f"movement ceased {m['trailing_s']:.0f} s before the recording ended "
+                f"(distance moved {m['trailing_distance_m']:.1f} m); suggested "
+                f"valid_end_utc {m['suggested_valid_end']}. "
+                f"NOT applied — confirm first",
+                observed=m["trailing_s"],
+                expected=0.0,
+            )
+        )
     if m["leading_s"]:
-        out.append(Finding(
-            "leading_stop", WARNING, SILVER,
-            f"no movement for the first {m['leading_s']:.0f} s; suggested "
-            f"valid_start_utc {m['suggested_valid_start']}. NOT applied — confirm first",
-            observed=m["leading_s"], expected=0.0))
+        out.append(
+            Finding(
+                "leading_stop",
+                WARNING,
+                SILVER,
+                f"no movement for the first {m['leading_s']:.0f} s; suggested "
+                f"valid_start_utc {m['suggested_valid_start']}. NOT applied — confirm "
+                "first",
+                observed=m["leading_s"],
+                expected=0.0,
+            )
+        )
     if m["midrun_s"] >= STOP_MIN_S:
-        out.append(Finding(
-            "midrun_stop", INFO, SILVER,
-            f"longest mid-run stop {m['midrun_s']:.0f} s; headline metrics are "
-            f"NOT corrupted — total_timer_time already excludes paused time",
-            observed=m["midrun_s"], expected=None))
+        out.append(
+            Finding(
+                "midrun_stop",
+                INFO,
+                SILVER,
+                f"longest mid-run stop {m['midrun_s']:.0f} s; headline metrics are "
+                f"NOT corrupted — total_timer_time already excludes paused time",
+                observed=m["midrun_s"],
+                expected=None,
+            )
+        )
     return out
 
 
@@ -807,7 +1063,9 @@ MAX_SAMPLE_DT_S = 20.0
 
 def detect_stops(records: list[dict], min_s: float = STOP_MIN_S) -> list[dict]:
     """Every sustained stop, classified leading / midrun / trailing."""
-    rs = sorted((r for r in records if r.get("timestamp")), key=lambda r: r["timestamp"])
+    rs = sorted(
+        (r for r in records if r.get("timestamp")), key=lambda r: r["timestamp"]
+    )
     if len(rs) < 10:
         return []
     flags = [_is_stopped(r) for r in rs]
@@ -821,24 +1079,42 @@ def detect_stops(records: list[dict], min_s: float = STOP_MIN_S) -> list[dict]:
             j += 1
         span = (rs[j]["timestamp"] - rs[i]["timestamp"]).total_seconds()
         if span >= min_s and _drift_ok(rs[i], rs[j], span):
-            block = rs[i:j + 1]
+            block = rs[i : j + 1]
             hrs = [r["heart_rate"] for r in block if r.get("heart_rate") is not None]
             resume = rs[j + 1].get("heart_rate") if j + 1 < len(rs) else None
-            pos = "leading" if i == 0 else ("trailing" if j == len(rs) - 1 else "midrun")
-            lat = next((r.get("position_lat") for r in reversed(block)
-                        if r.get("position_lat") is not None), None)
-            lon = next((r.get("position_long") for r in reversed(block)
-                        if r.get("position_long") is not None), None)
-            out.append({
-                "start_utc": rs[i]["timestamp"], "end_utc": rs[j]["timestamp"],
-                "duration_s": span, "position": pos,
-                "hr_at_stop": hrs[0] if hrs else None,
-                "hr_at_resume": resume,
-                "hr_min": min(hrs) if hrs else None,
-                "hr_drop": (hrs[0] - min(hrs)) if hrs else None,
-                "lat": semicircles_to_degrees(lat) if lat is not None else None,
-                "lon": semicircles_to_degrees(lon) if lon is not None else None,
-            })
+            pos = (
+                "leading" if i == 0 else ("trailing" if j == len(rs) - 1 else "midrun")
+            )
+            lat = next(
+                (
+                    r.get("position_lat")
+                    for r in reversed(block)
+                    if r.get("position_lat") is not None
+                ),
+                None,
+            )
+            lon = next(
+                (
+                    r.get("position_long")
+                    for r in reversed(block)
+                    if r.get("position_long") is not None
+                ),
+                None,
+            )
+            out.append(
+                {
+                    "start_utc": rs[i]["timestamp"],
+                    "end_utc": rs[j]["timestamp"],
+                    "duration_s": span,
+                    "position": pos,
+                    "hr_at_stop": hrs[0] if hrs else None,
+                    "hr_at_resume": resume,
+                    "hr_min": min(hrs) if hrs else None,
+                    "hr_drop": (hrs[0] - min(hrs)) if hrs else None,
+                    "lat": semicircles_to_degrees(lat) if lat is not None else None,
+                    "lon": semicircles_to_degrees(lon) if lon is not None else None,
+                }
+            )
         i = j + 1
     return out
 
@@ -846,11 +1122,15 @@ def detect_stops(records: list[dict], min_s: float = STOP_MIN_S) -> list[dict]:
 def moving_time_s(records: list[dict]) -> tuple[float, float]:
     """(moving_s, stopped_s). Summed over samples, so auto-paused gaps — which
     contain no records — are excluded from both, matching Garmin."""
-    rs = sorted((r for r in records if r.get("timestamp")), key=lambda r: r["timestamp"])
+    rs = sorted(
+        (r for r in records if r.get("timestamp")), key=lambda r: r["timestamp"]
+    )
     mov = stop = 0.0
     for i in range(len(rs) - 1):
-        dt = min((rs[i + 1]["timestamp"] - rs[i]["timestamp"]).total_seconds(),
-                 MAX_SAMPLE_DT_S)
+        dt = min(
+            (rs[i + 1]["timestamp"] - rs[i]["timestamp"]).total_seconds(),
+            MAX_SAMPLE_DT_S,
+        )
         if _is_stopped(rs[i]):
             stop += dt
         else:

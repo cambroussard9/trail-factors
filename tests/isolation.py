@@ -31,6 +31,7 @@ from unittest import mock
 
 def _import_all_src() -> None:
     import trail_factors
+
     for m in pkgutil.walk_packages(trail_factors.__path__, "trail_factors."):
         if m.name.rsplit(".", 1)[-1] == "__main__":
             continue
@@ -50,10 +51,12 @@ def state_sandbox():
     _import_all_src()
     tmp = tempfile.TemporaryDirectory()
     root = Path(tmp.name)
-    targets = [(P.JOBS_FILE, root / "jobs.json"),
-               (P.ATHLETE_DIR, root / "athlete"),
-               (P.RAW_DIR, root / "raw"),
-               (P.LOOKUP_DIR, root / "lookup")]
+    targets = [
+        (P.JOBS_FILE, root / "jobs.json"),
+        (P.ATHLETE_DIR, root / "athlete"),
+        (P.RAW_DIR, root / "raw"),
+        (P.LOOKUP_DIR, root / "lookup"),
+    ]
     for _, new in targets[1:]:
         new.mkdir(parents=True)
 
@@ -67,7 +70,10 @@ def state_sandbox():
 
     patches = []
     for name, mod in list(sys.modules.items()):
-        if not (name == "trail_factors" or name.startswith("trail_factors.")) or mod is None:
+        if (
+            not (name == "trail_factors" or name.startswith("trail_factors."))
+            or mod is None
+        ):
             continue
         for attr, v in list(vars(mod).items()):
             if isinstance(v, Path):
@@ -86,8 +92,11 @@ def state_sandbox():
 
 def fingerprint(root: Path) -> dict:
     """Every file under `root` with size and mtime -- metadata only."""
-    return {str(f.relative_to(root)): (f.stat().st_size, f.stat().st_mtime_ns)
-            for f in sorted(root.rglob("*")) if f.is_file()}
+    return {
+        str(f.relative_to(root)): (f.stat().st_size, f.stat().st_mtime_ns)
+        for f in sorted(root.rglob("*"))
+        if f.is_file()
+    }
 
 
 def git_ignores(relpath: str) -> bool:
@@ -98,11 +107,15 @@ def git_ignores(relpath: str) -> bool:
     a failure.
     """
     from trail_factors.paths import REPO_ROOT
+
     git = shutil.which("git")
     if git is None:
         raise unittest.SkipTest("git is not installed: cannot evaluate .gitignore")
-    r = subprocess.run([git, "check-ignore", "--no-index", "-q", relpath],
-                       cwd=REPO_ROOT, capture_output=True)
+    r = subprocess.run(
+        [git, "check-ignore", "--no-index", "-q", relpath],
+        cwd=REPO_ROOT,
+        capture_output=True,
+    )
     if r.returncode not in (0, 1):
         raise unittest.SkipTest(f"git check-ignore failed: {r.stderr.decode()[:200]}")
     return r.returncode == 0

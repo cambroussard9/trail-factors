@@ -24,9 +24,9 @@ between features cannot validate the boundary rule.
 import json
 import unittest
 
+from tests.corpus import CorpusTestCase, one, use_config
 from trail_factors.transform import dem as D
 from trail_factors.transform import matcher as M
-from tests.corpus import CorpusTestCase, one, use_config
 
 # SYNTHETIC GROUND in EPSG:32632 (UTM 32N, arbitrary). An existing trail, and
 # a different trail ~30 km away -- a different place by any measure.
@@ -34,27 +34,42 @@ OLD_TRAIL_X, OLD_TRAIL_Y = 400_000.0, 5_150_000.0
 NEW_TRAIL_X, NEW_TRAIL_Y = 428_000.0, 5_133_000.0
 
 
-def traversal(x, y, *, idx=0, sort_key=1.0, elev=1200.0, bearing=45.0,
-              length=200.0):
+def traversal(x, y, *, idx=0, sort_key=1.0, elev=1200.0, bearing=45.0, length=200.0):
     """One traversal in the shape load_traversals() produces."""
     return {
-        "activity_id": f"act{sort_key}", "slope_index": idx,
+        "activity_id": f"act{sort_key}",
+        "slope_index": idx,
         "direction": "ascent",
-        "lo_x": x, "lo_y": y, "hi_x": x + 50, "hi_y": y + 50,
-        "mid_x": x + 25, "mid_y": y + 25,
-        "place_x": x, "place_y": y, "place_elevation_m": elev,
+        "lo_x": x,
+        "lo_y": y,
+        "hi_x": x + 50,
+        "hi_y": y + 50,
+        "mid_x": x + 25,
+        "mid_y": y + 25,
+        "place_x": x,
+        "place_y": y,
+        "place_elevation_m": elev,
         "side_bearing_deg": bearing,
-        "low_lat": 46.5, "low_lon": 7.5, "high_lat": 46.5, "high_lon": 7.5,
-        "low_elevation_m": elev - 12.0, "high_elevation_m": elev,
-        "vertical_m": 12.0, "length_m": length, "mean_grade_pct": 6.0,
-        "start_distance_m": 0.0, "start_utc": None, "end_utc": None,
-        "duration_s": 120.0, "vertical_speed_mps": 0.1, "avg_hr": 130.0,
+        "low_lat": 46.5,
+        "low_lon": 7.5,
+        "high_lat": 46.5,
+        "high_lon": 7.5,
+        "low_elevation_m": elev - 12.0,
+        "high_elevation_m": elev,
+        "vertical_m": 12.0,
+        "length_m": length,
+        "mean_grade_pct": 6.0,
+        "start_distance_m": 0.0,
+        "start_utc": None,
+        "end_utc": None,
+        "duration_s": 120.0,
+        "vertical_speed_mps": 0.1,
+        "avg_hr": 130.0,
         "sort_key": sort_key,
     }
 
 
 class TestNewTrailNeverJoinsAnOldOne(unittest.TestCase):
-
     def test_a_distant_place_cannot_match(self):
         """The structural guarantee: position is the first gate."""
         a = traversal(OLD_TRAIL_X, OLD_TRAIL_Y)
@@ -104,14 +119,15 @@ class TestANewTrailInAnotherZone(unittest.TestCase):
 
 
 class TestFirstRunOnANewTrail(unittest.TestCase):
-
     def test_it_creates_its_own_places_with_one_effort_each(self):
-        old = [traversal(OLD_TRAIL_X, OLD_TRAIL_Y, idx=0, sort_key=1.0),
-               traversal(OLD_TRAIL_X + 400, OLD_TRAIL_Y, idx=1, sort_key=1.0,
-                         elev=1215.0)]
-        first_new = [traversal(NEW_TRAIL_X, NEW_TRAIL_Y, idx=0, sort_key=2.0),
-                     traversal(NEW_TRAIL_X + 500, NEW_TRAIL_Y, idx=1,
-                               sort_key=2.0, elev=1260.0)]
+        old = [
+            traversal(OLD_TRAIL_X, OLD_TRAIL_Y, idx=0, sort_key=1.0),
+            traversal(OLD_TRAIL_X + 400, OLD_TRAIL_Y, idx=1, sort_key=1.0, elev=1215.0),
+        ]
+        first_new = [
+            traversal(NEW_TRAIL_X, NEW_TRAIL_Y, idx=0, sort_key=2.0),
+            traversal(NEW_TRAIL_X + 500, NEW_TRAIL_Y, idx=1, sort_key=2.0, elev=1260.0),
+        ]
         segs = M.build_library(old + first_new)
         self.assertEqual(len(segs), 4, "each distinct place is its own segment")
         for s in segs:
@@ -129,21 +145,24 @@ class TestFirstRunOnANewTrail(unittest.TestCase):
         created a fresh place every visit would trend nothing."""
         first = traversal(NEW_TRAIL_X, NEW_TRAIL_Y, sort_key=2.0)
         # Same ground, next week, with the endpoint scatter §12.3 measured.
-        second = traversal(NEW_TRAIL_X + 8, NEW_TRAIL_Y - 6, sort_key=3.0,
-                           elev=1201.0)
+        second = traversal(NEW_TRAIL_X + 8, NEW_TRAIL_Y - 6, sort_key=3.0, elev=1201.0)
         segs = M.build_library([first, second])
         self.assertEqual(len(segs), 1)
         self.assertEqual(len(segs[0]["members"]), 2)
 
     def test_a_new_trail_does_not_disturb_the_existing_library(self):
         """Adding a trail must not renumber or merge what is already there."""
-        old = [traversal(OLD_TRAIL_X, OLD_TRAIL_Y, sort_key=1.0),
-               traversal(OLD_TRAIL_X + 400, OLD_TRAIL_Y, sort_key=1.0, idx=1,
-                         elev=1215.0)]
+        old = [
+            traversal(OLD_TRAIL_X, OLD_TRAIL_Y, sort_key=1.0),
+            traversal(OLD_TRAIL_X + 400, OLD_TRAIL_Y, sort_key=1.0, idx=1, elev=1215.0),
+        ]
         before = {s["segment_id"] for s in M.build_library(old)}
-        after = {s["segment_id"] for s in
-                 M.build_library(old + [traversal(NEW_TRAIL_X, NEW_TRAIL_Y,
-                                                  sort_key=2.0)])}
+        after = {
+            s["segment_id"]
+            for s in M.build_library(
+                old + [traversal(NEW_TRAIL_X, NEW_TRAIL_Y, sort_key=2.0)]
+            )
+        }
         self.assertTrue(before.issubset(after))
         self.assertEqual(len(after), len(before) + 1)
 
@@ -157,19 +176,23 @@ def _grid_for(con, activity_id) -> str:
     """
     lat, lon = con.execute(
         "SELECT median(lat), median(lon) FROM records "
-        "WHERE activity_id = ? AND lat IS NOT NULL", [activity_id]).fetchone()
+        "WHERE activity_id = ? AND lat IS NOT NULL",
+        [activity_id],
+    ).fetchone()
     zone, north = D.utm_zone_at(lat, lon)
     grid = D.usgs_grid_for_zone(zone, north)
     if grid is None:
-        raise unittest.SkipTest("the uncovered run is outside NAD83 / UTM "
-                                "zones, so no USGS filename exists for it")
+        raise unittest.SkipTest(
+            "the uncovered run is outside NAD83 / UTM "
+            "zones, so no USGS filename exists for it"
+        )
     return grid
 
 
 class TestTileCoverageIsReported(CorpusTestCase):
-
     def _report(self, activity_id, **cfg):
         from trail_factors.analysis import report as REP
+
         with use_config(**cfg):
             return REP.build(self.con, activity_id)
 
@@ -193,13 +216,17 @@ class TestTileCoverageIsReported(CorpusTestCase):
                 WHERE a.source = 'garmin_watch' AND a.sport = 'running'
                   AND a.coverage_fraction > 0
                 ORDER BY a.start_time_utc DESC LIMIT 1"""
-        return one(self.con, sql,
-                   what="positioned run outside every loaded DEM tile")[0]
+        return one(self.con, sql, what="positioned run outside every loaded DEM tile")[
+            0
+        ]
 
     def test_a_run_outside_every_tile_names_the_tile_it_needs(self):
         aid = self._uncovered()
-        rep = self._report(aid, projection_crs=_grid_for(self.con, aid),
-                           dem_tile_suffix_guess="XX_Synthetic_2020")
+        rep = self._report(
+            aid,
+            projection_crs=_grid_for(self.con, aid),
+            dem_tile_suffix_guess="XX_Synthetic_2020",
+        )
         cov = rep["terrain_coverage"]
         self.assertEqual(cov["status"], "outside_loaded_tiles")
         self.assertEqual(cov["projection"]["basis"], "configured")
@@ -222,9 +249,12 @@ class TestTileCoverageIsReported(CorpusTestCase):
         cov = rep["terrain_coverage"]
         self.assertEqual(cov["status"], "outside_loaded_tiles")
         self.assertIs(cov["projection_configured"], False)
-        self.assertTrue(cov["projection"]["basis"].startswith(
-            "derived from this run's position: UTM zone "),
-            cov["projection"])
+        self.assertTrue(
+            cov["projection"]["basis"].startswith(
+                "derived from this run's position: UTM zone "
+            ),
+            cov["projection"],
+        )
         for m in cov["missing_tiles"]:
             self.assertIsNone(m["filename"])
             self.assertIn(m["usgs_cell"], m["fetch_command"])
@@ -264,7 +294,9 @@ class TestTileCoverageIsReported(CorpusTestCase):
         """
         if not D.loaded_tiles():
             self.skipTest("no DEM tile is loaded, so no run can be covered")
-        aid = one(self.con, """
+        aid = one(
+            self.con,
+            """
             SELECT a.activity_id FROM activities a
             JOIN records r USING (activity_id)
             LEFT JOIN dem_elevations d USING (activity_id, timestamp)
@@ -272,11 +304,11 @@ class TestTileCoverageIsReported(CorpusTestCase):
             GROUP BY 1, a.start_time_utc
             HAVING count(*) = count(d.altitude_dem_m)
             ORDER BY a.start_time_utc DESC LIMIT 1""",
-                  what="run fully covered by DEM elevations")[0]
+            what="run fully covered by DEM elevations",
+        )[0]
         rep = self._report(aid)
         self.assertEqual(rep["terrain_coverage"]["status"], "covered")
-        self.assertFalse([i for i in rep["notable"]
-                          if i["kind"] == "terrain_gap"])
+        self.assertFalse([i for i in rep["notable"] if i["kind"] == "terrain_gap"])
 
     def test_no_coordinate_is_emitted_in_the_coverage_block(self):
         """A 10 km grid cell is what fetching a tile needs; a position is not,

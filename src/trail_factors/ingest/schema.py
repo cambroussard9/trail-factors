@@ -73,7 +73,8 @@ CREATE TABLE IF NOT EXISTS slope_traversals (
     -- A prominence hill is up-then-down BY DEFINITION. On a trail of tight
     -- rollers with almost no flat between features that is the real terrain,
     -- which is why prominence finds clean hills there -- but that is a
-    -- property of THAT TRAIL, not of hills. A slope is the general unit: an ascent and a
+    -- property of THAT TRAIL, not of hills. A slope is the general unit: an ascent and
+    -- a
     -- descent are separate features that happen, on rollers, to be adjacent.
     --
     -- ENDPOINTS ARE DIRECTION-NORMALISED (low/high, not start/end) so one
@@ -329,7 +330,8 @@ CREATE TABLE IF NOT EXISTS activities (
                                               -- whose threshold can be stated, so it
                                               -- is the independent signal (§15.1).
     total_stopped_detector_s DOUBLE,
-    timer_time_s       DOUBLE,                -- session.total_timer_time; == API duration
+    timer_time_s       DOUBLE,                -- session.total_timer_time; == API
+                                              -- duration
     source             VARCHAR NOT NULL,      -- garmin_watch | strava_phone
     sampling_regime    VARCHAR NOT NULL,      -- 1hz | smart_recording | unknown
     median_gap_s       DOUBLE,                -- evidence for sampling_regime
@@ -380,7 +382,8 @@ CREATE TABLE IF NOT EXISTS activities (
     -- GARMIN'S OWN POST-RUN SELF-EVALUATION (first seen on the FR265). One
     -- channel, asked seconds after the run, on Garmin's scale. It is the only
     -- perceived-effort source in this build: session load is garmin_rpe x
-    -- timer minutes (src/trail_factors/analysis/session_load.py). Feel is stored and shown,
+    -- timer minutes (src/trail_factors/analysis/session_load.py). Feel is stored and
+    -- shown,
     -- never used, because its direction is unverified.
     garmin_rpe               DOUBLE,    -- 1-10, decoded from session.workout_rpe/10
     garmin_feel              INTEGER,   -- 1-5, decoded from session.workout_feel
@@ -421,7 +424,8 @@ CREATE TABLE IF NOT EXISTS records (
     -- without joining activities.device (§14d). gps | barometric |
     -- dem_suspected | unknown.
     altitude_source       VARCHAR,
-    -- THE INDEPENDENT CHANNEL (§9, added with the first FR265 file). `gps_metadata.enhanced_altitude`, paired to the record by FILE
+    -- THE INDEPENDENT CHANNEL (§9, added with the first FR265 file).
+    -- `gps_metadata.enhanced_altitude`, paired to the record by FILE
     -- ORDER because gps_metadata carries no timestamp. On a GPS watch this is
     -- the SAME series as altitude_device_m (97.6% identical on the FR245); on
     -- a barometric one it is not (3.7%), and that difference is what
@@ -540,9 +544,11 @@ CREATE OR REPLACE VIEW run_summary AS
            a.total_stopped_s,
            a.total_distance_m / nullif(a.duration_s, 0)    AS elapsed_speed_mps,
            a.total_distance_m / nullif(a.moving_time_s, 0) AS moving_speed_mps,
-           (SELECT count(*) FROM stops s WHERE s.activity_id = a.activity_id)  AS stop_count,
+           (SELECT count(*) FROM stops s WHERE s.activity_id = a.activity_id)  AS
+           stop_count,
            (SELECT count(*) FROM stops s WHERE s.activity_id = a.activity_id
-              AND s.position = 'midrun')                                       AS midrun_stop_count,
+              AND s.position = 'midrun')                                       AS
+              midrun_stop_count,
            a.sampling_regime, a.coverage_fraction, a.gps_contiguous
     FROM activities a;
 
@@ -556,7 +562,8 @@ CREATE OR REPLACE VIEW terrain_blocks AS
     WITH positioned AS (
         SELECT activity_id, timestamp, distance_m,
                CASE WHEN date_diff('second',
-                        lag(timestamp) OVER (PARTITION BY activity_id ORDER BY timestamp),
+                        lag(timestamp) OVER (PARTITION BY activity_id ORDER BY
+                        timestamp),
                         timestamp) > 30
                     OR lag(timestamp) OVER (PARTITION BY activity_id ORDER BY timestamp)
                        IS NULL
@@ -577,4 +584,3 @@ CREATE OR REPLACE VIEW terrain_blocks AS
             AND max(distance_m) - min(distance_m) >= 200)  AS terrain_usable
     FROM numbered GROUP BY 1, 2;
 """
-

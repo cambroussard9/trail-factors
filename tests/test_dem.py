@@ -14,15 +14,15 @@ from pathlib import Path
 import numpy as np
 import tifffile
 
-from trail_factors.transform.dem import DemTile, OutsideTile, transformer, WGS84
 from tests.corpus import CorpusTestCase, one
+from trail_factors.transform.dem import WGS84, DemTile, OutsideTile, transformer
 
 # ARBITRARY GROUND, NOTHING TO DO WITH ANY ATHLETE: UTM 32N around 46.5 N,
 # 7.5 E. The tile's top-left corner is placed so that this point sits well
 # inside it.
 EPSG = 32632
 LAT, LON = 46.5, 7.5
-SIZE = 200                      # pixels per side, 1 m posting
+SIZE = 200  # pixels per side, 1 m posting
 
 
 def _plane(col, row):
@@ -43,10 +43,15 @@ class DemTileTest(unittest.TestCase):
         rows, cols = np.mgrid[0:SIZE, 0:SIZE]
         grid = _plane(cols, rows).astype(np.float32)
         path = Path(cls._tmp.name) / "synthetic.tif"
-        tifffile.imwrite(path, grid, extratags=[
-            (33550, "d", 3, (1.0, 1.0, 0.0), True),
-            (33922, "d", 6, (0.0, 0.0, 0.0, ox, oy, 0.0), True),
-            (34735, "H", 8, (1, 1, 0, 1, 3072, 0, 1, EPSG), True)])
+        tifffile.imwrite(
+            path,
+            grid,
+            extratags=[
+                (33550, "d", 3, (1.0, 1.0, 0.0), True),
+                (33922, "d", 6, (0.0, 0.0, 0.0, ox, oy, 0.0), True),
+                (34735, "H", 8, (1, 1, 0, 1, 3072, 0, 1, EPSG), True),
+            ],
+        )
         cls.tile = DemTile(path)
 
     @classmethod
@@ -79,27 +84,33 @@ class DemTileTest(unittest.TestCase):
 
 
 class DemReliefTest(CorpusTestCase):
-
     def test_dem_relief_is_far_below_gps_relief(self):
         """The headline §5a-bis finding: GPS-derived altitude inflates relief.
 
         Subject: the DEM-covered run with GPS-derived (not barometric) device
         altitude that has the most DEM samples -- any corpus's, by property.
         """
-        aid = one(self.con, """
+        aid = one(
+            self.con,
+            """
             SELECT d.activity_id FROM dem_elevations d
             JOIN activities a USING (activity_id)
             WHERE a.altitude_source = 'gps' AND a.source = 'garmin_watch'
             GROUP BY 1 ORDER BY count(*) DESC LIMIT 1""",
-                  what="DEM-covered run with GPS-derived device altitude")[0]
-        dem_relief, gps_relief = self.con.execute("""
+            what="DEM-covered run with GPS-derived device altitude",
+        )[0]
+        dem_relief, gps_relief = self.con.execute(
+            """
             SELECT max(d.altitude_dem_m) - min(d.altitude_dem_m),
                    max(r.altitude_device_m) - min(r.altitude_device_m)
             FROM dem_elevations d JOIN records r USING (activity_id, timestamp)
-            WHERE d.activity_id = ?""", [aid]).fetchone()
+            WHERE d.activity_id = ?""",
+            [aid],
+        ).fetchone()
         self.assertGreater(dem_relief, 0)
-        self.assertLess(dem_relief, gps_relief * 0.7,
-                        "GPS relief should far exceed DEM relief")
+        self.assertLess(
+            dem_relief, gps_relief * 0.7, "GPS relief should far exceed DEM relief"
+        )
 
 
 if __name__ == "__main__":

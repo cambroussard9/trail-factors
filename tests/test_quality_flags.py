@@ -7,10 +7,10 @@ mechanism and the derivation. Every negative case has a positive twin.
 import unittest
 from datetime import datetime, timedelta
 
-from trail_factors.transform import silver as S
 from tests.corpus import CorpusTestCase, one
+from trail_factors.transform import silver as S
 
-T0 = datetime(2023, 6, 20, 7, 0)                  # synthetic
+T0 = datetime(2023, 6, 20, 7, 0)  # synthetic
 
 
 def track(n=40, step=2.0, cadence=80, split="rwd_run"):
@@ -27,7 +27,7 @@ class TestJitterIsNormalised(unittest.TestCase):
 
     def test_a_lateral_spike_is_flagged(self):
         ts, xs, ys, sp, cad, st = track()
-        ys[20] = 12.0                      # 6x the 2 m step spacing
+        ys[20] = 12.0  # 6x the 2 m step spacing
         out = S.quality_flags(ts, xs, ys, sp, cad, st)
         self.assertIn("gps_jitter", out[20])
 
@@ -49,14 +49,14 @@ class TestSpeedDiscontinuity(unittest.TestCase):
     def test_a_physically_impossible_jump_is_flagged(self):
         ts, xs, ys, sp, cad, st = track()
         for i in range(20, 40):
-            xs[i] += 8.0                   # 8 m in one second
+            xs[i] += 8.0  # 8 m in one second
         out = S.quality_flags(ts, xs, ys, sp, cad, st)
         self.assertTrue(any("speed_discontinuity" in o for o in out))
 
     def test_positive_twin_a_normal_acceleration_is_not_flagged(self):
         ts, xs, ys, sp, cad, st = track()
         for i in range(20, 40):
-            xs[i] += 0.5 * (i - 19)        # gentle build
+            xs[i] += 0.5 * (i - 19)  # gentle build
         out = S.quality_flags(ts, xs, ys, sp, cad, st)
         self.assertEqual([o for o in out if "speed_discontinuity" in o], [])
 
@@ -83,7 +83,7 @@ class TestCadenceFlags(unittest.TestCase):
         ts, xs, ys, sp, cad, st = track()
         for i in range(5, 30):
             cad[i] = 85
-            sp[i] = 1.5 + (i % 2)          # speed swings by 1 m/s
+            sp[i] = 1.5 + (i % 2)  # speed swings by 1 m/s
         out = S.quality_flags(ts, xs, ys, sp, cad, st)
         self.assertIn("cadence_stuck", out[15])
 
@@ -91,7 +91,7 @@ class TestCadenceFlags(unittest.TestCase):
         """Constant cadence at constant speed is what good running looks like."""
         ts, xs, ys, sp, cad, st = track()
         for i in range(5, 30):
-            cad[i] = 85                     # speed stays flat at 2.0
+            cad[i] = 85  # speed stays flat at 2.0
         out = S.quality_flags(ts, xs, ys, sp, cad, st)
         self.assertEqual([o for o in out if "cadence_stuck" in o], [])
 
@@ -129,13 +129,17 @@ class TestAgainstTheCorpus(CorpusTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        one(cls.con, "SELECT 1 FROM records_enriched LIMIT 1",
-            what="silver layer (records_enriched is empty)")
+        one(
+            cls.con,
+            "SELECT 1 FROM records_enriched LIMIT 1",
+            what="silver layer (records_enriched is empty)",
+        )
 
     def test_the_column_exists_and_is_populated(self):
         n, flagged = self.con.execute(
             "SELECT count(*), count(*) FILTER (WHERE coalesce(quality_flags,'') <> '') "
-            "FROM records_enriched").fetchone()
+            "FROM records_enriched"
+        ).fetchone()
         self.assertGreater(n, 0)
         self.assertGreater(flagged, 0, "no records flagged -- the detector is dead")
 
@@ -144,13 +148,15 @@ class TestAgainstTheCorpus(CorpusTestCase):
         not artifacts."""
         n, flagged = self.con.execute(
             "SELECT count(*), count(*) FILTER (WHERE coalesce(quality_flags,'') <> '') "
-            "FROM records_enriched").fetchone()
+            "FROM records_enriched"
+        ).fetchone()
         self.assertLess(flagged / n, 0.20)
 
     def test_every_stored_flag_is_a_known_name(self):
         for (combo,) in self.con.execute(
-                "SELECT DISTINCT quality_flags FROM records_enriched "
-                "WHERE coalesce(quality_flags,'') <> ''").fetchall():
+            "SELECT DISTINCT quality_flags FROM records_enriched "
+            "WHERE coalesce(quality_flags,'') <> ''"
+        ).fetchall():
             for f in combo.split(","):
                 self.assertIn(f, S.ALL_FLAGS)
 
@@ -165,23 +171,31 @@ class TestAgainstTheCorpus(CorpusTestCase):
             GROUP BY 1""").fetchall():
             rates[regime] = fl / n
         if len(rates) < 2:
-            self.skipTest("this corpus's enriched records come from one "
-                          "sampling regime only")
-        self.assertLess(max(rates.values()) / max(min(rates.values()), 1e-9), 4.0,
-                        f"regimes flag at very different rates: {rates}")
+            self.skipTest(
+                "this corpus's enriched records come from one sampling regime only"
+            )
+        self.assertLess(
+            max(rates.values()) / max(min(rates.values()), 1e-9),
+            4.0,
+            f"regimes flag at very different rates: {rates}",
+        )
 
     def test_record_grain_primitives_declare_that_they_exclude(self):
         from trail_factors.analysis import primitives as P
+
         self.assertTrue(P.drift_filters()["quality_flags_excluded"])
         aid = self.con.execute(
-            "SELECT activity_id FROM records_enriched LIMIT 1").fetchone()[0]
+            "SELECT activity_id FROM records_enriched LIMIT 1"
+        ).fetchone()[0]
         self.assertTrue(
-            P.grade_binned_pace(self.con, aid)["filters"]["quality_flags_excluded"])
+            P.grade_binned_pace(self.con, aid)["filters"]["quality_flags_excluded"]
+        )
 
     def test_segment_grain_primitives_declare_that_they_do_NOT(self):
         """Stated, not implied -- they read segment_efforts, which aggregates
         records upstream of the flags."""
         from trail_factors.analysis import primitives as P
+
         self.assertFalse(P.segment_drift_filters()["quality_flags_excluded"])
 
 

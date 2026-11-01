@@ -13,10 +13,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.corpus import CorpusTestCase, one
 from trail_factors.ingest import weather as W
 from trail_factors.ingest.answers import NOT_COLLECTED
 from trail_factors.paths import REPO_ROOT
-from tests.corpus import CorpusTestCase, one
 
 
 class TestTheNamedFormula(unittest.TestCase):
@@ -39,15 +39,18 @@ class TestInTheReport(CorpusTestCase):
 
     def conditions(self, op, what):
         from trail_factors.analysis import report as REP
-        (aid,) = one(self.con,
-                     "SELECT activity_id FROM weather_records "
-                     f"WHERE weather_source {op} 'assumed_indoor' "
-                     "GROUP BY 1 ORDER BY 1 LIMIT 1", what=what)
+
+        (aid,) = one(
+            self.con,
+            "SELECT activity_id FROM weather_records "
+            f"WHERE weather_source {op} 'assumed_indoor' "
+            "GROUP BY 1 ORDER BY 1 LIMIT 1",
+            what=what,
+        )
         return REP.build(self.con, aid)["conditions"]
 
     def test_it_sits_beside_temperature_with_its_limits_stated(self):
-        w = self.conditions("<>", "outdoor activity with weather")[
-            "estimated_wbgt_c"]
+        w = self.conditions("<>", "outdoor activity with weather")["estimated_wbgt_c"]
         self.assertEqual(w["status"], "ok")
         self.assertLessEqual(w["min"], w["max"])
         f = w["filters"]
@@ -55,6 +58,7 @@ class TestInTheReport(CorpusTestCase):
         self.assertIn("OPEN-SKY", f["canopy"])
         self.assertIn("UPPER BOUND", f["canopy"])
         from trail_factors.analysis.report import SUN_EXPOSURE_NOTE
+
         self.assertEqual(f["correction"], SUN_EXPOSURE_NOTE)
         self.assertIn("DISPLAY AND STORAGE ONLY", f["use"])
 
@@ -71,6 +75,7 @@ class TestShadeIsNotCollected(unittest.TestCase):
 
     def test_the_state_is_labelled_not_collected(self):
         from trail_factors.analysis import report as REP
+
         s = REP._sun_exposure()
         self.assertEqual(s["status"], NOT_COLLECTED)
         self.assertIsNone(s["value"])
@@ -87,20 +92,21 @@ class TestTheCorrectionSaysShadeIsNotCollected(CorpusTestCase):
     def setUpClass(cls):
         super().setUpClass()
         from trail_factors.analysis import report as REP
+
         cls.REP = REP
-        cls.aid, = one(
+        (cls.aid,) = one(
             cls.con,
             "SELECT a.activity_id FROM activities a JOIN "
             "weather_records w USING (activity_id) WHERE w.weather_source "
             "<> 'assumed_indoor' ORDER BY 1 LIMIT 1",
-            what="outdoor activity with weather")
+            what="outdoor activity with weather",
+        )
         cls.w = REP._estimated_wbgt(cls.con, cls.aid, "era5", {})
 
     def test_the_bound_stands_uncorrected_and_says_so(self):
         self.assertEqual(self.w["sun_exposure"]["status"], NOT_COLLECTED)
         self.assertIsNone(self.w["sun_exposure"]["value"])
-        self.assertEqual(self.w["filters"]["correction"],
-                         self.REP.SUN_EXPOSURE_NOTE)
+        self.assertEqual(self.w["filters"]["correction"], self.REP.SUN_EXPOSURE_NOTE)
 
     def test_positive_twin_the_bound_itself_is_still_computed(self):
         """Not collecting shade withholds a CORRECTION, never the value."""
@@ -117,8 +123,12 @@ class TestHardRuleNothingNewEntersTheModel(unittest.TestCase):
     threshold is met. Structural: neither name appears outside the weather
     module, its CLI, the schema and the report."""
 
-    ALLOWED = {"src/trail_factors/ingest/weather.py", "src/trail_factors/cli/weather.py",
-               "src/trail_factors/ingest/schema.py", "src/trail_factors/analysis/report.py"}
+    ALLOWED = {
+        "src/trail_factors/ingest/weather.py",
+        "src/trail_factors/cli/weather.py",
+        "src/trail_factors/ingest/schema.py",
+        "src/trail_factors/analysis/report.py",
+    }
 
     @staticmethod
     def _code_tokens(path):
@@ -127,6 +137,7 @@ class TestHardRuleNothingNewEntersTheModel(unittest.TestCase):
         corrects the open-sky shortwave is documentation, and a guard that
         fires on comments is one that gets deleted."""
         import ast
+
         out = []
         for n in ast.walk(ast.parse(path.read_text())):
             if isinstance(n, ast.Name):
@@ -153,12 +164,13 @@ class TestHardRuleNothingNewEntersTheModel(unittest.TestCase):
         is detected; a comment-only mention is not. The comment-only case is
         a synthetic module, so the twin never depends on which real module
         happens to mention the word."""
-        self.assertIn("shortwave",
-                      self._code_tokens(REPO_ROOT / "src/trail_factors/analysis/report.py"))
+        self.assertIn(
+            "shortwave",
+            self._code_tokens(REPO_ROOT / "src/trail_factors/analysis/report.py"),
+        )
         with tempfile.TemporaryDirectory() as tmp:
             comment_only = Path(tmp) / "comment_only.py"
-            comment_only.write_text("# shade corrects the open-sky shortwave\n"
-                                    "x = 1\n")
+            comment_only.write_text("# shade corrects the open-sky shortwave\nx = 1\n")
             reads_it = Path(tmp) / "reads_it.py"
             reads_it.write_text("x = row['shortwave_wm2']\n")
             self.assertNotIn("shortwave", self._code_tokens(comment_only))

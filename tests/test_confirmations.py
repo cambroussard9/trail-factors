@@ -8,7 +8,7 @@ rebuild touches.
 
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -44,8 +44,9 @@ class ConfirmationSurvivesRebuildTest(unittest.TestCase):
         cls.dir = Path(cls._tmp.name)
         cls.fit = None
         probe = cls.dir / "probe.duckdb"
-        with mock.patch.object(A, "CONFIRMATIONS",
-                               cls.dir / "window_confirmations.json"):
+        with mock.patch.object(
+            A, "CONFIRMATIONS", cls.dir / "window_confirmations.json"
+        ):
             # The SMALLEST file that ingests with a record stream: a file the
             # validator rejects, or one with no records, cannot carry a window.
             for path in _candidate_fits()[:10]:
@@ -67,7 +68,8 @@ class ConfirmationSurvivesRebuildTest(unittest.TestCase):
             cls._tmp.cleanup()
             raise unittest.SkipTest(
                 "needs a FIT file that ingests with records (tests/fixtures/ "
-                "or the raw garmin directory); none in this checkout")
+                "or the raw garmin directory); none in this checkout"
+            )
 
     @classmethod
     def tearDownClass(cls):
@@ -76,8 +78,9 @@ class ConfirmationSurvivesRebuildTest(unittest.TestCase):
     def setUp(self):
         self.db = self.dir / "conf_test.duckdb"
         self.db.unlink(missing_ok=True)
-        self._p = mock.patch.object(A, "CONFIRMATIONS",
-                                    self.dir / "window_confirmations.json")
+        self._p = mock.patch.object(
+            A, "CONFIRMATIONS", self.dir / "window_confirmations.json"
+        )
         self._p.start()
         self.rows = ingest(self.fit, self.db)
         self.sha = self.rows["file_sha256"]
@@ -91,7 +94,8 @@ class ConfirmationSurvivesRebuildTest(unittest.TestCase):
         con = duckdb.connect(str(self.db), read_only=True)
         try:
             return con.execute(
-                "SELECT valid_start_utc, valid_end_utc FROM activities").fetchone()
+                "SELECT valid_start_utc, valid_end_utc FROM activities"
+            ).fetchone()
         finally:
             con.close()
 
@@ -113,16 +117,25 @@ class ConfirmationSurvivesRebuildTest(unittest.TestCase):
         because it was never in the database to begin with.
         """
         recorded_start, recorded_end = self.window()
-        trimmed = recorded_end - timedelta(seconds=min(
-            300, (recorded_end - recorded_start).total_seconds() / 2))
+        trimmed = recorded_end - timedelta(
+            seconds=min(300, (recorded_end - recorded_start).total_seconds() / 2)
+        )
         trimmed = trimmed.replace(microsecond=0)
 
-        A.save_confirmation(self.sha, recorded_start, trimmed,
-                            datetime.now(timezone.utc).replace(tzinfo=None),
-                            "test", source="test")
-        ingest(self.fit, self.db)      # the rebuild that used to wipe it
-        self.assertEqual(self.window()[1], trimmed,
-                         "a rebuild must not discard athlete-supplied state")
+        A.save_confirmation(
+            self.sha,
+            recorded_start,
+            trimmed,
+            datetime.now(UTC).replace(tzinfo=None),
+            "test",
+            source="test",
+        )
+        ingest(self.fit, self.db)  # the rebuild that used to wipe it
+        self.assertEqual(
+            self.window()[1],
+            trimmed,
+            "a rebuild must not discard athlete-supplied state",
+        )
 
     def test_ingest_never_writes_to_window_confirmations(self):
         """Ingest reads confirmations; it must never create or delete them."""
@@ -141,7 +154,9 @@ class ConfirmationSurvivesRebuildTest(unittest.TestCase):
     def test_recorded_window_is_used_when_no_confirmation_exists(self):
         start, end = self.window()
         con = duckdb.connect(str(self.db), read_only=True)
-        rec = con.execute("SELECT min(timestamp), max(timestamp) FROM records").fetchone()
+        rec = con.execute(
+            "SELECT min(timestamp), max(timestamp) FROM records"
+        ).fetchone()
         con.close()
         self.assertEqual((start, end), rec)
 
@@ -160,17 +175,17 @@ class ConfirmationSurvivesDatabaseDeletionTest(unittest.TestCase):
             with mock.patch.object(A, "CONFIRMATIONS", d / "conf_state.json"):
                 start = datetime(2025, 1, 15, 7, 0, 0)
                 end = datetime(2025, 1, 15, 7, 42, 7)
-                A.save_confirmation("deadbeef", start, end,
-                                    datetime(2025, 1, 16), "t")
+                A.save_confirmation("deadbeef", start, end, datetime(2025, 1, 16), "t")
 
                 db = d / "conf_test.duckdb"
                 con = duckdb.connect(str(db))
                 try:
                     con.execute(DDL)
-                    n = A.restore_into(con)      # simulates a deleted database
+                    n = A.restore_into(con)  # simulates a deleted database
                     got = con.execute(
                         "SELECT file_sha256, valid_start_utc, valid_end_utc "
-                        "FROM window_confirmations").fetchone()
+                        "FROM window_confirmations"
+                    ).fetchone()
                 finally:
                     con.close()
 

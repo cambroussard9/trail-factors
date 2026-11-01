@@ -11,7 +11,8 @@ coordinate.
 
 UTC THROUGHOUT. Open-Meteo's archive is indexed by UTC. With a local offset of
 several hours, a morning run would otherwise fetch afternoon conditions, and
-dew point moves substantially across that gap -- corrupting the single variable §8 exists to capture.
+dew point moves substantially across that gap -- corrupting the single variable §8
+                                              -- exists to capture.
 
 The raw response is cached under data/raw/weather/ for the same reason the API
 listing is (§4.2): the archive is external and revises, so a re-run must be
@@ -25,7 +26,7 @@ import math
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from trail_factors.paths import RAW_DIR
@@ -40,9 +41,16 @@ COORD_PRECISION = 2
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 
-HOURLY_VARS = ("temperature_2m", "dew_point_2m", "relative_humidity_2m",
-               "wind_speed_10m", "wind_direction_10m", "precipitation",
-               "cloud_cover", "shortwave_radiation")
+HOURLY_VARS = (
+    "temperature_2m",
+    "dew_point_2m",
+    "relative_humidity_2m",
+    "wind_speed_10m",
+    "wind_direction_10m",
+    "precipitation",
+    "cloud_cover",
+    "shortwave_radiation",
+)
 
 # A PRECEDING-HOUR MEAN IS NOT AN INSTANT. Open-Meteo's shortwave_radiation
 # stamped 10:00 is the mean over 09:00-10:00 (W/m2, global horizontal,
@@ -56,16 +64,16 @@ PRECEDING_HOUR_MEAN = ("shortwave_radiation",)
 # indistinguishable from a fetch failure and would silently drop the run from
 # any temperature-aware model. An assumed value that is LABELLED is usable; an
 # unlabelled one is a lie.
-INDOOR_TEMP_C = 22.8            # ~73 F
-INDOOR_DEW_POINT_C = 10.0       # ~50 F, typical conditioned air
+INDOOR_TEMP_C = 22.8  # ~73 F
+INDOOR_DEW_POINT_C = 10.0  # ~50 F, typical conditioned air
 INDOOR_HUMIDITY_PCT = 45.0
 
 # weather_source, one per row, the same pattern as records.altitude_source.
 # Provenance travels WITH the value so a query can tell a reanalysis reading
 # from a provisional forecast without joining anything.
-SOURCE_FORECAST = "forecast"        # provisional; replaced when ERA5 catches up
-SOURCE_ERA5 = "era5"                # reanalysis archive, final
-ASSUMED_INDOOR = "assumed_indoor"   # labelled assumption, never a measurement
+SOURCE_FORECAST = "forecast"  # provisional; replaced when ERA5 catches up
+SOURCE_ERA5 = "era5"  # reanalysis archive, final
+ASSUMED_INDOOR = "assumed_indoor"  # labelled assumption, never a measurement
 
 # The archive/reanalysis endpoint lags several days (§8). A run OLDER than
 # this is fetched from the archive, and a cached provisional (forecast) row
@@ -98,13 +106,17 @@ def _get(url: str, params: dict) -> dict:
 
 def use_archive(start_utc: datetime, today: datetime | None = None) -> bool:
     """Is the run older than the archive lag? (strictly: older than 7 days)"""
-    today = (today if today is not None
-             else datetime.now(timezone.utc).replace(tzinfo=None))
+    today = today if today is not None else datetime.now(UTC).replace(tzinfo=None)
     return today - start_utc > timedelta(days=ARCHIVE_LAG_DAYS)
 
 
-def fetch(lat: float, lon: float, start_utc: datetime, end_utc: datetime,
-          today: datetime | None = None) -> dict:
+def fetch(
+    lat: float,
+    lon: float,
+    start_utc: datetime,
+    end_utc: datetime,
+    today: datetime | None = None,
+) -> dict:
     """Hourly weather covering a run, plus the 24 h before it for the wetness proxy.
 
     Returns the raw Open-Meteo payload with `_source` and `_is_final` attached.
@@ -115,10 +127,11 @@ def fetch(lat: float, lon: float, start_utc: datetime, end_utc: datetime,
     first = (start_utc - timedelta(hours=25)).date()
     last = (end_utc + timedelta(hours=1)).date()
     params = {
-        "latitude": lat, "longitude": lon,
+        "latitude": lat,
+        "longitude": lon,
         "hourly": ",".join(HOURLY_VARS),
-        "timezone": "UTC",          # §8: pass UTC, never local
-        "wind_speed_unit": "ms",    # SI internally (CLAUDE.md)
+        "timezone": "UTC",  # §8: pass UTC, never local
+        "wind_speed_unit": "ms",  # SI internally (CLAUDE.md)
     }
     if use_archive(start_utc, today):
         params |= {"start_date": first.isoformat(), "end_date": last.isoformat()}
@@ -128,8 +141,7 @@ def fetch(lat: float, lon: float, start_utc: datetime, end_utc: datetime,
         # The archive has not caught up yet; the forecast endpoint serves
         # recent past hours via past_days. Marked NOT final and backfilled
         # later (§8).
-        span = (datetime.now(timezone.utc).replace(tzinfo=None).date()
-                - first).days
+        span = (datetime.now(UTC).replace(tzinfo=None).date() - first).days
         params |= {"past_days": min(max(span, 1), 92), "forecast_days": 2}
         payload = _get(FORECAST_URL, params)
         payload["_source"], payload["_is_final"] = SOURCE_FORECAST, False
@@ -139,8 +151,8 @@ def fetch(lat: float, lon: float, start_utc: datetime, end_utc: datetime,
     payload["_requested_lat"], payload["_requested_lon"] = lat, lon
     if "hourly" not in payload or not payload["hourly"].get("time"):
         raise WeatherFetchError(
-            f"Open-Meteo returned no hourly series for {lat},{lon} "
-            f"{start_utc:%Y-%m-%d}")
+            f"Open-Meteo returned no hourly series for {lat},{lon} {start_utc:%Y-%m-%d}"
+        )
     return payload
 
 
@@ -149,16 +161,16 @@ def source_of(payload: dict) -> str:
     return payload.get("_source", SOURCE_FORECAST)
 
 
-def needs_backfill(payload: dict, start_utc: datetime,
-                   today: datetime | None = None) -> bool:
+def needs_backfill(
+    payload: dict, start_utc: datetime, today: datetime | None = None
+) -> bool:
     """Is this a provisional forecast row that ERA5 can now replace? (§8)
 
     Archive rows REPLACE forecast rows when they arrive -- weather_build
     deletes and re-inserts per activity, so the replacement is atomic and no
     row is left carrying a stale provenance.
     """
-    return (not payload.get("_is_final", False)
-            and use_archive(start_utc, today))
+    return not payload.get("_is_final", False) and use_archive(start_utc, today)
 
 
 def cache_path(activity_id: str) -> Path:
@@ -169,6 +181,7 @@ def save_cache(activity_id: str, payload: dict) -> Path:
     """ATOMIC (temp + os.replace): a backfill REWRITES existing caches, and a
     half-written one would lose the record of what was actually used."""
     import os
+
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     out = cache_path(activity_id)
     tmp = out.with_name(out.name + f".{os.getpid()}.tmp")
@@ -189,20 +202,24 @@ def to_rows(payload: dict) -> list[dict]:
     h = payload["hourly"]
     rows = []
     for i, stamp in enumerate(h["time"]):
-        def val(name):
+
+        def val(name, i=i):
             series = h.get(name)
             return series[i] if series is not None and i < len(series) else None
-        rows.append({
-            "timestamp": datetime.fromisoformat(stamp).replace(tzinfo=None),
-            "temp_c": val("temperature_2m"),
-            "dew_point_c": val("dew_point_2m"),
-            "humidity_pct": val("relative_humidity_2m"),
-            "wind_mps": val("wind_speed_10m"),
-            "wind_dir_deg": val("wind_direction_10m"),
-            "precip_mm": val("precipitation"),
-            "cloud_cover_pct": val("cloud_cover"),
-            "shortwave_wm2": val("shortwave_radiation"),
-        })
+
+        rows.append(
+            {
+                "timestamp": datetime.fromisoformat(stamp).replace(tzinfo=None),
+                "temp_c": val("temperature_2m"),
+                "dew_point_c": val("dew_point_2m"),
+                "humidity_pct": val("relative_humidity_2m"),
+                "wind_mps": val("wind_speed_10m"),
+                "wind_dir_deg": val("wind_direction_10m"),
+                "precip_mm": val("precipitation"),
+                "cloud_cover_pct": val("cloud_cover"),
+                "shortwave_wm2": val("shortwave_radiation"),
+            }
+        )
     return rows
 
 
@@ -212,8 +229,13 @@ def hour_of(stamp: datetime) -> datetime:
     return stamp.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
 
 
-def duration_weighted(rows: list[dict], start: datetime, end: datetime,
-                      key: str, preceding_hour_mean: bool = True) -> dict:
+def duration_weighted(
+    rows: list[dict],
+    start: datetime,
+    end: datetime,
+    key: str,
+    preceding_hour_mean: bool = True,
+) -> dict:
     """One run-level value, weighted by how long the run spent in each hour.
 
     A preceding-hour mean stamped T covers [T-1h, T); an instantaneous value
@@ -230,34 +252,49 @@ def duration_weighted(rows: list[dict], start: datetime, end: datetime,
         if v is None:
             continue
         t = r["timestamp"]
-        lo, hi = ((t - timedelta(hours=1), t) if preceding_hour_mean
-                  else (t - timedelta(minutes=30), t + timedelta(minutes=30)))
+        lo, hi = (
+            (t - timedelta(hours=1), t)
+            if preceding_hour_mean
+            else (t - timedelta(minutes=30), t + timedelta(minutes=30))
+        )
         w = (min(end, hi) - max(start, lo)).total_seconds()
         if w <= 0:
             continue
         num += v * w
         den += w
         n += 1
-    return {"value": num / den if den > 0 else None,
-            "seconds_weighted": den, "run_seconds": run_s,
-            "coverage": den / run_s if run_s > 0 else None,
-            "n_hours": n,
-            "convention": ("preceding-hour mean: value stamped T covers "
-                           "[T-1h, T)" if preceding_hour_mean else
-                           "instantaneous: value stamped T stands for "
-                           "[T-30min, T+30min)")}
+    return {
+        "value": num / den if den > 0 else None,
+        "seconds_weighted": den,
+        "run_seconds": run_s,
+        "coverage": den / run_s if run_s > 0 else None,
+        "n_hours": n,
+        "convention": (
+            "preceding-hour mean: value stamped T covers [T-1h, T)"
+            if preceding_hour_mean
+            else "instantaneous: value stamped T stands for [T-30min, T+30min)"
+        ),
+    }
 
 
 def precip_prev_24h(rows: list[dict], start_utc: datetime) -> float:
     """Rain in the 24 h before the run -- §8's automated trail-wetness proxy."""
     window = start_utc - timedelta(hours=24)
-    return sum(r["precip_mm"] for r in rows
-               if r["precip_mm"] is not None
-               and window <= r["timestamp"] < start_utc)
+    return sum(
+        r["precip_mm"]
+        for r in rows
+        if r["precip_mm"] is not None and window <= r["timestamp"] < start_utc
+    )
 
 
-SCALARS = ("temp_c", "dew_point_c", "humidity_pct", "wind_mps", "precip_mm",
-           "cloud_cover_pct")
+SCALARS = (
+    "temp_c",
+    "dew_point_c",
+    "humidity_pct",
+    "wind_mps",
+    "precip_mm",
+    "cloud_cover_pct",
+)
 
 
 def interpolate(rows: list[dict], stamps: list[datetime]) -> list[dict]:
@@ -306,15 +343,24 @@ def interpolate(rows: list[dict], stamps: list[datetime]) -> list[dict]:
 
 def indoor_rows(stamps: list[datetime]) -> list[dict]:
     """§8's labelled indoor assumption for a treadmill run."""
-    return [{"timestamp": s, "temp_c": INDOOR_TEMP_C,
-             "dew_point_c": INDOOR_DEW_POINT_C,
-             "humidity_pct": INDOOR_HUMIDITY_PCT, "wind_mps": 0.0,
-             "wind_dir_deg": None, "precip_mm": 0.0, "cloud_cover_pct": None,
-             "shortwave_wm2": None}
-            for s in stamps]
+    return [
+        {
+            "timestamp": s,
+            "temp_c": INDOOR_TEMP_C,
+            "dew_point_c": INDOOR_DEW_POINT_C,
+            "humidity_pct": INDOOR_HUMIDITY_PCT,
+            "wind_mps": 0.0,
+            "wind_dir_deg": None,
+            "precip_mm": 0.0,
+            "cloud_cover_pct": None,
+            "shortwave_wm2": None,
+        }
+        for s in stamps
+    ]
 
 
-# ESTIMATED WBGT -- DISPLAY AND STORAGE ONLY. HARD RULE: nothing new enters the §2 residual model until its own n
+# ESTIMATED WBGT -- DISPLAY AND STORAGE ONLY. HARD RULE: nothing new enters the §2
+# residual model until its own n
 # threshold is met. This is a number to READ beside temperature, not a
 # covariate.
 #
@@ -329,15 +375,15 @@ def indoor_rows(stamps: list[datetime]) -> list[dict]:
 # overstates. A radiation-aware estimate (Liljegren) needs solar geometry
 # and a direct/diffuse split; it is not built.
 WBGT_APPROXIMATION = "Australian BoM simplified WBGT (Ta, RH only)"
-WBGT_FORMULA = ("WBGT = 0.567*Ta + 0.393*e + 3.94, "
-                "e = (RH/100) * 6.105 * exp(17.27*Ta / (237.7 + Ta)) hPa")
+WBGT_FORMULA = (
+    "WBGT = 0.567*Ta + 0.393*e + 3.94, "
+    "e = (RH/100) * 6.105 * exp(17.27*Ta / (237.7 + Ta)) hPa"
+)
 
 
 def estimated_wbgt_c(temp_c: float | None, humidity_pct: float | None):
     """The BoM simplified WBGT in deg C, or None when an input is missing."""
     if temp_c is None or humidity_pct is None:
         return None
-    e = (humidity_pct / 100.0) * 6.105 * math.exp(
-        17.27 * temp_c / (237.7 + temp_c))
+    e = (humidity_pct / 100.0) * 6.105 * math.exp(17.27 * temp_c / (237.7 + temp_c))
     return 0.567 * temp_c + 0.393 * e + 3.94
-

@@ -15,12 +15,12 @@ import unittest
 
 import duckdb
 
+from tests.corpus import use_config
 from trail_factors.analysis.series import binned_series
 from trail_factors.ingest.schema import DDL
-from tests.corpus import use_config
 
-T0 = dt.datetime(2025, 1, 15, 7, 0, 0)        # synthetic
-DEM_M = 500.0                                  # synthetic elevation
+T0 = dt.datetime(2025, 1, 15, 7, 0, 0)  # synthetic
+DEM_M = 500.0  # synthetic elevation
 
 
 def _fixture():
@@ -31,21 +31,32 @@ def _fixture():
         "INSERT INTO activities (activity_id, run_id, file_hash, source_file,"
         " start_time_utc, source, sampling_regime, pipeline_version, sport)"
         " VALUES ('a1','r1','h1','x.fit',?,'garmin_watch','1hz',1,'running')",
-        [T0])
+        [T0],
+    )
     recs = []
     for t in range(0, 60):
-        has_d = t < 30 or t == 45           # bin 1: ONE distance record
-        recs.append(("a1", T0 + dt.timedelta(seconds=t), float(t),
-                     3.0 * t if has_d else None, 140 + (t >= 30) * 10))
+        has_d = t < 30 or t == 45  # bin 1: ONE distance record
+        recs.append(
+            (
+                "a1",
+                T0 + dt.timedelta(seconds=t),
+                float(t),
+                3.0 * t if has_d else None,
+                140 + (t >= 30) * 10,
+            )
+        )
     recs.append(("a1", T0 + dt.timedelta(seconds=120), 120.0, 360.0, 150))
     con.executemany(
         "INSERT INTO records (activity_id, timestamp, elapsed_s, "
-        "distance_m, heart_rate) VALUES (?,?,?,?,?)", recs)
+        "distance_m, heart_rate) VALUES (?,?,?,?,?)",
+        recs,
+    )
     con.executemany(
         "INSERT INTO records_enriched (activity_id, timestamp, elapsed_s, "
         "altitude_dem_m, terrain_usable, quality_flags, calc_version) "
         "VALUES (?,?,?,?,TRUE,'',1)",
-        [(r[0], r[1], r[2], DEM_M + r[2] / 10.0) for r in recs])
+        [(r[0], r[1], r[2], DEM_M + r[2] / 10.0) for r in recs],
+    )
     return con
 
 
@@ -54,8 +65,10 @@ class TestNullDistanceBin(unittest.TestCase):
     def setUpClass(cls):
         con = _fixture()
         try:
-            cls.bins = {b["bin"]: b for b in binned_series(
-                con, "a1", include_dynamics=False)["bins"]}
+            cls.bins = {
+                b["bin"]: b
+                for b in binned_series(con, "a1", include_dynamics=False)["bins"]
+            }
         finally:
             con.close()
 
@@ -97,11 +110,10 @@ class TestTheRouteFingerprintIsGatedOnConfig(unittest.TestCase):
 
     def test_not_accepted_withholds_elevation_from_every_bin_and_says_so(self):
         r = self.series(False)
-        self.assertTrue(r["elevation_available"])      # the DEM covers it...
-        self.assertFalse(r["elevation_emitted"])       # ...and it is withheld
+        self.assertTrue(r["elevation_available"])  # the DEM covers it...
+        self.assertFalse(r["elevation_emitted"])  # ...and it is withheld
         self.assertTrue(r["elevation_withheld_reason"])
-        self.assertIn("route_fingerprint_accepted",
-                      r["elevation_withheld_reason"])
+        self.assertIn("route_fingerprint_accepted", r["elevation_withheld_reason"])
         self.assertTrue(all(b["elevation_m"] is None for b in r["bins"]))
         self.assertIs(r["filters"]["route_fingerprint_accepted"], False)
         self.assertIs(r["filters"]["position_emitted"], False)
@@ -119,10 +131,12 @@ class TestTheRouteFingerprintIsGatedOnConfig(unittest.TestCase):
         self.assertIs(r["filters"]["position_emitted"], False)
 
     def test_the_gate_changes_only_elevation(self):
-        strip = lambda bins: [{k: v for k, v in b.items() if k != "elevation_m"}
-                              for b in bins]
-        self.assertEqual(strip(self.series(False)["bins"]),
-                         strip(self.series(True)["bins"]))
+        def strip(bins):
+            return [{k: v for k, v in b.items() if k != "elevation_m"} for b in bins]
+
+        self.assertEqual(
+            strip(self.series(False)["bins"]), strip(self.series(True)["bins"])
+        )
 
 
 if __name__ == "__main__":

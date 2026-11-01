@@ -6,18 +6,18 @@ file's rows rather than duplicating them.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from trail_factors.paths import DB_FILE
-
 import duckdb
+
+from trail_factors.paths import DB_FILE
 
 from . import fit_file as ff
 from . import validate as V
 from .schema import DDL, PIPELINE_VERSION
 
-DB_PATH = DB_FILE          # repo-root anchored (src/trail_factors/paths.py)
+DB_PATH = DB_FILE  # repo-root anchored (src/trail_factors/paths.py)
 
 
 def activity_id_for(file_sha256: str) -> str:
@@ -51,6 +51,7 @@ SPLIT_PARTITION = ("rwd_run", "rwd_walk", "rwd_stand")
 def confirmed_window(digest: str):
     """(valid_start, valid_end) for a file sha, or (None, None)."""
     from trail_factors.ingest.athlete_state import _dt, load_confirmations
+
     for r in load_confirmations():
         if r.get("file_sha256") == digest:
             return _dt(r.get("valid_start_utc")), _dt(r.get("valid_end_utc"))
@@ -148,7 +149,7 @@ def _recompute_clipped_distance(splits: list, records: list) -> None:
 
     def odometer_at(ts):
         best = None
-        for s, d in zip(stamps, dists):
+        for s, d in zip(stamps, dists, strict=False):
             if d is None or s > ts:
                 continue
             best = d
@@ -200,19 +201,28 @@ def _trimmed_totals(records: list, splits: list, start, end) -> dict:
     discarded: they are what the device said about the file, and the file is
     still the file. Nothing may read them as the activity's own.
     """
-    d0 = next((r.get("distance") for r in records
-               if r.get("distance") is not None), None)
-    d1 = next((r.get("distance") for r in reversed(records)
-               if r.get("distance") is not None), None)
+    d0 = next(
+        (r.get("distance") for r in records if r.get("distance") is not None), None
+    )
+    d1 = next(
+        (r.get("distance") for r in reversed(records) if r.get("distance") is not None),
+        None,
+    )
     dist = (d1 - d0) if (d0 is not None and d1 is not None) else None
     # A partition with no timer at all is None, never a measured 0.0; a real
     # zero-length partition sums to a real 0.0.
-    timers = [sp.get("total_timer_time") for sp in splits
-              if sp.get("split_type") in SPLIT_PARTITION
-              and sp.get("total_timer_time") is not None]
+    timers = [
+        sp.get("total_timer_time")
+        for sp in splits
+        if sp.get("split_type") in SPLIT_PARTITION
+        and sp.get("total_timer_time") is not None
+    ]
     timer = float(sum(timers)) if timers else None
-    hrs = [(r.get("heart_rate"), r.get("timestamp")) for r in records
-           if r.get("heart_rate") is not None]
+    hrs = [
+        (r.get("heart_rate"), r.get("timestamp"))
+        for r in records
+        if r.get("heart_rate") is not None
+    ]
     avg_hr = max_hr = None
     if hrs:
         max_hr = max(h for h, _ in hrs)
@@ -225,8 +235,11 @@ def _trimmed_totals(records: list, splits: list, start, end) -> dict:
         avg_hr = (num / den) if den > 0 else sum(h for h, _ in hrs) / len(hrs)
     return {
         "total_distance_m": dist,
-        "duration_s": ((end - start).total_seconds()
-                       if start is not None and end is not None else None),
+        "duration_s": (
+            (end - start).total_seconds()
+            if start is not None and end is not None
+            else None
+        ),
         "timer_time_s": timer,
         "avg_heart_rate": avg_hr,
         "session_max_hr": max_hr,
@@ -254,37 +267,61 @@ def build_rows(path: Path) -> dict:
     # confirmed, not as the file.
     raw_splits = messages.get("split", [])
     win_start, win_end = confirmed_window(digest)
-    window = {"applied": False, "valid_start_utc": None, "valid_end_utc": None,
-              "n_records_file": len(ordered), "n_records_trimmed": len(ordered),
-              "splits": {"dropped": 0, "truncated": 0, "kept": len(raw_splits)}}
+    window = {
+        "applied": False,
+        "valid_start_utc": None,
+        "valid_end_utc": None,
+        "n_records_file": len(ordered),
+        "n_records_trimmed": len(ordered),
+        "splits": {"dropped": 0, "truncated": 0, "kept": len(raw_splits)},
+    }
     trimmed_totals = None
     if win_start is not None or win_end is not None:
-        kept = [r for r in ordered
-                if (win_start is None
-                    or ff.to_utc_naive(r["timestamp"]) >= win_start)
-                and (win_end is None
-                     or ff.to_utc_naive(r["timestamp"]) <= win_end)]
+        kept = [
+            r
+            for r in ordered
+            if (win_start is None or ff.to_utc_naive(r["timestamp"]) >= win_start)
+            and (win_end is None or ff.to_utc_naive(r["timestamp"]) <= win_end)
+        ]
         if not kept:
-            msg = (f"the confirmed window {win_start} .. {win_end} contains "
-                   f"none of this file's {len(ordered)} records. A window that "
-                   f"selects nothing is a wrong window, not an empty activity.")
-            raise V.ValidationError(msg, [V.Finding(
-                "confirmed_window_empty", V.FATAL, V.BRONZE, msg,
-                observed=0.0, expected=float(len(ordered)))])
+            msg = (
+                f"the confirmed window {win_start} .. {win_end} contains "
+                f"none of this file's {len(ordered)} records. A window that "
+                f"selects nothing is a wrong window, not an empty activity."
+            )
+            raise V.ValidationError(
+                msg,
+                [
+                    V.Finding(
+                        "confirmed_window_empty",
+                        V.FATAL,
+                        V.BRONZE,
+                        msg,
+                        observed=0.0,
+                        expected=float(len(ordered)),
+                    )
+                ],
+            )
         raw_splits, split_stats = _clip_splits(raw_splits, win_start, win_end)
         eff_start = win_start or ff.to_utc_naive(ordered[0]["timestamp"])
         eff_end = win_end or ff.to_utc_naive(ordered[-1]["timestamp"])
         _recompute_clipped_distance(raw_splits, kept)
         trimmed_totals = _trimmed_totals(kept, raw_splits, eff_start, eff_end)
-        window = {"applied": True,
-                  "valid_start_utc": eff_start, "valid_end_utc": eff_end,
-                  "n_records_file": len(ordered), "n_records_trimmed": len(kept),
-                  "n_records_dropped": len(ordered) - len(kept),
-                  "splits": split_stats,
-                  "source": "athlete confirmation (window_confirmations)",
-                  "note": ("records, splits and session totals below describe "
-                           "the CONFIRMED window, not the whole file. Garmin's "
-                           "whole-file figures are kept under *_whole_file.")}
+        window = {
+            "applied": True,
+            "valid_start_utc": eff_start,
+            "valid_end_utc": eff_end,
+            "n_records_file": len(ordered),
+            "n_records_trimmed": len(kept),
+            "n_records_dropped": len(ordered) - len(kept),
+            "splits": split_stats,
+            "source": "athlete confirmation (window_confirmations)",
+            "note": (
+                "records, splits and session totals below describe "
+                "the CONFIRMED window, not the whole file. Garmin's "
+                "whole-file figures are kept under *_whole_file."
+            ),
+        }
         ordered = kept
 
     regime, median_gap = ff.detect_sampling_regime(ordered)
@@ -295,8 +332,9 @@ def build_rows(path: Path) -> dict:
     # the window is applied first, validate the TRIMMED activity rather than
     # the file, or an athlete's confirmation can never rescue a file the tail
     # invalidated.
-    findings = (V.bronze_checks(ordered, session, messages)
-                + V.silver_checks(ordered, coverage, session.get("sport")))
+    findings = V.bronze_checks(ordered, session, messages) + V.silver_checks(
+        ordered, coverage, session.get("sport")
+    )
     det_moving_s, det_stopped_s = V.moving_time_s(ordered)
     stops = V.detect_stops(ordered)
 
@@ -342,13 +380,13 @@ def build_rows(path: Path) -> dict:
         activity_start_utc=ff.to_utc_naive(start),
         local_tz_offset=tz_offset,
         file_bytes=path.stat().st_size,
-        ingested_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        ingested_at=datetime.now(UTC).replace(tzinfo=None),
         parse_status="ok",
     )
 
     activity = dict(
         activity_id=aid,
-        run_id=None,                  # assigned at write time by resolve_run()
+        run_id=None,  # assigned at write time by resolve_run()
         file_hash=digest,
         source_file=str(path),
         start_time_utc=ff.to_utc_naive(start),
@@ -395,8 +433,7 @@ def build_rows(path: Path) -> dict:
         activity["timer_time_s_whole_file"] = activity["timer_time_s"]
         activity["duration_s_whole_file"] = activity["duration_s"]
         activity["session_max_hr_whole_file"] = activity["session_max_hr"]
-        for k in ("total_distance_m", "duration_s", "timer_time_s",
-                  "session_max_hr"):
+        for k in ("total_distance_m", "duration_s", "timer_time_s", "session_max_hr"):
             if trimmed_totals.get(k) is not None:
                 activity[k] = trimmed_totals[k]
         activity["avg_heart_rate_trimmed"] = trimmed_totals["avg_heart_rate"]
@@ -440,62 +477,72 @@ def build_rows(path: Path) -> dict:
     records = []
     for r in ordered:
         ts = r["timestamp"]
-        records.append((
-            aid,
-            ff.to_utc_naive(ts),
-            (ts - start).total_seconds() if start else None,
-            ff.semicircles_to_degrees(r.get("position_lat")),
-            ff.semicircles_to_degrees(r.get("position_long")),
-            r.get("enhanced_altitude"),          # prefer enhanced_* (§9)
-            alt_source,                          # provenance, not a join (§14d)
-            # THE INDEPENDENT CHANNEL, paired by FILE ORDER in read_messages
-            # because gps_metadata carries no timestamp (§9). None on the
-            # first record of a file, which has no fix written before it.
-            r.get(ff.GNSS_ALTITUDE_KEY),
-            r.get("distance"),
-            r.get("heart_rate"),
-            r.get("cadence"),
-            r.get("fractional_cadence"),
-            r.get("enhanced_speed"),
-            r.get("gps_accuracy"),
-            r.get("temperature"),
-            # cycle_length16 is deliberately NOT read, and the REASON changed
-            # with the FR265 (§9). On the FR245 it is present in nearly every
-            # record and ZERO in every one. On the FR265 it is present in a
-            # minority of records with many distinct values -- so "constant
-            # zero" is no longer true and is no longer the argument.
-            #
-            # It is still skipped because it is still UNINTERPRETED: it is not
-            # step_length (the FR265 records that separately, and the ratio
-            # between them wanders with zeros mixed in), and it does not match
-            # metres-per-step derived from speed and cadence (around one metre
-            # against a cycle_length16 two orders of magnitude larger). A column
-            # for a number nobody can name is worse than no column.
-            r.get("vertical_oscillation"),
-            r.get("stance_time"),
-            r.get("stance_time_percent"),
-            r.get("vertical_ratio"),
-            r.get("step_length"),
-            r.get("power"),
-        ))
+        records.append(
+            (
+                aid,
+                ff.to_utc_naive(ts),
+                (ts - start).total_seconds() if start else None,
+                ff.semicircles_to_degrees(r.get("position_lat")),
+                ff.semicircles_to_degrees(r.get("position_long")),
+                r.get("enhanced_altitude"),  # prefer enhanced_* (§9)
+                alt_source,  # provenance, not a join (§14d)
+                # THE INDEPENDENT CHANNEL, paired by FILE ORDER in read_messages
+                # because gps_metadata carries no timestamp (§9). None on the
+                # first record of a file, which has no fix written before it.
+                r.get(ff.GNSS_ALTITUDE_KEY),
+                r.get("distance"),
+                r.get("heart_rate"),
+                r.get("cadence"),
+                r.get("fractional_cadence"),
+                r.get("enhanced_speed"),
+                r.get("gps_accuracy"),
+                r.get("temperature"),
+                # cycle_length16 is deliberately NOT read, and the REASON changed
+                # with the FR265 (§9). On the FR245 it is present in nearly every
+                # record and ZERO in every one. On the FR265 it is present in a
+                # minority of records with many distinct values -- so "constant
+                # zero" is no longer true and is no longer the argument.
+                #
+                # It is still skipped because it is still UNINTERPRETED: it is not
+                # step_length (the FR265 records that separately, and the ratio
+                # between them wanders with zeros mixed in), and it does not match
+                # metres-per-step derived from speed and cadence (around one metre
+                # against a cycle_length16 two orders of magnitude larger). A column
+                # for a number nobody can name is worse than no column.
+                r.get("vertical_oscillation"),
+                r.get("stance_time"),
+                r.get("stance_time_percent"),
+                r.get("vertical_ratio"),
+                r.get("step_length"),
+                r.get("power"),
+            )
+        )
 
     # Strava lap messages are corrupt duplicates and carry no usable
     # segmentation (§9) — never ingest them.
     laps = []
     lap_messages = [] if source == "strava_phone" else messages.get("lap", [])
     for i, lp in enumerate(lap_messages):
-        laps.append((
-            # BOTH, and total_timer_time is the one to use. Storing only
-            # total_elapsed_time was the same defect already fixed for splits:
-            # the two differ on any lap containing auto-paused time, and where
-            # that lands on the shortest lap it disagrees with Garmin's
-            # minActivityLapDuration -- an ORACLE field (§4.2).
-            aid, i, ff.to_utc_naive(lp.get("start_time")),
-            lp.get("total_elapsed_time"), lp.get("total_timer_time"),
-            lp.get("total_distance"), lp.get("avg_heart_rate"),
-            lp.get("max_heart_rate"), lp.get("avg_cadence"),
-            lp.get("avg_speed"), lp.get("lap_trigger"),
-        ))
+        laps.append(
+            (
+                # BOTH, and total_timer_time is the one to use. Storing only
+                # total_elapsed_time was the same defect already fixed for splits:
+                # the two differ on any lap containing auto-paused time, and where
+                # that lands on the shortest lap it disagrees with Garmin's
+                # minActivityLapDuration -- an ORACLE field (§4.2).
+                aid,
+                i,
+                ff.to_utc_naive(lp.get("start_time")),
+                lp.get("total_elapsed_time"),
+                lp.get("total_timer_time"),
+                lp.get("total_distance"),
+                lp.get("avg_heart_rate"),
+                lp.get("max_heart_rate"),
+                lp.get("avg_cadence"),
+                lp.get("avg_speed"),
+                lp.get("lap_trigger"),
+            )
+        )
 
     splits = []
     # SORT THE CLIPPED LIST, NEVER RE-READ `messages`. This line used to go
@@ -512,23 +559,42 @@ def build_rows(path: Path) -> dict:
     )
     for i, sp in enumerate(raw_splits):
         st, en = sp.get("start_time"), sp.get("end_time")
-        splits.append((
-            aid, i, sp.get("split_type"), ff.to_utc_naive(st), ff.to_utc_naive(en),
-            # Retained for provenance only. total_timer_time is what analysis
-            # reads -- see the note above and §9.
-            (en - st).total_seconds() if st and en else None,
-            sp.get("total_elapsed_time"), sp.get("total_timer_time"),
-            sp.get("total_distance"), sp.get("avg_speed"), sp.get("max_speed"),
-            sp.get("total_ascent"), sp.get("total_descent"),
-            sp.get("avg_vert_speed"),
-            ff.semicircles_to_degrees(sp.get("start_position_lat")),
-            ff.semicircles_to_degrees(sp.get("start_position_long")),
-        ))
+        splits.append(
+            (
+                aid,
+                i,
+                sp.get("split_type"),
+                ff.to_utc_naive(st),
+                ff.to_utc_naive(en),
+                # Retained for provenance only. total_timer_time is what analysis
+                # reads -- see the note above and §9.
+                (en - st).total_seconds() if st and en else None,
+                sp.get("total_elapsed_time"),
+                sp.get("total_timer_time"),
+                sp.get("total_distance"),
+                sp.get("avg_speed"),
+                sp.get("max_speed"),
+                sp.get("total_ascent"),
+                sp.get("total_descent"),
+                sp.get("avg_vert_speed"),
+                ff.semicircles_to_degrees(sp.get("start_position_lat")),
+                ff.semicircles_to_degrees(sp.get("start_position_long")),
+            )
+        )
 
-    return dict(ledger=ledger, activity=activity, records=records,
-                laps=laps, splits=splits, activity_id=aid, file_sha256=digest,
-                findings=findings, stops=stops, window=window,
-                hr_zones=_hr_zones(aid, messages))
+    return dict(
+        ledger=ledger,
+        activity=activity,
+        records=records,
+        laps=laps,
+        splits=splits,
+        activity_id=aid,
+        file_sha256=digest,
+        findings=findings,
+        stops=stops,
+        window=window,
+        hr_zones=_hr_zones(aid, messages),
+    )
 
 
 # GARMIN'S OWN POST-RUN SELF-EVALUATION, first seen on the FR265.
@@ -544,33 +610,37 @@ def build_rows(path: Path) -> dict:
 # same 10x scale, and the scale is documented as 1-10). THE FEEL DIRECTION IS
 # NOT VERIFIED: 0 is taken as the weakest end and 100 the strongest, which is
 # the order Garmin's UI presents, and it was verified on a single observation
-# from the middle of the scale -- which is consistent with either direction. The scale string
+# from the middle of the scale -- which is consistent with either direction. The scale
+# string
 # says so, and a run with a non-middle answer settles it.
-SELFEVAL_SCALE = ("garmin-connect-v1: rpe = workout_rpe/10 (1-10); "
-                  "feel = workout_feel/25 + 1 (1-5, 1 weakest .. 5 strongest, "
-                  "DIRECTION UNVERIFIED on one middle-valued observation)")
+SELFEVAL_SCALE = (
+    "garmin-connect-v1: rpe = workout_rpe/10 (1-10); "
+    "feel = workout_feel/25 + 1 (1-5, 1 weakest .. 5 strongest, "
+    "DIRECTION UNVERIFIED on one middle-valued observation)"
+)
 
 
 def _self_evaluation(session: dict) -> dict:
     """Garmin's immediate single-channel rating, decoded with its scale.
 
     ONE channel, asked seconds after the activity. It is the perceived-effort
-    input to session load (src/trail_factors/analysis/session_load.py: garmin_rpe x timer
+    input to session load (src/trail_factors/analysis/session_load.py: garmin_rpe x
+    timer
     minutes). An activity the athlete did not rate stores NULL -- absent, never
     a default rating, because a default would price an unrated session.
     """
     rpe = session.get("workout_rpe")
     feel = session.get("workout_feel")
     if rpe is None and feel is None:
-        return {"garmin_rpe": None, "garmin_feel": None,
-                "garmin_selfeval_scale": None}
+        return {"garmin_rpe": None, "garmin_feel": None, "garmin_selfeval_scale": None}
     return {
         "garmin_rpe": None if rpe is None else rpe / 10.0,
         # Integer division against the 25-point spacing. A value off the grid
         # would round rather than raise, so it is guarded: anything not on the
         # documented steps is stored as NULL with the raw scale recorded.
-        "garmin_feel": (None if feel is None or feel % 25 != 0
-                        else int(feel // 25) + 1),
+        "garmin_feel": (
+            None if feel is None or feel % 25 != 0 else int(feel // 25) + 1
+        ),
         "garmin_selfeval_scale": SELFEVAL_SCALE,
     }
 
@@ -621,8 +691,9 @@ def _hr_zones(aid: str, messages: dict) -> list[tuple]:
         lo = highs[z - 1]
         hi = (highs[z] - 1) if z < 5 else highs[z]
         t = times[z] if z < len(times) else None
-        out.append((aid, z, lo, hi, calc,
-                    float(t) if t is not None else None, "fit_session"))
+        out.append(
+            (aid, z, lo, hi, calc, float(t) if t is not None else None, "fit_session")
+        )
     return out
 
 
@@ -665,16 +736,20 @@ def ingest(path: Path, db_path: Path | None = None) -> dict:
         con.execute(DDL)
         # Persist findings FIRST and commit, so a rejected file leaves a
         # queryable trace even though it gets no activity row (§15.4).
-        V.persist(con, rows["file_sha256"],
-                  None if fatal else rows["activity_id"], None, findings)
+        V.persist(
+            con,
+            rows["file_sha256"],
+            None if fatal else rows["activity_id"],
+            None,
+            findings,
+        )
         if fatal:
             raise V.ValidationError("; ".join(f.message for f in fatal), fatal)
 
         con.execute("BEGIN")
         aid, digest = rows["activity_id"], rows["file_sha256"]
         # Idempotent re-run: clear this file's rows first.
-        for table in ("records", "laps", "splits", "stops",
-                      "activity_hr_zones"):
+        for table in ("records", "laps", "splits", "stops", "activity_hr_zones"):
             con.execute(f"DELETE FROM {table} WHERE activity_id = ?", [aid])
         con.execute("DELETE FROM activities WHERE activity_id = ?", [aid])
         con.execute("DELETE FROM ingest_ledger WHERE file_sha256 = ?", [digest])
@@ -709,13 +784,25 @@ def ingest(path: Path, db_path: Path | None = None) -> dict:
         for i, s in enumerate(rows["stops"]):
             con.execute(
                 "INSERT INTO stops VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                [aid, i, ff.to_utc_naive(s["start_utc"]), ff.to_utc_naive(s["end_utc"]),
-                 s["duration_s"], s["position"], s["hr_at_stop"], s["hr_at_resume"],
-                 s["hr_min"], s["hr_drop"], s["lat"], s["lon"]])
+                [
+                    aid,
+                    i,
+                    ff.to_utc_naive(s["start_utc"]),
+                    ff.to_utc_naive(s["end_utc"]),
+                    s["duration_s"],
+                    s["position"],
+                    s["hr_at_stop"],
+                    s["hr_at_resume"],
+                    s["hr_min"],
+                    s["hr_drop"],
+                    s["lat"],
+                    s["lon"],
+                ],
+            )
         if rows["hr_zones"]:
             con.executemany(
-                "INSERT INTO activity_hr_zones VALUES (?,?,?,?,?,?,?)",
-                rows["hr_zones"])
+                "INSERT INTO activity_hr_zones VALUES (?,?,?,?,?,?,?)", rows["hr_zones"]
+            )
         for table in ("records", "laps", "splits"):
             batch = rows[table]
             if not batch:
@@ -775,13 +862,15 @@ def find_matching_run(con, start, duration_s, sport, source) -> str | None:
     """).fetchall()
     grouped: dict = {}
     for run_id, r_start, r_sport, m_source, m_start, m_dur in rows:
-        g = grouped.setdefault(run_id, {"start": r_start, "sport": r_sport, "members": []})
+        g = grouped.setdefault(
+            run_id, {"start": r_start, "sport": r_sport, "members": []}
+        )
         g["members"].append((m_source, m_start, m_dur))
     for run_id, g in grouped.items():
         if g["sport"] != sport:
             continue
         if any(m[0] == source for m in g["members"]):
-            continue                                   # one file per source
+            continue  # one file per source
         if abs((g["start"] - start).total_seconds()) > PAIR_START_TOLERANCE_S:
             continue
         overlaps = any(
@@ -808,7 +897,8 @@ def allocate_run_id(con, start) -> str:
     candidate, n = base, 1
     while True:
         exists = con.execute(
-            "SELECT 1 FROM runs WHERE run_id = ?", [candidate]).fetchone()
+            "SELECT 1 FROM runs WHERE run_id = ?", [candidate]
+        ).fetchone()
         members = con.execute(
             "SELECT count(*) FROM activities WHERE run_id = ?", [candidate]
         ).fetchone()[0]
@@ -828,9 +918,11 @@ def refresh_run_start(con, run_id: str) -> None:
         "SELECT min(start_time_utc) FROM activities WHERE run_id = ?", [run_id]
     ).fetchone()
     if row is None or row[0] is None:
-        return                                   # no members yet; leave as-is
+        return  # no members yet; leave as-is
     earliest = row[0]
-    tz = con.execute("SELECT local_tz FROM runs WHERE run_id = ?", [run_id]).fetchone()[0]
+    tz = con.execute("SELECT local_tz FROM runs WHERE run_id = ?", [run_id]).fetchone()[
+        0
+    ]
     con.execute(
         "UPDATE runs SET start_time_utc = ?, local_start_display = ? WHERE run_id = ?",
         [earliest, local_start_display(earliest, tz), run_id],
@@ -848,10 +940,16 @@ def resolve_run(con, activity) -> str:
     run_id = allocate_run_id(con, start)
     exists = con.execute("SELECT 1 FROM runs WHERE run_id = ?", [run_id]).fetchone()
     if not exists:
-        con.execute("INSERT INTO runs VALUES (?,?,?,?,?,?,?)", [
-            run_id, start,
-            local_start_display(start, activity["local_tz"]),
-            activity["local_tz"], activity["sport"], activity["sub_sport"],
-            datetime.now(timezone.utc).replace(tzinfo=None),
-        ])
+        con.execute(
+            "INSERT INTO runs VALUES (?,?,?,?,?,?,?)",
+            [
+                run_id,
+                start,
+                local_start_display(start, activity["local_tz"]),
+                activity["local_tz"],
+                activity["sport"],
+                activity["sub_sport"],
+                datetime.now(UTC).replace(tzinfo=None),
+            ],
+        )
     return run_id

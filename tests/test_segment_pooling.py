@@ -48,21 +48,28 @@ MIN_LENGTH_FOR_STEEP_PREMISE_M = 100.0
 
 
 def _ratios(con):
-    return {r[0]: (r[1], r[2]) for r in con.execute("""
+    return {
+        r[0]: (r[1], r[2])
+        for r in con.execute("""
         SELECT segment_id, count(*),
                max(abs(mean_grade_pct)) / nullif(min(abs(mean_grade_pct)), 0)
         FROM segment_efforts
         GROUP BY 1 HAVING count(*) >= 2 AND min(abs(mean_grade_pct)) > 0
-    """).fetchall()}
+    """).fetchall()
+    }
 
 
 def _pooled(ratios):
-    return {s for s, (n, r) in ratios.items()
-            if r is not None and r > MAX_SEGMENT_GRADE_RATIO}
+    return {
+        s
+        for s, (n, r) in ratios.items()
+        if r is not None and r > MAX_SEGMENT_GRADE_RATIO
+    }
 
 
 def _history(con, segment_id):
     from trail_factors.analysis.over import segment_history
+
     with use_config():
         return segment_history(con, segment_id)
 
@@ -72,16 +79,24 @@ class TestTheRatioCheckCanFire(unittest.TestCase):
 
     def setUp(self):
         self.con = duckdb.connect(":memory:")
-        self.con.execute("CREATE TABLE segment_efforts "
-                         "(segment_id VARCHAR, mean_grade_pct DOUBLE)")
-        self.con.executemany("INSERT INTO segment_efforts VALUES (?, ?)", [
-            # one slope, efforts at similar grades
-            ("seg000000001", 6.0), ("seg000000001", -6.5), ("seg000000001", 7.0),
-            # a short pitch pooled with plateau-absorbed long members
-            ("seg000000002", -7.5), ("seg000000002", 1.2), ("seg000000002", -8.0),
-            # a single effort has no spread to measure
-            ("seg000000003", 4.0),
-        ])
+        self.con.execute(
+            "CREATE TABLE segment_efforts (segment_id VARCHAR, mean_grade_pct DOUBLE)"
+        )
+        self.con.executemany(
+            "INSERT INTO segment_efforts VALUES (?, ?)",
+            [
+                # one slope, efforts at similar grades
+                ("seg000000001", 6.0),
+                ("seg000000001", -6.5),
+                ("seg000000001", 7.0),
+                # a short pitch pooled with plateau-absorbed long members
+                ("seg000000002", -7.5),
+                ("seg000000002", 1.2),
+                ("seg000000002", -8.0),
+                # a single effort has no spread to measure
+                ("seg000000003", 4.0),
+            ],
+        )
 
     def tearDown(self):
         self.con.close()
@@ -109,13 +124,15 @@ class TestPooledSegmentsShowTheKnownSignature(CorpusTestCase):
         super().setUpClass()
         cls.pooled = _pooled(_ratios(cls.con))
         if not cls.pooled:
-            raise unittest.SkipTest("this corpus has no segment pooling "
-                                    "across grades")
+            raise unittest.SkipTest("this corpus has no segment pooling across grades")
 
     def test_the_shallowest_member_is_mostly_not_steep(self):
         for sid in sorted(self.pooled):
-            efforts = [e for e in _history(self.con, sid)["efforts"]
-                       if e["len_gentle_m"] is not None and e["length_m"]]
+            efforts = [
+                e
+                for e in _history(self.con, sid)["efforts"]
+                if e["len_gentle_m"] is not None and e["length_m"]
+            ]
             if not efforts:
                 continue
             shallow = min(efforts, key=lambda e: abs(e["mean_grade_pct"]))
@@ -136,20 +153,32 @@ class TestEffortProfileMakesPoolingVisible(CorpusTestCase):
     def setUpClass(cls):
         super().setUpClass()
         candidates = sorted(
-            ((r, s) for s, (n, r) in _ratios(cls.con).items()
-             if r is not None and r > MAX_SEGMENT_GRADE_RATIO
-             and n >= MIN_EFFORTS_FOR_SUBJECT), reverse=True)
+            (
+                (r, s)
+                for s, (n, r) in _ratios(cls.con).items()
+                if r is not None
+                and r > MAX_SEGMENT_GRADE_RATIO
+                and n >= MIN_EFFORTS_FOR_SUBJECT
+            ),
+            reverse=True,
+        )
         if not candidates:
             raise unittest.SkipTest(
                 f"this corpus has no pooled segment with "
-                f"{MIN_EFFORTS_FOR_SUBJECT}+ efforts")
+                f"{MIN_EFFORTS_FOR_SUBJECT}+ efforts"
+            )
         cls.hist = _history(cls.con, candidates[0][1])
 
     def test_every_effort_carries_its_grade_composition(self):
         for e in self.hist["efforts"]:
-            for k in ("len_steep_m", "len_moderate_m", "len_gentle_m",
-                      "len_flat_m", "steep_mean_grade_pct",
-                      "tail_after_last_steep_m"):
+            for k in (
+                "len_steep_m",
+                "len_moderate_m",
+                "len_gentle_m",
+                "len_flat_m",
+                "steep_mean_grade_pct",
+                "tail_after_last_steep_m",
+            ):
                 self.assertIn(k, e)
 
     def test_the_bands_sum_to_the_covered_length(self):
@@ -160,11 +189,18 @@ class TestEffortProfileMakesPoolingVisible(CorpusTestCase):
             if e["len_steep_m"] is None or e["grade_coverage_fraction"] is None:
                 continue
             n += 1
-            total = (e["len_steep_m"] + e["len_moderate_m"]
-                     + e["len_gentle_m"] + e["len_flat_m"])
+            total = (
+                e["len_steep_m"]
+                + e["len_moderate_m"]
+                + e["len_gentle_m"]
+                + e["len_flat_m"]
+            )
             self.assertAlmostEqual(
-                total, e["length_m"] * e["grade_coverage_fraction"],
-                delta=max(1.0, 0.02 * e["length_m"]), msg=e["date"])
+                total,
+                e["length_m"] * e["grade_coverage_fraction"],
+                delta=max(1.0, 0.02 * e["length_m"]),
+                msg=e["date"],
+            )
         self.assertGreater(n, 0)
 
     def test_the_steep_part_is_steeper_than_the_stored_average(self):
@@ -172,14 +208,18 @@ class TestEffortProfileMakesPoolingVisible(CorpusTestCase):
         stored mean understates the pitch, and the reader must be able to see
         by how much. Efforts shorter than MIN_LENGTH_FOR_STEEP_PREMISE_M are
         left out: there the two estimators can disagree by construction."""
-        gaps = [abs(e["steep_mean_grade_pct"]) - abs(e["mean_grade_pct"])
-                for e in self.hist["efforts"]
-                if e["steep_mean_grade_pct"] is not None
-                and e["length_m"] is not None
-                and e["length_m"] >= MIN_LENGTH_FOR_STEEP_PREMISE_M]
+        gaps = [
+            abs(e["steep_mean_grade_pct"]) - abs(e["mean_grade_pct"])
+            for e in self.hist["efforts"]
+            if e["steep_mean_grade_pct"] is not None
+            and e["length_m"] is not None
+            and e["length_m"] >= MIN_LENGTH_FOR_STEEP_PREMISE_M
+        ]
         if not gaps:
-            self.skipTest(f"no effort of {MIN_LENGTH_FOR_STEEP_PREMISE_M:.0f} m "
-                          f"or more on this segment carries a steep mean")
+            self.skipTest(
+                f"no effort of {MIN_LENGTH_FOR_STEEP_PREMISE_M:.0f} m "
+                f"or more on this segment carries a steep mean"
+            )
         for g in gaps:
             self.assertGreater(g, -0.5)
         # PRESENCE: on a pooled segment the understatement must be large, or
@@ -189,17 +229,24 @@ class TestEffortProfileMakesPoolingVisible(CorpusTestCase):
     def test_the_shallowest_effort_is_mostly_not_steep(self):
         """The diagnosis: the shallow members are a short pitch plus a
         plateau, so most of their length is gentle or flat."""
-        shallow = min((e for e in self.hist["efforts"]
-                       if e["len_gentle_m"] is not None and e["length_m"]),
-                      key=lambda e: abs(e["mean_grade_pct"]))
+        shallow = min(
+            (
+                e
+                for e in self.hist["efforts"]
+                if e["len_gentle_m"] is not None and e["length_m"]
+            ),
+            key=lambda e: abs(e["mean_grade_pct"]),
+        )
         gentle = shallow["len_gentle_m"] + shallow["len_flat_m"]
         self.assertGreater(gentle / shallow["length_m"], 0.5)
 
     def test_a_short_effort_is_mostly_steep(self):
         """The positive twin: the short members are real pitches, so the
         measurement must distinguish them rather than calling everything flat."""
-        shortest = min((e for e in self.hist["efforts"] if e["len_steep_m"] is not None),
-                       key=lambda e: e["length_m"])
+        shortest = min(
+            (e for e in self.hist["efforts"] if e["len_steep_m"] is not None),
+            key=lambda e: e["length_m"],
+        )
         steep = shortest["len_steep_m"] + shortest["len_moderate_m"]
         self.assertGreater(steep / shortest["length_m"], 0.5)
 

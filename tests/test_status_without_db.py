@@ -39,9 +39,10 @@ class TestNoDatabaseMode(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.db = Path(self.tmp.name) / "locked.duckdb"
         duckdb.connect(str(self.db)).close()
-        self.patches = [mock.patch.object(M, "DB_FILE", self.db),
-                        mock.patch.object(jobs, "JOBS_FILE",
-                                          Path(self.tmp.name) / "jobs.json")]
+        self.patches = [
+            mock.patch.object(M, "DB_FILE", self.db),
+            mock.patch.object(jobs, "JOBS_FILE", Path(self.tmp.name) / "jobs.json"),
+        ]
         for p in self.patches:
             p.start()
         self.holder = None
@@ -56,8 +57,11 @@ class TestNoDatabaseMode(unittest.TestCase):
         self.tmp.cleanup()
 
     def hold_write_lock(self):
-        self.holder = subprocess.Popen([sys.executable, "-c", HOLD, str(self.db)],
-                                       stdout=subprocess.PIPE, text=True)
+        self.holder = subprocess.Popen(
+            [sys.executable, "-c", HOLD, str(self.db)],
+            stdout=subprocess.PIPE,
+            text=True,
+        )
         self.assertEqual(self.holder.stdout.readline().strip(), "held")
 
     def test_the_lock_is_real(self):
@@ -71,16 +75,18 @@ class TestNoDatabaseMode(unittest.TestCase):
         self.hold_write_lock()
         r = json.loads(M.sync_status())
         self.assertEqual(r["outcome"], M.RESULT, r)
-        self.assertEqual(r["corpus_fingerprint"],
-                         {"status": "not_taken",
-                          "reason": "job-state read; no corpus access"})
+        self.assertEqual(
+            r["corpus_fingerprint"],
+            {"status": "not_taken", "reason": "job-state read; no corpus access"},
+        )
 
     def test_ping_is_ok_while_write_locked_and_says_so(self):
         self.hold_write_lock()
         t0 = time.monotonic()
         r = json.loads(M.ping())
-        self.assertLess(time.monotonic() - t0, M.CONNECT_TIMEOUT_S,
-                        "ping must not wait on the lock")
+        self.assertLess(
+            time.monotonic() - t0, M.CONNECT_TIMEOUT_S, "ping must not wait on the lock"
+        )
         self.assertEqual(r["outcome"], M.RESULT, r)
         db = r["payload"]["database"]
         self.assertIs(db["write_locked"], True, db)
@@ -96,29 +102,47 @@ class TestNoDatabaseMode(unittest.TestCase):
         """A read-only handle elsewhere does not stop a read; reporting it as
         locked would send a chat to wait for nothing."""
         self.holder = subprocess.Popen(
-            [sys.executable, "-c",
-             HOLD.replace("duckdb.connect(sys.argv[1])",
-                          "duckdb.connect(sys.argv[1], read_only=True)"),
-             str(self.db)], stdout=subprocess.PIPE, text=True)
+            [
+                sys.executable,
+                "-c",
+                HOLD.replace(
+                    "duckdb.connect(sys.argv[1])",
+                    "duckdb.connect(sys.argv[1], read_only=True)",
+                ),
+                str(self.db),
+            ],
+            stdout=subprocess.PIPE,
+            text=True,
+        )
         self.assertEqual(self.holder.stdout.readline().strip(), "held")
-        self.assertIs(json.loads(M.ping())["payload"]["database"]["write_locked"],
-                      False)
+        self.assertIs(
+            json.loads(M.ping())["payload"]["database"]["write_locked"], False
+        )
 
     def test_ping_carries_server_time_and_the_pipeline_digest(self):
         from trail_factors.analysis import versions
+
         p = json.loads(M.ping())["payload"]
-        self.assertEqual(p["pipeline"], {"pipeline_version": versions.PIPELINE_VERSION,
-                                         "digest": versions.digest()})
+        self.assertEqual(
+            p["pipeline"],
+            {
+                "pipeline_version": versions.PIPELINE_VERSION,
+                "digest": versions.digest(),
+            },
+        )
         self.assertIn("T", p["server_time_utc"])
 
     def test_neither_tool_opens_a_connection(self):
-        with mock.patch.object(M, "_connect",
-                               side_effect=AssertionError("opened the database")), \
-             mock.patch.object(duckdb, "connect",
-                               side_effect=AssertionError("opened the database")):
+        with (
+            mock.patch.object(
+                M, "_connect", side_effect=AssertionError("opened the database")
+            ),
+            mock.patch.object(
+                duckdb, "connect", side_effect=AssertionError("opened the database")
+            ),
+        ):
             for tool in (M.sync_status, M.ping):
-                self.assertEqual(json.loads(tool())["outcome"], M.RESULT,
-                                 tool.__name__)
+                self.assertEqual(json.loads(tool())["outcome"], M.RESULT, tool.__name__)
 
 
 if __name__ == "__main__":

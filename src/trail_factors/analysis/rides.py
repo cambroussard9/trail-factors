@@ -38,14 +38,20 @@ CALC_VERSION = 1
 def _summarise(bins: list) -> dict:
     hrs = [b["avg_hr"] for b in bins if b["avg_hr"] is not None]
     if not hrs:
-        return {"mean_hr": None, "min_hr": None, "max_hr": None,
-                "hr_end_minus_start": None, "n_bins_with_hr": 0}
+        return {
+            "mean_hr": None,
+            "min_hr": None,
+            "max_hr": None,
+            "hr_end_minus_start": None,
+            "n_bins_with_hr": 0,
+        }
     return {
         # The mean of BIN means, which are themselves time-weighted within the
         # bin. Bins are equal-width, so this is the time-weighted mean over the
         # block except at its partly-covered edges.
         "mean_hr": sum(hrs) / len(hrs),
-        "min_hr": min(hrs), "max_hr": max(hrs),
+        "min_hr": min(hrs),
+        "max_hr": max(hrs),
         # END MINUS START, the quantity asked for: drift across the block.
         # NOT a fitted slope -- two points over a handful of bins is a
         # difference, and calling it a rate would invite reading it as one.
@@ -57,9 +63,12 @@ def _summarise(bins: list) -> dict:
 def ride_blocks(con, activity_id: str) -> dict:
     """The stored blocks for one ride, each with its HR summary."""
     stored = load_ride_blocks()
-    act = con.execute("""
+    act = con.execute(
+        """
         SELECT run_id, sport, sub_sport, timer_time_s
-        FROM activities WHERE activity_id = ?""", [activity_id]).fetchone()
+        FROM activities WHERE activity_id = ?""",
+        [activity_id],
+    ).fetchone()
     if act is None:
         raise LookupError(f"no activity {activity_id}")
     run_id, sport, sub_sport, timer = act
@@ -68,61 +77,80 @@ def ride_blocks(con, activity_id: str) -> dict:
         # UNAVAILABLE WITH A REASON, never an empty list that reads as zero
         # blocks. Nothing has been logged is a different fact from a ride with
         # no structure in it.
-        return {"status": "unavailable", "run_id": run_id,
-                "activity_id": activity_id, "blocks": None,
-                "reason": (f"no ride log has been saved for {run_id}. The "
-                           f"watch records HR only for these -- no cadence, no "
-                           f"resistance, and a constant-zero odometer -- so "
-                           f"the structure has to be supplied by the athlete "
-                           f"through save_ride_blocks. This is an absent "
-                           f"annotation, NOT a ride without blocks."),
-                "filters": _filters(sport, sub_sport, timer)}
+        return {
+            "status": "unavailable",
+            "run_id": run_id,
+            "activity_id": activity_id,
+            "blocks": None,
+            "reason": (
+                f"no ride log has been saved for {run_id}. The "
+                f"watch records HR only for these -- no cadence, no "
+                f"resistance, and a constant-zero odometer -- so "
+                f"the structure has to be supplied by the athlete "
+                f"through save_ride_blocks. This is an absent "
+                f"annotation, NOT a ride without blocks."
+            ),
+            "filters": _filters(sport, sub_sport, timer),
+        }
 
     series = binned_series(con, activity_id)
     out = []
     for blk in entry["blocks"]:
         lo, hi = blk["start_min"] * 60.0, blk["end_min"] * 60.0
-        mine = [b for b in series["bins"]
-                if b["elapsed_start_s"] >= lo - 1e-9
-                and b["elapsed_start_s"] < hi - 1e-9]
-        inside = [e for e in entry.get("events", [])
-                  if e.get("minute") is not None
-                  and blk["start_min"] <= e["minute"] < blk["end_min"]]
-        out.append({
-            **blk,
-            "duration_min": blk["end_min"] - blk["start_min"],
-            **_summarise(mine),
-            "n_bins": len(mine),
-            # THE CONTAMINATION FLAG. See the module docstring.
-            "contains_event": bool(inside),
-            "events": inside,
-            "hr_provenance": "records.heart_rate via session_series bins "
-                             "(measured); resistance and rpm are recalled",
-        })
+        mine = [
+            b
+            for b in series["bins"]
+            if b["elapsed_start_s"] >= lo - 1e-9 and b["elapsed_start_s"] < hi - 1e-9
+        ]
+        inside = [
+            e
+            for e in entry.get("events", [])
+            if e.get("minute") is not None
+            and blk["start_min"] <= e["minute"] < blk["end_min"]
+        ]
+        out.append(
+            {
+                **blk,
+                "duration_min": blk["end_min"] - blk["start_min"],
+                **_summarise(mine),
+                "n_bins": len(mine),
+                # THE CONTAMINATION FLAG. See the module docstring.
+                "contains_event": bool(inside),
+                "events": inside,
+                "hr_provenance": "records.heart_rate via session_series bins "
+                "(measured); resistance and rpm are recalled",
+            }
+        )
     mt = entry.get("machine_totals") or {}
     rec = reconcile_rpm(entry["blocks"], mt.get("avg_rpm"))
     idx = load_index(entry["blocks"], rec)
-    return {"status": "ok", "run_id": run_id, "activity_id": activity_id,
-            "blocks": out, "n_blocks": len(out),
-            # §18.2. Both are DERIVED and both say so; the matched-(resistance,
-            # rpm) HR series above needs neither and stays the primary read.
-            "rpm_reconciliation": rec,
-            "load_index": idx,
-            "raw_text": entry["raw_text"],
-            "events": entry.get("events", []),
-            "machine_totals": entry.get("machine_totals"),
-            "provenance": entry["provenance"],
-            "resistance_scale": entry.get("resistance_scale"),
-            "revision": entry.get("revision", 0),
-            "filters": _filters(sport, sub_sport, timer)}
+    return {
+        "status": "ok",
+        "run_id": run_id,
+        "activity_id": activity_id,
+        "blocks": out,
+        "n_blocks": len(out),
+        # §18.2. Both are DERIVED and both say so; the matched-(resistance,
+        # rpm) HR series above needs neither and stays the primary read.
+        "rpm_reconciliation": rec,
+        "load_index": idx,
+        "raw_text": entry["raw_text"],
+        "events": entry.get("events", []),
+        "machine_totals": entry.get("machine_totals"),
+        "provenance": entry["provenance"],
+        "resistance_scale": entry.get("resistance_scale"),
+        "revision": entry.get("revision", 0),
+        "filters": _filters(sport, sub_sport, timer),
+    }
 
 
 def _rpm_key(rpm):
     return None if rpm is None else (rpm[0], rpm[1])
 
 
-def resistance_history(con, resistance: float | None = None,
-                       match_rpm: bool = True) -> dict:
+def resistance_history(
+    con, resistance: float | None = None, match_rpm: bool = True
+) -> dict:
     """HR at matched resistance over CALENDAR TIME — the longitudinal cut.
 
     Grouped by (resistance, rpm range) where both are present; blocks with no
@@ -132,12 +160,13 @@ def resistance_history(con, resistance: float | None = None,
     stored = load_ride_blocks()
     groups: dict = {}
     n_sessions = 0
-    for key, entry in sorted(stored.items()):
+    for _key, entry in sorted(stored.items()):
         aid = entry.get("activity_id")
         row = con.execute(
             "SELECT activity_id, start_time_utc FROM activities "
             "WHERE run_id = ? OR activity_id = ? LIMIT 1",
-            [entry.get("run_id"), aid]).fetchone()
+            [entry.get("run_id"), aid],
+        ).fetchone()
         if row is None:
             continue
         n_sessions += 1
@@ -148,62 +177,80 @@ def resistance_history(con, resistance: float | None = None,
             if resistance is not None and abs(blk["resistance"] - resistance) > 1e-9:
                 continue
             gk = (blk["resistance"], _rpm_key(blk["rpm"]) if match_rpm else None)
-            g = groups.setdefault(gk, {"resistance": blk["resistance"],
-                                       "rpm": blk["rpm"] if match_rpm else None,
-                                       "blocks": []})
-            g["blocks"].append({
-                "run_id": detail["run_id"], "date": str(row[1])[:10],
-                "start_min": blk["start_min"], "end_min": blk["end_min"],
-                "duration_min": blk["duration_min"],
-                "mean_hr": blk["mean_hr"],
-                "hr_end_minus_start": blk["hr_end_minus_start"],
-                "contains_event": blk["contains_event"],
-            })
+            g = groups.setdefault(
+                gk,
+                {
+                    "resistance": blk["resistance"],
+                    "rpm": blk["rpm"] if match_rpm else None,
+                    "blocks": [],
+                },
+            )
+            g["blocks"].append(
+                {
+                    "run_id": detail["run_id"],
+                    "date": str(row[1])[:10],
+                    "start_min": blk["start_min"],
+                    "end_min": blk["end_min"],
+                    "duration_min": blk["duration_min"],
+                    "mean_hr": blk["mean_hr"],
+                    "hr_end_minus_start": blk["hr_end_minus_start"],
+                    "contains_event": blk["contains_event"],
+                }
+            )
 
     out = []
-    for gk, g in sorted(groups.items(), key=lambda kv: (kv[1]["resistance"],)):
+    for _gk, g in sorted(groups.items(), key=lambda kv: (kv[1]["resistance"],)):
         pts = sorted(g["blocks"], key=lambda b: b["date"])
         n = len(pts)
-        out.append({
-            "resistance": g["resistance"], "rpm": g["rpm"],
-            "n_blocks": n,
-            "n_sessions": len({p["run_id"] for p in pts}),
-            "n_contaminated": sum(1 for p in pts if p["contains_event"]),
-            "series": pts,
-            # ONE BLOCK IS A READING, NOT A TREND, AND SAYS SO.
-            "trend": None,
-            "trend_status": (
-                "insufficient" if n < MIN_BLOCKS_FOR_TREND else "available"),
-            "trend_reason": (
-                f"{n} block(s) at this resistance. A trend needs at least "
-                f"{MIN_BLOCKS_FOR_TREND}, and the unit is the BLOCK, not the "
-                f"HR record -- a single block's several hundred samples are "
-                f"one observation of one exposure, not several hundred."
-                if n < MIN_BLOCKS_FOR_TREND else
-                f"{n} blocks across {len({p['run_id'] for p in pts})} "
-                f"sessions; read the series, the slope is not fitted here"),
-        })
-    return {"groups": out, "n_groups": len(out), "n_sessions": n_sessions,
-            "matched_on": ["resistance", "rpm"] if match_rpm else ["resistance"],
-            "filters": {
-                "effective_n": "BLOCKS, never HR records",
-                "effective_n_note":
-                    "a block is one exposure to one resistance; its HR samples "
-                    "are one observation of it. Quoting a per-record n here "
-                    "would be the pseudo-replication CLAUDE.md records twice "
-                    "(§6.9: one bin's pairs from two passages; §2.6: a per-record "
-                    "SE over an order of magnitude too small).",
-                "rpm_matching": "exact stated range; a block with no rpm is "
-                                "grouped separately, never merged with one "
-                                "that has a range",
-                "hr_source": "records.heart_rate via session_series bins",
-                "resistance_source": "athlete-recalled, not measured",
-                "contaminated_blocks_included": True,
-                "contaminated_note": "blocks containing an off-bike event are "
-                                     "INCLUDED and flagged; their HR carries "
-                                     "recovery, not work at that resistance",
-                "grain": "block",
-            }}
+        out.append(
+            {
+                "resistance": g["resistance"],
+                "rpm": g["rpm"],
+                "n_blocks": n,
+                "n_sessions": len({p["run_id"] for p in pts}),
+                "n_contaminated": sum(1 for p in pts if p["contains_event"]),
+                "series": pts,
+                # ONE BLOCK IS A READING, NOT A TREND, AND SAYS SO.
+                "trend": None,
+                "trend_status": (
+                    "insufficient" if n < MIN_BLOCKS_FOR_TREND else "available"
+                ),
+                "trend_reason": (
+                    f"{n} block(s) at this resistance. A trend needs at least "
+                    f"{MIN_BLOCKS_FOR_TREND}, and the unit is the BLOCK, not the "
+                    f"HR record -- a single block's several hundred samples are "
+                    f"one observation of one exposure, not several hundred."
+                    if n < MIN_BLOCKS_FOR_TREND
+                    else f"{n} blocks across {len({p['run_id'] for p in pts})} "
+                    f"sessions; read the series, the slope is not fitted here"
+                ),
+            }
+        )
+    return {
+        "groups": out,
+        "n_groups": len(out),
+        "n_sessions": n_sessions,
+        "matched_on": ["resistance", "rpm"] if match_rpm else ["resistance"],
+        "filters": {
+            "effective_n": "BLOCKS, never HR records",
+            "effective_n_note": "a block is one exposure to one resistance; its HR "
+            "samples "
+            "are one observation of it. Quoting a per-record n here "
+            "would be the pseudo-replication CLAUDE.md records twice "
+            "(§6.9: one bin's pairs from two passages; §2.6: a per-record "
+            "SE over an order of magnitude too small).",
+            "rpm_matching": "exact stated range; a block with no rpm is "
+            "grouped separately, never merged with one "
+            "that has a range",
+            "hr_source": "records.heart_rate via session_series bins",
+            "resistance_source": "athlete-recalled, not measured",
+            "contaminated_blocks_included": True,
+            "contaminated_note": "blocks containing an off-bike event are "
+            "INCLUDED and flagged; their HR carries "
+            "recovery, not work at that resistance",
+            "grain": "block",
+        },
+    }
 
 
 MIN_BLOCKS_FOR_TREND = 3
@@ -211,19 +258,20 @@ MIN_BLOCKS_FOR_TREND = 3
 
 def _filters(sport, sub_sport, timer) -> dict:
     return {
-        "sport": sport, "sub_sport": sub_sport,
+        "sport": sport,
+        "sub_sport": sub_sport,
         "activity_timer_min": (timer if timer is not None else 0) / 60.0,
         "hr_source": "records.heart_rate via session_series 30 s bins",
         "watch_records": "HEART RATE ONLY. Measured over the indoor_cycling "
-                         "activities of the development corpus: no cadence, "
-                         "no speed, no position, no power, and distance_m is "
-                         "a constant 0.0 rather than null -- a fake zero, not "
-                         "a measurement.",
+        "activities of the development corpus: no cadence, "
+        "no speed, no position, no power, and distance_m is "
+        "a constant 0.0 rather than null -- a fake zero, not "
+        "a measurement.",
         "resistance_source": "athlete-recalled",
         "machine_totals_source": "machine-reported console readout",
         "derived_from_resistance": "NOTHING. Power, speed and distance are not "
-                                   "estimated from resistance; that is out of "
-                                   "scope by decision, not by omission.",
+        "estimated from resistance; that is out of "
+        "scope by decision, not by omission.",
         "grain": "block",
     }
 
@@ -234,12 +282,13 @@ def _filters(sport, sub_sport, timer) -> dict:
 # THE WORDS WATTS, POWER AND kJ DO NOT APPEAR IN ANY FIELD NAME OR ANY OUTPUT
 # HERE, AND A TEST ENFORCES IT. Measured on the development rides, the
 # console reports a constant distance per revolution -- it is a REV COUNTER
-# with a fixed wheel constant, not a calibrated ergometer. There is no absolute calibration to
+# with a fixed wheel constant, not a calibrated ergometer. There is no absolute
+# calibration to
 # recover, so a number in watts would be a fabrication wearing a unit. The
 # index below is unitless and says so everywhere it appears.
 # --------------------------------------------------------------------------
 
-BAND_TURNS = 0.5        # the reporting band for time-in-resistance
+BAND_TURNS = 0.5  # the reporting band for time-in-resistance
 
 # The load index's one assumption, stated wherever the index is returned.
 LOAD_INDEX_ASSUMPTION = (
@@ -264,6 +313,7 @@ def _band(resistance: float) -> float:
     describes a block: "N minutes between turn x and turn x-and-a-half".
     """
     import math
+
     return math.floor(resistance / BAND_TURNS) * BAND_TURNS
 
 
@@ -289,12 +339,13 @@ def reconcile_rpm(blocks: list, console_avg_rpm: float | None) -> dict:
     total disagree and that is the finding -- clamping t into [0, 1] would
     manufacture agreement and hide a misremembered range or a misread console.
     """
-    out = {"status": None, "t": None, "blocks": [],
-           "console_avg_rpm": console_avg_rpm}
+    out = {"status": None, "t": None, "blocks": [], "console_avg_rpm": console_avg_rpm}
     if console_avg_rpm is None:
         out["status"] = "unavailable"
-        out["reason"] = ("no console avg_rpm was logged for this ride; there "
-                         "is nothing to reconcile the stated ranges against")
+        out["reason"] = (
+            "no console avg_rpm was logged for this ride; there "
+            "is nothing to reconcile the stated ranges against"
+        )
         return out
     usable = [b for b in blocks if b.get("rpm") is not None]
     if len(usable) != len(blocks):
@@ -303,7 +354,8 @@ def reconcile_rpm(blocks: list, console_avg_rpm: float | None) -> dict:
             f"{len(blocks) - len(usable)} of {len(blocks)} blocks carry no rpm "
             f"range. The console average covers the WHOLE ride, so a block "
             f"with no stated range leaves the total unattributable -- any "
-            f"value would satisfy it, which is not a reconciliation.")
+            f"value would satisfy it, which is not a reconciliation."
+        )
         return out
     M = sum(b["end_min"] - b["start_min"] for b in usable)
     if M <= 0:
@@ -311,8 +363,9 @@ def reconcile_rpm(blocks: list, console_avg_rpm: float | None) -> dict:
         out["reason"] = "the blocks span no time"
         return out
     L = sum(b["rpm"][0] * (b["end_min"] - b["start_min"]) for b in usable)
-    D = sum((b["rpm"][1] - b["rpm"][0]) * (b["end_min"] - b["start_min"])
-            for b in usable)
+    D = sum(
+        (b["rpm"][1] - b["rpm"][0]) * (b["end_min"] - b["start_min"]) for b in usable
+    )
     lo_total, hi_total = L / M, (L + D) / M
     out["achievable_range"] = [lo_total, hi_total]
     if D == 0:
@@ -322,7 +375,8 @@ def reconcile_rpm(blocks: list, console_avg_rpm: float | None) -> dict:
                 f"every block states a single rpm, so the ride average is "
                 f"fixed at {lo_total:.2f}; the console reports "
                 f"{console_avg_rpm:.2f}. These disagree and neither is "
-                f"adjusted.")
+                f"adjusted."
+            )
             return out
         t = 0.0
     else:
@@ -333,31 +387,41 @@ def reconcile_rpm(blocks: list, console_avg_rpm: float | None) -> dict:
             f"the console average {console_avg_rpm:.2f} rpm lies outside what "
             f"the stated ranges can produce ({lo_total:.2f} to {hi_total:.2f} "
             f"rpm). NOT CLAMPED: a range was misremembered or the console was "
-            f"misread, and forcing agreement would hide which.")
+            f"misread, and forcing agreement would hide which."
+        )
         return out
     t = min(1.0, max(0.0, t))
     out["status"] = "ok"
     out["t"] = t
-    out["method"] = ("every block placed at the same relative position t "
-                     "within its own stated range")
+    out["method"] = (
+        "every block placed at the same relative position t within its own stated range"
+    )
     for b in usable:
         lo, hi = b["rpm"]
-        out["blocks"].append({
-            "start_min": b["start_min"], "end_min": b["end_min"],
-            "resistance": b["resistance"], "rpm_range": [lo, hi],
-            "reconciled_rpm": lo + t * (hi - lo),
-            "rpm_provenance": "RECONCILED -- derived from the athlete's stated "
-                              "range and the console total, not observed",
-        })
+        out["blocks"].append(
+            {
+                "start_min": b["start_min"],
+                "end_min": b["end_min"],
+                "resistance": b["resistance"],
+                "rpm_range": [lo, hi],
+                "reconciled_rpm": lo + t * (hi - lo),
+                "rpm_provenance": "RECONCILED -- derived from the athlete's stated "
+                "range and the console total, not observed",
+            }
+        )
     return out
 
 
 def load_index(blocks: list, reconciliation: dict) -> dict:
     """Unitless load index per ride and per minute. NOT power. See the header."""
     if reconciliation.get("status") != "ok":
-        return {"status": "unavailable", "index": None, "index_per_min": None,
-                "reason": f"needs reconciled rpm: {reconciliation.get('reason')}",
-                "assumption": LOAD_INDEX_ASSUMPTION}
+        return {
+            "status": "unavailable",
+            "index": None,
+            "index_per_min": None,
+            "reason": f"needs reconciled rpm: {reconciliation.get('reason')}",
+            "assumption": LOAD_INDEX_ASSUMPTION,
+        }
     total = 0.0
     minutes = 0.0
     per_block = []
@@ -366,15 +430,25 @@ def load_index(blocks: list, reconciliation: dict) -> dict:
         v = b["resistance"] * b["reconciled_rpm"] * m
         total += v
         minutes += m
-        per_block.append({"start_min": b["start_min"], "end_min": b["end_min"],
-                          "resistance": b["resistance"],
-                          "reconciled_rpm": b["reconciled_rpm"],
-                          "minutes": m, "index": v})
-    return {"status": "ok", "index": total, "index_minutes": minutes,
-            "index_per_min": (total / minutes) if minutes > 0 else None,
-            "unit": "none -- this is an index, not a measurement",
-            "per_block": per_block,
-            "assumption": LOAD_INDEX_ASSUMPTION}
+        per_block.append(
+            {
+                "start_min": b["start_min"],
+                "end_min": b["end_min"],
+                "resistance": b["resistance"],
+                "reconciled_rpm": b["reconciled_rpm"],
+                "minutes": m,
+                "index": v,
+            }
+        )
+    return {
+        "status": "ok",
+        "index": total,
+        "index_minutes": minutes,
+        "index_per_min": (total / minutes) if minutes > 0 else None,
+        "unit": "none -- this is an index, not a measurement",
+        "per_block": per_block,
+        "assumption": LOAD_INDEX_ASSUMPTION,
+    }
 
 
 def time_in_resistance(con, weekly: bool = True) -> dict:
@@ -390,16 +464,23 @@ def time_in_resistance(con, weekly: bool = True) -> dict:
     import datetime as _dt
     from collections import defaultdict
 
-    weeks: dict = defaultdict(lambda: {"by_resistance": defaultdict(float),
-                                       "by_band": defaultdict(float),
-                                       "rides": set(), "total_min": 0.0})
+    weeks: dict = defaultdict(
+        lambda: {
+            "by_resistance": defaultdict(float),
+            "by_band": defaultdict(float),
+            "rides": set(),
+            "total_min": 0.0,
+        }
+    )
     overall_r: dict = defaultdict(float)
     overall_b: dict = defaultdict(float)
     for key, entry in sorted(load_ride_blocks().items()):
-        row = con.execute("""
+        row = con.execute(
+            """
             SELECT activity_id, start_time_utc, local_tz FROM activities
             WHERE run_id = ? OR activity_id = ? LIMIT 1""",
-            [entry.get("run_id"), entry.get("activity_id")]).fetchone()
+            [entry.get("run_id"), entry.get("activity_id")],
+        ).fetchone()
         if row is None:
             continue
         local = row[1] + _dt.timedelta(hours=row[2] if row[2] is not None else 0.0)
@@ -418,21 +499,29 @@ def time_in_resistance(con, weekly: bool = True) -> dict:
     out = []
     for wk in sorted(weeks):
         w = weeks[wk]
-        out.append({
-            "iso_week": wk, "n_rides": len(w["rides"]),
-            "total_min": w["total_min"],
-            "by_resistance": {str(k): v for k, v in sorted(w["by_resistance"].items())},
-            "by_band": {str(k): v for k, v in sorted(w["by_band"].items())},
-        })
-    return {"weeks": out, "n_weeks": len(out),
-            "by_resistance_all_time": {str(k): v for k, v in sorted(overall_r.items())},
-            "by_band_all_time": {str(k): v for k, v in sorted(overall_b.items())},
-            "band_turns": BAND_TURNS,
-            "band_convention": "a band is named by its LOWER edge and is "
-                               "half-open: 14.0 means [14.0, 14.5)",
-            "filters": {
-                "source": "stored ride blocks (athlete-recalled), aggregated",
-                "week": "LOCAL ISO week, matching M7's convention",
-                "assumptions": "none beyond the blocks being logged correctly",
-                "grain": "block",
-            }}
+        out.append(
+            {
+                "iso_week": wk,
+                "n_rides": len(w["rides"]),
+                "total_min": w["total_min"],
+                "by_resistance": {
+                    str(k): v for k, v in sorted(w["by_resistance"].items())
+                },
+                "by_band": {str(k): v for k, v in sorted(w["by_band"].items())},
+            }
+        )
+    return {
+        "weeks": out,
+        "n_weeks": len(out),
+        "by_resistance_all_time": {str(k): v for k, v in sorted(overall_r.items())},
+        "by_band_all_time": {str(k): v for k, v in sorted(overall_b.items())},
+        "band_turns": BAND_TURNS,
+        "band_convention": "a band is named by its LOWER edge and is "
+        "half-open: 14.0 means [14.0, 14.5)",
+        "filters": {
+            "source": "stored ride blocks (athlete-recalled), aggregated",
+            "week": "LOCAL ISO week, matching M7's convention",
+            "assumptions": "none beyond the blocks being logged correctly",
+            "grain": "block",
+        },
+    }

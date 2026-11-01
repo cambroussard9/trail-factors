@@ -27,7 +27,8 @@ a metre.
 
 NO PACE AND NO HEART RATE ANYWHERE IN THE MATCH KEY. Median HR was measured
 nearly flat across grade bands (§6.2), so it barely discriminates terrain;
-§14e adds that zones are not even on a stable scale across a corpus. Every matching signal
+§14e adds that zones are not even on a stable scale across a corpus. Every matching
+signal
 here is deterministic geometry, which is also what makes the result
 reproducible. HR is RECORDED on an effort, never used to match one.
 
@@ -59,7 +60,8 @@ CALC_VERSION = 1
 # claiming it was "the strongest discriminator" described behaviour this code
 # does not exhibit. The gates are kept as conservative insurance -- a
 # conjunction can only SPLIT a cluster, never merge one, so they cost nothing
-# and would bind on denser terrain where peaks sit closer together. Reproduce with build_library(tr, elev_tol_m=1e9).
+# and would bind on denser terrain where peaks sit closer together. Reproduce with
+# build_library(tr, elev_tol_m=1e9).
 #
 # REFITTED FOR SLOPES (§12.4). §5.3's 0.54 m was the run-to-run SD of a single
 # PEAK elevation. A slope's endpoints are bounded by where a hysteresis
@@ -112,6 +114,7 @@ SIDE_TOL_DEG = 90.0
 # there is no summit to inherit from (§5.4).
 PEAK_SNAP_M = 100.0
 
+
 def to_utm(lats, lons, crs: str | None = None):
     """Positions in metres, through dem.project.
 
@@ -123,8 +126,9 @@ def to_utm(lats, lons, crs: str | None = None):
     return project(lats, lons, crs)
 
 
-def segment_id_for(lo_x: float, lo_y: float, hi_x: float, hi_y: float,
-                   projection: str | None = None) -> str:
+def segment_id_for(
+    lo_x: float, lo_y: float, hi_x: float, hi_y: float, projection: str | None = None
+) -> str:
     """Content-derived id, from the FOUNDING traversal's ENDPOINTS at 1 m.
 
     Deterministic and stable: it does not move when later traversals shift the
@@ -168,8 +172,9 @@ def angular_diff(a: float, b: float) -> float:
     return abs((a - b + 180.0) % 360.0 - 180.0)
 
 
-def compatible(a: dict, b: dict, radius_m: float | None = None,
-               elev_tol_m: float | None = None) -> bool:
+def compatible(
+    a: dict, b: dict, radius_m: float | None = None, elev_tol_m: float | None = None
+) -> bool:
     """The pairwise predicate: are these two slopes the same (place, side)?
 
     IDENTITY IS INHERITED FROM THE PEAK, which is the one thing the matcher
@@ -202,8 +207,7 @@ def compatible(a: dict, b: dict, radius_m: float | None = None,
     # traversal shares one key, so this never fires there.
     if projection_key(a) != projection_key(b):
         return False
-    if math.hypot(a["place_x"] - b["place_x"],
-                  a["place_y"] - b["place_y"]) > radius_m:
+    if math.hypot(a["place_x"] - b["place_x"], a["place_y"] - b["place_y"]) > radius_m:
         return False
     if abs(a["place_elevation_m"] - b["place_elevation_m"]) > elev_tol_m:
         return False
@@ -231,8 +235,11 @@ def matches(traversal: dict, segment: dict) -> bool:
     return any(compatible(traversal, m) for m in members)
 
 
-def build_library(traversals: list[dict], radius_m: float = MATCH_RADIUS_M,
-                  elev_tol_m: float = ELEV_TOL_M) -> list[dict]:
+def build_library(
+    traversals: list[dict],
+    radius_m: float = MATCH_RADIUS_M,
+    elev_tol_m: float = ELEV_TOL_M,
+) -> list[dict]:
     """Group traversals into segments. Returns segments, each with 'members'.
 
     ORDER-INDEPENDENT BY CONSTRUCTION. Connected components over the symmetric
@@ -279,7 +286,8 @@ def build_library(traversals: list[dict], radius_m: float = MATCH_RADIUS_M,
         # Ordering is total and derived from data, so the id is reproducible.
         # It is NOT stable against backfill -- an older run re-founds the
         # segment -- which is exactly why athlete names and venue anchors are
-        # RUN-ANCHORED rather than keyed to this id (src/trail_factors/analysis/venues.py).
+        # RUN-ANCHORED rather than keyed to this id
+        # (src/trail_factors/analysis/venues.py).
         founder = min(members, key=lambda m: (m["sort_key"], m["slope_index"]))
         lo_x = statistics.fmean([m["lo_x"] for m in members])
         lo_y = statistics.fmean([m["lo_y"] for m in members])
@@ -289,46 +297,57 @@ def build_library(traversals: list[dict], radius_m: float = MATCH_RADIUS_M,
         highs = [m["high_elevation_m"] for m in members]
         px = statistics.fmean([m["place_x"] for m in members])
         py = statistics.fmean([m["place_y"] for m in members])
-        spread = max(math.hypot(m["place_x"] - px, m["place_y"] - py)
-                     for m in members)
-        segments.append({
-            # Identity is (place, side): the founding traversal's PLACE anchor
-            # plus its flank, not the noisy col.
-            "segment_id": segment_id_for(
-                founder["place_x"], founder["place_y"],
-                round(founder["side_bearing_deg"] / SIDE_TOL_DEG), 0,
-                projection=projection_key(founder)),
-            # The frame every member's x/y is in -- one per segment, since
-            # `compatible` never joins two -- and how it was chosen.
-            "projection": founder.get("projection"),
-            "projection_derived": bool(founder.get("projection_derived")),
-            "members": members,
-            "lo_x": lo_x, "lo_y": lo_y, "hi_x": hi_x, "hi_y": hi_y,
-            "mid_x": statistics.fmean([m["mid_x"] for m in members]),
-            "mid_y": statistics.fmean([m["mid_y"] for m in members]),
-            "place_x": statistics.fmean([m["place_x"] for m in members]),
-            "place_y": statistics.fmean([m["place_y"] for m in members]),
-            "place_elevation_m": statistics.median(
-                [m["place_elevation_m"] for m in members]),
-            "side_bearing_deg": founder["side_bearing_deg"],
-            "low_lat": founder["low_lat"], "low_lon": founder["low_lon"],
-            "high_lat": founder["high_lat"], "high_lon": founder["high_lon"],
-            # Median, not mean: robust to one mis-detected traversal.
-            "low_elevation_m": statistics.median(lows),
-            "high_elevation_m": statistics.median(highs),
-            "vertical_m": statistics.median([m["vertical_m"] for m in members]),
-            "length_m": statistics.median([m["length_m"] for m in members]),
-            "mean_grade_pct": statistics.median(
-                [abs(m["mean_grade_pct"]) for m in members]),
-            "n_efforts": len(members),
-            "n_ascents": sum(1 for m in members if m["direction"] == "ascent"),
-            "n_descents": sum(1 for m in members if m["direction"] == "descent"),
-            "low_elevation_sd_m": sd(lows),
-            "high_elevation_sd_m": sd(highs),
-            "place_elevation_sd_m": sd([m["place_elevation_m"] for m in members]),
-            "endpoint_spread_m": spread,
-            "first_seen_utc": founder.get("start_utc"),
-        })
+        spread = max(math.hypot(m["place_x"] - px, m["place_y"] - py) for m in members)
+        segments.append(
+            {
+                # Identity is (place, side): the founding traversal's PLACE anchor
+                # plus its flank, not the noisy col.
+                "segment_id": segment_id_for(
+                    founder["place_x"],
+                    founder["place_y"],
+                    round(founder["side_bearing_deg"] / SIDE_TOL_DEG),
+                    0,
+                    projection=projection_key(founder),
+                ),
+                # The frame every member's x/y is in -- one per segment, since
+                # `compatible` never joins two -- and how it was chosen.
+                "projection": founder.get("projection"),
+                "projection_derived": bool(founder.get("projection_derived")),
+                "members": members,
+                "lo_x": lo_x,
+                "lo_y": lo_y,
+                "hi_x": hi_x,
+                "hi_y": hi_y,
+                "mid_x": statistics.fmean([m["mid_x"] for m in members]),
+                "mid_y": statistics.fmean([m["mid_y"] for m in members]),
+                "place_x": statistics.fmean([m["place_x"] for m in members]),
+                "place_y": statistics.fmean([m["place_y"] for m in members]),
+                "place_elevation_m": statistics.median(
+                    [m["place_elevation_m"] for m in members]
+                ),
+                "side_bearing_deg": founder["side_bearing_deg"],
+                "low_lat": founder["low_lat"],
+                "low_lon": founder["low_lon"],
+                "high_lat": founder["high_lat"],
+                "high_lon": founder["high_lon"],
+                # Median, not mean: robust to one mis-detected traversal.
+                "low_elevation_m": statistics.median(lows),
+                "high_elevation_m": statistics.median(highs),
+                "vertical_m": statistics.median([m["vertical_m"] for m in members]),
+                "length_m": statistics.median([m["length_m"] for m in members]),
+                "mean_grade_pct": statistics.median(
+                    [abs(m["mean_grade_pct"]) for m in members]
+                ),
+                "n_efforts": len(members),
+                "n_ascents": sum(1 for m in members if m["direction"] == "ascent"),
+                "n_descents": sum(1 for m in members if m["direction"] == "descent"),
+                "low_elevation_sd_m": sd(lows),
+                "high_elevation_sd_m": sd(highs),
+                "place_elevation_sd_m": sd([m["place_elevation_m"] for m in members]),
+                "endpoint_spread_m": spread,
+                "first_seen_utc": founder.get("start_utc"),
+            }
+        )
     # Deterministic output order; ids are content-derived so this is stable.
     segments.sort(key=lambda s: s["segment_id"])
     return segments
@@ -352,13 +371,20 @@ def match_traversal(traversal: dict, segments: list[dict]) -> dict | None:
     # even though membership is decided pairwise above. Distance is the sum
     # over both endpoints, so a slope matching one end well and the other
     # poorly loses to one that matches both.
-    return min(hits, key=lambda s: (
-        math.hypot(traversal["place_x"] - s["place_x"],
-                   traversal["place_y"] - s["place_y"]), s["segment_id"]))
+    return min(
+        hits,
+        key=lambda s: (
+            math.hypot(
+                traversal["place_x"] - s["place_x"], traversal["place_y"] - s["place_y"]
+            ),
+            s["segment_id"],
+        ),
+    )
 
 
-def consistency_failures(segments: list[dict],
-                         max_sd_m: float = MAX_SEGMENT_ELEV_SD_M) -> list[dict]:
+def consistency_failures(
+    segments: list[dict], max_sd_m: float = MAX_SEGMENT_ELEV_SD_M
+) -> list[dict]:
     """Segments whose PLACE elevations disagree too much to be one slope.
 
     Checks the PLACE, not the col. Identity is (place, side) and the col is
@@ -367,6 +393,8 @@ def consistency_failures(segments: list[dict],
     against peaks at 0.54 m. Flagging on the col would be a check firing on the
     truth, which is §4.2's failure mode inverted.
     """
-    return [s for s in segments
-            if s["n_efforts"] > 1 and s["place_elevation_sd_m"] > max_sd_m]
-
+    return [
+        s
+        for s in segments
+        if s["n_efforts"] > 1 and s["place_elevation_sd_m"] > max_sd_m
+    ]

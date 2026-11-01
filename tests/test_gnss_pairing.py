@@ -22,7 +22,7 @@ import unittest
 
 from trail_factors.ingest import fit_file as ff
 
-T0 = dt.datetime(2023, 6, 20, 7, 0, 0)       # synthetic
+T0 = dt.datetime(2023, 6, 20, 7, 0, 0)  # synthetic
 GAP = range(60, 120)
 
 
@@ -35,9 +35,16 @@ def frames(gap=GAP, stale_device=False):
             # A device that KEEPS WRITING frames repeating its last fix: the
             # pairing cannot see that, and says so in the docs, not here.
             out.append(("gps_metadata", {"enhanced_altitude": 1505.9}))
-        out.append(("record", {"timestamp": T0 + dt.timedelta(seconds=t),
-                               # barometric channel, smoother and offset
-                               "enhanced_altitude": 1501.0 + 0.1 * t}))
+        out.append(
+            (
+                "record",
+                {
+                    "timestamp": T0 + dt.timedelta(seconds=t),
+                    # barometric channel, smoother and offset
+                    "enhanced_altitude": 1501.0 + 0.1 * t,
+                },
+            )
+        )
     return out
 
 
@@ -46,19 +53,18 @@ class TestAGnssGapLeavesNulls(unittest.TestCase):
         self.recs = ff.pair_frames(frames())["record"]
 
     def test_exactly_the_records_inside_the_gap_have_no_gnss(self):
-        none = [i for i, r in enumerate(self.recs)
-                if r[ff.GNSS_ALTITUDE_KEY] is None]
+        none = [i for i, r in enumerate(self.recs) if r[ff.GNSS_ALTITUDE_KEY] is None]
         self.assertEqual(none, list(GAP))
 
     def test_no_record_inside_the_gap_carries_an_old_reading(self):
         last_before = self.recs[GAP.start - 1][ff.GNSS_ALTITUDE_KEY]
-        self.assertTrue(all(self.recs[i][ff.GNSS_ALTITUDE_KEY] != last_before
-                            for i in GAP))
+        self.assertTrue(
+            all(self.recs[i][ff.GNSS_ALTITUDE_KEY] != last_before for i in GAP)
+        )
 
     def test_positive_twin_records_outside_the_gap_are_paired_exactly(self):
         for i in (0, GAP.start - 1, GAP.stop, 199):
-            self.assertAlmostEqual(self.recs[i][ff.GNSS_ALTITUDE_KEY],
-                                   1500.0 + 0.1 * i)
+            self.assertAlmostEqual(self.recs[i][ff.GNSS_ALTITUDE_KEY], 1500.0 + 0.1 * i)
 
     def test_the_provenance_comparison_ignores_them(self):
         prov = ff.altitude_provenance(self.recs)
@@ -75,8 +81,15 @@ def recording_gap_frames(gap_s):
     for t in range(160 + gap_s):
         out.append(("gps_metadata", {"enhanced_altitude": 1500.0 + 0.1 * t}))
         if t in times:
-            out.append(("record", {"timestamp": T0 + dt.timedelta(seconds=t),
-                                   "enhanced_altitude": 1501.0 + 0.1 * t}))
+            out.append(
+                (
+                    "record",
+                    {
+                        "timestamp": T0 + dt.timedelta(seconds=t),
+                        "enhanced_altitude": 1501.0 + 0.1 * t,
+                    },
+                )
+            )
     return out
 
 
@@ -98,8 +111,11 @@ class TestARecordingGapMakesTheNextReadingMissing(unittest.TestCase):
 
     def test_the_threshold_is_in_the_digest(self):
         from trail_factors.analysis.versions import calc_params
-        self.assertEqual(calc_params()["gnss_unknown_age_after_gap_s"],
-                         ff.GNSS_UNKNOWN_AGE_AFTER_GAP_S)
+
+        self.assertEqual(
+            calc_params()["gnss_unknown_age_after_gap_s"],
+            ff.GNSS_UNKNOWN_AGE_AFTER_GAP_S,
+        )
 
 
 if __name__ == "__main__":

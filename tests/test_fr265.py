@@ -18,30 +18,40 @@ Every negative has a positive twin.
 
 from __future__ import annotations
 
+import contextlib
 import unittest
 from pathlib import Path
 from unittest import mock
 
+from tests.corpus import CorpusTestCase, corpus_path, corpus_projection, isolated, one
 from trail_factors.ingest import fit_file as F
 from trail_factors.ingest import load as L
 from trail_factors.ingest import validate as V
-from tests.corpus import CorpusTestCase, corpus_path, one, isolated, corpus_projection
 
 # --- isolation: never the real athlete state or config ----------------------
+# Entered in setUpModule, CLOSED in tearDownModule -- see tests/corpus.py
+# isolated() for why this is not unittest.enterModuleContext.
+_ISOLATION = contextlib.ExitStack()
+
+
 def setUpModule():
     if corpus_path() is not None:
-        unittest.enterModuleContext(
-            isolated(projection_crs=corpus_projection()))
+        _ISOLATION.enter_context(isolated(projection_crs=corpus_projection()))
+
+
+def tearDownModule():
+    _ISOLATION.close()
 
 
 def _raw_path(source_file: str) -> Path | None:
     """The FIT a stored `source_file` names, under the configured raw
     directory or the repo, or None when it is not on disk."""
     from trail_factors.paths import RAW_DIR, REPO_ROOT
+
     p = Path(source_file)
     candidates = [p if p.is_absolute() else REPO_ROOT / p]
     if "raw" in p.parts:
-        candidates.append(RAW_DIR.joinpath(*p.parts[p.parts.index("raw") + 1:]))
+        candidates.append(RAW_DIR.joinpath(*p.parts[p.parts.index("raw") + 1 :]))
     return next((c for c in candidates if c.exists()), None)
 
 
@@ -78,14 +88,16 @@ class _Files(CorpusTestCase):
     def setUpClass(cls):
         super().setUpClass()
         cls.gps_aid, cls.gps_model, cls.GPS = _fit(
-            cls.con, GPS_FED, "GPS-fed fr245_music run")
+            cls.con, GPS_FED, "GPS-fed fr245_music run"
+        )
         cls.baro_aid, cls.baro_model, cls.BARO = _fit(
-            cls.con, BAROMETRIC, "barometric fr265 run")
+            cls.con, BAROMETRIC, "barometric fr265 run"
+        )
 
     def stored(self, aid, cols):
         return self.con.execute(
-            f"SELECT {cols} FROM activities WHERE activity_id = ?",
-            [aid]).fetchone()
+            f"SELECT {cols} FROM activities WHERE activity_id = ?", [aid]
+        ).fetchone()
 
 
 class TestTheGnssChannelPairing(_Files):
@@ -101,11 +113,16 @@ class TestTheGnssChannelPairing(_Files):
         recs = F.read_messages(self.GPS)["record"]
         paired = [r for r in recs if r.get(F.GNSS_ALTITUDE_KEY) is not None]
         self.assertTrue(paired)
-        exact = sum(1 for r in paired
-                    if abs(r[F.GNSS_ALTITUDE_KEY] - r["enhanced_altitude"]) < 1e-9)
-        self.assertGreaterEqual(exact / len(paired), F.ALTITUDE_IDENTICAL_MIN,
-                                "the preceding-frame rule should reproduce a "
-                                "GPS-fed watch's own altitude")
+        exact = sum(
+            1
+            for r in paired
+            if abs(r[F.GNSS_ALTITUDE_KEY] - r["enhanced_altitude"]) < 1e-9
+        )
+        self.assertGreaterEqual(
+            exact / len(paired),
+            F.ALTITUDE_IDENTICAL_MIN,
+            "the preceding-frame rule should reproduce a GPS-fed watch's own altitude",
+        )
 
     def test_the_OTHER_pairing_does_not(self):
         """THE DISCRIMINATOR. Without this, 'the join works' is untested: a
@@ -118,28 +135,39 @@ class TestTheGnssChannelPairing(_Files):
                 if fr.frame_type != fitdecode.FIT_FRAME_DATA:
                     continue
                 if fr.name in ("record", "gps_metadata"):
-                    seq.append((fr.name,
-                                fr.get_value("enhanced_altitude")
-                                if fr.has_field("enhanced_altitude") else None))
+                    seq.append(
+                        (
+                            fr.name,
+                            fr.get_value("enhanced_altitude")
+                            if fr.has_field("enhanced_altitude")
+                            else None,
+                        )
+                    )
         hits = n = 0
         for i, (name, alt) in enumerate(seq):
             if name != "record" or alt is None:
                 continue
             n += 1
-            nxt = next((v for nm, v in seq[i + 1:] if nm == "gps_metadata"), None)
+            nxt = next((v for nm, v in seq[i + 1 :] if nm == "gps_metadata"), None)
             if nxt is not None and abs(nxt - alt) < 1e-9:
                 hits += 1
         self.assertGreater(n, 0)
-        self.assertLess(hits / n, 0.5,
-                        "the FOLLOWING frame should NOT reproduce the record's "
-                        "altitude; if it does, the pairing argument is wrong")
+        self.assertLess(
+            hits / n,
+            0.5,
+            "the FOLLOWING frame should NOT reproduce the record's "
+            "altitude; if it does, the pairing argument is wrong",
+        )
 
     def test_the_barometric_watchs_two_channels_are_genuinely_different(self):
         recs = F.read_messages(self.BARO)["record"]
         paired = [r for r in recs if r.get(F.GNSS_ALTITUDE_KEY) is not None]
         self.assertTrue(paired)
-        exact = sum(1 for r in paired
-                    if abs(r[F.GNSS_ALTITUDE_KEY] - r["enhanced_altitude"]) < 1e-9)
+        exact = sum(
+            1
+            for r in paired
+            if abs(r[F.GNSS_ALTITUDE_KEY] - r["enhanced_altitude"]) < 1e-9
+        )
         self.assertLess(exact / len(paired), F.ALTITUDE_IDENTICAL_MIN)
 
     def test_the_first_record_has_no_preceding_fix_and_says_so(self):
@@ -147,8 +175,9 @@ class TestTheGnssChannelPairing(_Files):
         for path in (self.GPS, self.BARO):
             recs = F.read_messages(path)["record"]
             self.assertIsNone(recs[0][F.GNSS_ALTITUDE_KEY], path.name)
-            self.assertTrue(any(r[F.GNSS_ALTITUDE_KEY] is not None for r in recs),
-                            path.name)
+            self.assertTrue(
+                any(r[F.GNSS_ALTITUDE_KEY] is not None for r in recs), path.name
+            )
 
 
 class TestProvenanceIsMeasuredNotLookedUp(_Files):
@@ -157,7 +186,9 @@ class TestProvenanceIsMeasuredNotLookedUp(_Files):
     `unknown`. Re-measuring the raw file must reproduce the stored label."""
 
     def prov(self, path):
-        return F.altitude_provenance(F.coalesce_records(F.read_messages(path)["record"]))
+        return F.altitude_provenance(
+            F.coalesce_records(F.read_messages(path)["record"])
+        )
 
     def test_the_gps_fed_watch_measures_as_gps(self):
         prov = self.prov(self.GPS)
@@ -180,35 +211,43 @@ class TestProvenanceIsMeasuredNotLookedUp(_Files):
 
     def test_the_measurement_would_survive_the_map_being_wrong(self):
         """The point of measuring. Delete the map entry and the answer stands."""
-        without = {k: v for k, v in F.ALTITUDE_SOURCE_BY_DEVICE.items()
-                   if not k.startswith("fr265")}
+        without = {
+            k: v
+            for k, v in F.ALTITUDE_SOURCE_BY_DEVICE.items()
+            if not k.startswith("fr265")
+        }
         with mock.patch.object(F, "ALTITUDE_SOURCE_BY_DEVICE", without):
-            self.assertEqual(F.altitude_source("fr265_large", "garmin_watch"),
-                             "unknown")
+            self.assertEqual(
+                F.altitude_source("fr265_large", "garmin_watch"), "unknown"
+            )
             self.assertEqual(self.prov(self.BARO)["source"], "barometric")
 
     def test_the_map_still_agrees_where_it_has_an_opinion(self):
         """The cross-check must be live: a map that disagreed with every
         measurement would be worthless as a check."""
-        for path, model in ((self.GPS, self.gps_model),
-                            (self.BARO, self.baro_model)):
-            self.assertEqual(self.prov(path)["source"],
-                             F.altitude_source(model, "garmin_watch"), model)
+        for path, model in ((self.GPS, self.gps_model), (self.BARO, self.baro_model)):
+            self.assertEqual(
+                self.prov(path)["source"],
+                F.altitude_source(model, "garmin_watch"),
+                model,
+            )
 
 
 class TestTooFewPairs(unittest.TestCase):
-
     def test_too_few_pairs_is_not_an_answer(self):
-        prov = F.altitude_provenance([{"enhanced_altitude": 200.0,
-                                       F.GNSS_ALTITUDE_KEY: 200.0}] * 10)
+        prov = F.altitude_provenance(
+            [{"enhanced_altitude": 200.0, F.GNSS_ALTITUDE_KEY: 200.0}] * 10
+        )
         self.assertEqual(prov["source"], "unknown")
         self.assertIn("fewer than", prov["reason"])
 
     def test_enough_identical_pairs_is_gps(self):
         """THE TWIN: the same synthetic channel, past the pair floor."""
         n = F.ALTITUDE_MIN_PAIRS + 5
-        recs = [{"enhanced_altitude": 200.0 + i, F.GNSS_ALTITUDE_KEY: 200.0 + i}
-                for i in range(n)]
+        recs = [
+            {"enhanced_altitude": 200.0 + i, F.GNSS_ALTITUDE_KEY: 200.0 + i}
+            for i in range(n)
+        ]
         self.assertEqual(F.altitude_provenance(recs)["source"], "gps")
 
 
@@ -217,9 +256,11 @@ class TestProvenanceAsStored(CorpusTestCase):
     measurement cannot be made at all."""
 
     def test_the_basis_distinguishes_measured_from_fallen_back(self):
-        rows = dict(self.con.execute("""
+        rows = dict(
+            self.con.execute("""
             SELECT altitude_source_basis, count(*) FROM activities
-            WHERE source = 'garmin_watch' GROUP BY 1""").fetchall())
+            WHERE source = 'garmin_watch' GROUP BY 1""").fetchall()
+        )
         if not rows:
             self.skipTest("this corpus has no watch activity")
         self.assertLessEqual(set(rows), {"measured", "device_map"})
@@ -231,6 +272,7 @@ class TestProvenanceAsStored(CorpusTestCase):
         stored as `unknown` with agrees=False, which says the data contradicts
         the device map. It cannot: there is no data."""
         from trail_factors.ingest.fit_file import ALTITUDE_MIN_PAIRS
+
         rows = self.con.execute("""
             SELECT a.activity_id, a.altitude_source, a.altitude_source_agrees,
                    (SELECT count(altitude_gnss_m) FROM records r
@@ -244,9 +286,11 @@ class TestProvenanceAsStored(CorpusTestCase):
             # older file whose gps_metadata is sparse can fall short of
             # ALTITUDE_MIN_PAIRS while still carrying most of its position.
             # Asserting zero coverage would pin a proxy for the rule.
-            self.assertLess(paired, ALTITUDE_MIN_PAIRS,
-                            f"{aid}: a run with enough paired records must "
-                            f"be MEASURED")
+            self.assertLess(
+                paired,
+                ALTITUDE_MIN_PAIRS,
+                f"{aid}: a run with enough paired records must be MEASURED",
+            )
             self.assertIsNone(agrees, aid)
             self.assertNotEqual(src, "unknown", aid)
 
@@ -255,12 +299,18 @@ class TestProvenanceAsStored(CorpusTestCase):
         that could have been measured. A barometric label is the barometric
         signature: diverging from GNSS and SMOOTHER than it (§9.2)."""
         from trail_factors.ingest.fit_file import ALTITUDE_IDENTICAL_MIN
-        row = one(self.con, """
+
+        row = one(
+            self.con,
+            """
             SELECT altitude_divergence_m, altitude_identical_frac,
                    altitude_sd_record_m, altitude_sd_gnss_m
-            FROM activities a WHERE """ + BAROMETRIC + """
+            FROM activities a WHERE """
+            + BAROMETRIC
+            + """
             ORDER BY start_time_utc LIMIT 1""",
-            what="measured barometric run")
+            what="measured barometric run",
+        )
         for v in row:
             self.assertIsNotNone(v)
         self.assertLess(row[1], ALTITUDE_IDENTICAL_MIN)
@@ -285,15 +335,23 @@ class TestProvenanceAsStored(CorpusTestCase):
         """
         from trail_factors.ingest.fit_file import ALTITUDE_MIN_PAIRS
         from trail_factors.ingest.validate import COVERAGE_WARN
-        aids = [a for a, in self.con.execute(
-            "SELECT activity_id FROM activities WHERE device LIKE 'fr265%' "
-            "ORDER BY activity_id").fetchall()]
+
+        aids = [
+            a
+            for (a,) in self.con.execute(
+                "SELECT activity_id FROM activities WHERE device LIKE 'fr265%' "
+                "ORDER BY activity_id"
+            ).fetchall()
+        ]
         if not aids:
             self.skipTest("this corpus has no fr265 activity")
         for aid in aids:
-            n_total, n_gnss = self.con.execute("""
+            n_total, n_gnss = self.con.execute(
+                """
                 SELECT count(*), count(altitude_gnss_m) FROM records
-                WHERE activity_id = ?""", [aid]).fetchone()
+                WHERE activity_id = ?""",
+                [aid],
+            ).fetchone()
             if n_gnss == 0:
                 # AN INDOOR ACTIVITY HAS NO gps_metadata TO PAIR WITH, and
                 # nothing unpaired about it. The pairing claim is about
@@ -302,36 +360,59 @@ class TestProvenanceAsStored(CorpusTestCase):
                 # REQUIRED for the exemption.
                 self.assertEqual(
                     self.con.execute(
-                        "SELECT count(lat) FROM records WHERE activity_id = ?",
-                        [aid]).fetchone()[0], 0,
-                    f"{aid}: no GNSS altitude but it DOES carry position")
+                        "SELECT count(lat) FROM records WHERE activity_id = ?", [aid]
+                    ).fetchone()[0],
+                    0,
+                    f"{aid}: no GNSS altitude but it DOES carry position",
+                )
                 continue
-            first_paired, last_unpaired, n_unpaired_no_device, \
-                n_unpaired_no_pos = self.con.execute("""
+            first_paired, last_unpaired, n_unpaired_no_device, n_unpaired_no_pos = (
+                self.con.execute(
+                    """
                 SELECT min(timestamp) FILTER (WHERE altitude_gnss_m IS NOT NULL),
                        max(timestamp) FILTER (WHERE altitude_gnss_m IS NULL),
                        count(*) FILTER (WHERE altitude_gnss_m IS NULL
                                         AND altitude_device_m IS NULL),
                        count(*) FILTER (WHERE altitude_gnss_m IS NULL
                                         AND lat IS NULL)
-                FROM records WHERE activity_id = ?""", [aid]).fetchone()
+                FROM records WHERE activity_id = ?""",
+                    [aid],
+                ).fetchone()
+            )
             if last_unpaired is not None:
-                self.assertLess(last_unpaired, first_paired,
-                                f"{aid}: an unpaired record AFTER the first "
-                                f"GNSS frame means the join is not file-order")
-            self.assertEqual(n_unpaired_no_device, 0,
-                             f"{aid}: a GNSS gap must not cost the device altitude")
+                self.assertLess(
+                    last_unpaired,
+                    first_paired,
+                    f"{aid}: an unpaired record AFTER the first "
+                    f"GNSS frame means the join is not file-order",
+                )
+            self.assertEqual(
+                n_unpaired_no_device,
+                0,
+                f"{aid}: a GNSS gap must not cost the device altitude",
+            )
             basis, cov = self.con.execute(
                 "SELECT altitude_source_basis, coverage_fraction FROM activities "
-                "WHERE activity_id = ?", [aid]).fetchone()
-            self.assertEqual(basis, "measured" if n_gnss >= ALTITUDE_MIN_PAIRS
-                             else "device_map", aid)
+                "WHERE activity_id = ?",
+                [aid],
+            ).fetchone()
+            self.assertEqual(
+                basis, "measured" if n_gnss >= ALTITUDE_MIN_PAIRS else "device_map", aid
+            )
             if n_unpaired_no_pos and cov < COVERAGE_WARN:
-                flags = {r[0] for r in self.con.execute(
-                    "SELECT check_name FROM validation_results "
-                    "WHERE activity_id = ?", [aid]).fetchall()}
-                self.assertIn("gps_coverage", flags,
-                              f"{aid}: a leading no-fix block must be flagged")
+                flags = {
+                    r[0]
+                    for r in self.con.execute(
+                        "SELECT check_name FROM validation_results "
+                        "WHERE activity_id = ?",
+                        [aid],
+                    ).fetchall()
+                }
+                self.assertIn(
+                    "gps_coverage",
+                    flags,
+                    f"{aid}: a leading no-fix block must be flagged",
+                )
 
     def test_a_leading_gap_run_reads_its_provenance_correctly(self):
         """The barometric run with the LONGEST leading block of unpaired
@@ -339,7 +420,10 @@ class TestProvenanceAsStored(CorpusTestCase):
         barometric signature holds: diverging from GNSS and SMOOTHER than it
         (§9.2)."""
         from trail_factors.ingest.fit_file import ALTITUDE_IDENTICAL_MIN
-        row = one(self.con, """
+
+        row = one(
+            self.con,
+            """
             SELECT a.altitude_source, a.altitude_source_basis,
                    a.altitude_source_device, a.altitude_source_agrees,
                    a.altitude_identical_frac, a.altitude_sd_record_m,
@@ -350,19 +434,25 @@ class TestProvenanceAsStored(CorpusTestCase):
             GROUP BY ALL
             HAVING count(*) FILTER (WHERE r.altitude_gnss_m IS NULL) > 1
             ORDER BY count(*) FILTER (WHERE r.altitude_gnss_m IS NULL) DESC
-            LIMIT 1""", what="barometric run with a leading unpaired block")
+            LIMIT 1""",
+            what="barometric run with a leading unpaired block",
+        )
         src, basis, dev, agrees, ident, sd_rec, sd_gnss = row
-        self.assertEqual((src, basis, dev, agrees),
-                         ("barometric", "measured", "barometric", True))
+        self.assertEqual(
+            (src, basis, dev, agrees), ("barometric", "measured", "barometric", True)
+        )
         self.assertLess(ident, ALTITUDE_IDENTICAL_MIN)
         self.assertLess(sd_rec, sd_gnss)
 
     def test_the_older_watch_also_gained_the_channel(self):
         """It was always in those files; nothing read it. A fix that only
         reached the new watch would leave the corpus half-instrumented."""
-        one(self.con, "SELECT 1 FROM activities WHERE device = 'fr245_music' "
-                      "AND coverage_fraction > 0 LIMIT 1",
-            what="positioned fr245_music activity")
+        one(
+            self.con,
+            "SELECT 1 FROM activities WHERE device = 'fr245_music' "
+            "AND coverage_fraction > 0 LIMIT 1",
+            what="positioned fr245_music activity",
+        )
         n = self.con.execute("""
             SELECT count(altitude_gnss_m) FROM records r JOIN activities a
               USING (activity_id) WHERE a.device = 'fr245_music'""").fetchone()[0]
@@ -380,8 +470,10 @@ class TestGarminSelfEvaluation(unittest.TestCase):
         self.assertIn("DIRECTION UNVERIFIED", out["garmin_selfeval_scale"])
 
     def test_every_point_of_the_five_point_scale_decodes(self):
-        got = [L._self_evaluation({"workout_feel": v})["garmin_feel"]
-               for v in (0, 25, 50, 75, 100)]
+        got = [
+            L._self_evaluation({"workout_feel": v})["garmin_feel"]
+            for v in (0, 25, 50, 75, 100)
+        ]
         self.assertEqual(got, [1, 2, 3, 4, 5])
 
     def test_an_off_grid_feel_is_NULL_rather_than_rounded(self):
@@ -397,7 +489,6 @@ class TestGarminSelfEvaluation(unittest.TestCase):
 
 
 class TestGarminSelfEvaluationAsStored(CorpusTestCase):
-
     def test_stored_values_are_on_the_decoded_scales(self):
         rows = self.con.execute("""
             SELECT source, garmin_rpe, garmin_feel, garmin_selfeval_scale
@@ -417,12 +508,16 @@ class TestGarminSelfEvaluationAsStored(CorpusTestCase):
 
     def test_the_report_shows_it_and_prices_the_load_from_it(self):
         from trail_factors.analysis.report import build, render
-        aid, rpe, timer_s = one(self.con, """
+
+        aid, rpe, timer_s = one(
+            self.con,
+            """
             SELECT activity_id, garmin_rpe, timer_time_s FROM activities
             WHERE garmin_rpe IS NOT NULL AND timer_time_s IS NOT NULL
               AND source = 'garmin_watch' AND sport = 'running'
             ORDER BY start_time_utc DESC LIMIT 1""",
-            what="watch run with a Garmin RPE")
+            what="watch run with a Garmin RPE",
+        )
         rep = build(self.con, aid)
         gse = rep["athlete"]["garmin_self_evaluation"]
         self.assertEqual(gse["status"], "ok")
@@ -441,13 +536,17 @@ class TestGarminSelfEvaluationAsStored(CorpusTestCase):
         """THE TWIN: a watch that never asked has no rating, and a 0/10 would
         be a fabricated answer."""
         from trail_factors.analysis.report import build
-        aid = one(self.con, """
+
+        aid = one(
+            self.con,
+            """
             SELECT activity_id FROM activities
             WHERE garmin_rpe IS NULL AND garmin_feel IS NULL
               AND source = 'garmin_watch' AND sport = 'running'
               AND coverage_fraction > 0
             ORDER BY start_time_utc DESC LIMIT 1""",
-            what="positioned watch run with no self-evaluation")[0]
+            what="positioned watch run with no self-evaluation",
+        )[0]
         rep = build(self.con, aid)
         gse = rep["athlete"]["garmin_self_evaluation"]
         self.assertEqual(gse["status"], "unavailable")
@@ -465,33 +564,44 @@ class TestRunningDynamics(CorpusTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.dyn = one(cls.con, """
+        cls.dyn = one(
+            cls.con,
+            """
             SELECT r.activity_id FROM records r
             JOIN activities a USING (activity_id)
             WHERE a.source = 'garmin_watch' AND a.sport = 'running'
               AND r.vertical_oscillation IS NOT NULL
             GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT 1""",
-            what="watch run with running-dynamics records")[0]
+            what="watch run with running-dynamics records",
+        )[0]
 
     def test_the_four_channels_are_stored(self):
-        row = self.con.execute("""
+        row = self.con.execute(
+            """
             SELECT count(vertical_oscillation), count(vertical_ratio),
                    count(stance_time), count(step_length)
-            FROM records WHERE activity_id = ?""", [self.dyn]).fetchone()
-        for i, name in enumerate(("vertical_oscillation", "vertical_ratio",
-                                  "stance_time", "step_length")):
+            FROM records WHERE activity_id = ?""",
+            [self.dyn],
+        ).fetchone()
+        for i, name in enumerate(
+            ("vertical_oscillation", "vertical_ratio", "stance_time", "step_length")
+        ):
             self.assertGreater(row[i], 0, name)
 
     def test_the_accessory_only_channels_are_NULL(self):
         """§7 predicted this: stance_time_balance and stance_time_percent need
         a chest strap or pod. Null is the correct answer, not zero."""
-        n = self.con.execute("""
+        n = self.con.execute(
+            """
             SELECT count(*) FROM records WHERE activity_id = ?
-              AND stance_time_pct = 0""", [self.dyn]).fetchone()[0]
+              AND stance_time_pct = 0""",
+            [self.dyn],
+        ).fetchone()[0]
         self.assertEqual(n, 0, "an absent accessory channel must be NULL, never 0")
 
     def test_basic_metrics_reports_them_with_UNITS(self):
         from trail_factors.analysis.basic import running_dynamics
+
         rd = running_dynamics(self.con, self.dyn)
         self.assertEqual(rd["vertical_oscillation_mm"]["unit"], "mm")
         self.assertEqual(rd["stance_time_ms"]["unit"], "ms")
@@ -509,7 +619,10 @@ class TestRunningDynamics(CorpusTestCase):
 
     def test_a_run_without_them_is_unavailable_with_a_reason(self):
         from trail_factors.analysis.basic import running_dynamics
-        aid = one(self.con, """
+
+        aid = one(
+            self.con,
+            """
             SELECT a.activity_id FROM activities a
             WHERE a.source = 'garmin_watch' AND a.sport = 'running'
               AND a.coverage_fraction > 0
@@ -517,7 +630,8 @@ class TestRunningDynamics(CorpusTestCase):
                               WHERE r.activity_id = a.activity_id
                                 AND r.vertical_oscillation IS NOT NULL)
             ORDER BY a.start_time_utc DESC LIMIT 1""",
-            what="positioned watch run without running dynamics")[0]
+            what="positioned watch run without running dynamics",
+        )[0]
         rd = running_dynamics(self.con, aid)
         for key in ("vertical_oscillation_mm", "stance_time_ms"):
             self.assertIsNone(rd[key]["value"])
@@ -526,7 +640,10 @@ class TestRunningDynamics(CorpusTestCase):
 
     def test_the_grade_table_carries_them_per_bin(self):
         from trail_factors.analysis.primitives import grade_binned_pace
-        aid = one(self.con, """
+
+        aid = one(
+            self.con,
+            """
             SELECT r.activity_id FROM records r
             JOIN activities a USING (activity_id)
             WHERE a.source = 'garmin_watch' AND a.sport = 'running'
@@ -534,18 +651,21 @@ class TestRunningDynamics(CorpusTestCase):
               AND EXISTS (SELECT 1 FROM records_enriched e
                           WHERE e.activity_id = r.activity_id)
             GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT 1""",
-            what="DEM-covered watch run with running dynamics")[0]
+            what="DEM-covered watch run with running dynamics",
+        )[0]
         bins = grade_binned_pace(self.con, aid)
         if not bins["bins"]:
             self.skipTest("the subject produced no grade bins")
-        with_rd = [b for b in bins["bins"]
-                   if b["vertical_oscillation_mm"] is not None]
+        with_rd = [b for b in bins["bins"] if b["vertical_oscillation_mm"] is not None]
         self.assertTrue(with_rd, "a run with dynamics should carry them per bin")
         self.assertEqual(bins["filters"]["running_dynamics_units"]["stance_time"], "ms")
 
     def test_a_grade_table_without_them_is_null_there_not_zero(self):
         from trail_factors.analysis.primitives import grade_binned_pace
-        aid = one(self.con, """
+
+        aid = one(
+            self.con,
+            """
             SELECT a.activity_id FROM activities a
             WHERE a.source = 'garmin_watch' AND a.sport = 'running'
               AND EXISTS (SELECT 1 FROM records_enriched e
@@ -554,7 +674,8 @@ class TestRunningDynamics(CorpusTestCase):
                               WHERE r.activity_id = a.activity_id
                                 AND r.vertical_oscillation IS NOT NULL)
             ORDER BY a.start_time_utc DESC LIMIT 1""",
-            what="DEM-covered watch run without running dynamics")[0]
+            what="DEM-covered watch run without running dynamics",
+        )[0]
         for b in grade_binned_pace(self.con, aid)["bins"]:
             self.assertIsNone(b["vertical_oscillation_mm"])
             self.assertIsNone(b["stance_time_ms"])
@@ -569,12 +690,13 @@ class TestTheCadenceFormulaHoldsOnTheNewDevice(_Files):
     def _oracle(self):
         import json
         import re
+
         from trail_factors.paths import RAW_DIR
+
         gid = re.search(r"(\d+)_ACTIVITY", self.BARO.name)
         listing = {}
         for f in sorted((RAW_DIR / "garmin_api").glob("activities_*.json")):
-            listing.update({str(a["activityId"]): a
-                            for a in json.loads(f.read_text())})
+            listing.update({str(a["activityId"]): a for a in json.loads(f.read_text())})
         a = listing.get(gid.group(1)) if gid else None
         if not a or a.get("averageRunningCadenceInStepsPerMinute") is None:
             self.skipTest("no cached Garmin summary for the barometric file")
@@ -582,8 +704,11 @@ class TestTheCadenceFormulaHoldsOnTheNewDevice(_Files):
 
     def _candidates(self):
         recs = F.coalesce_records(F.read_messages(self.BARO)["record"])
-        cad = [(r.get("cadence"), r.get("fractional_cadence")) for r in recs
-               if r.get("cadence") is not None]
+        cad = [
+            (r.get("cadence"), r.get("fractional_cadence"))
+            for r in recs
+            if r.get("cadence") is not None
+        ]
         a = [(c + (f if f is not None else 0.0)) * 2 for c, f in cad]
         b = [c * 2 + (f if f is not None else 0.0) for c, f in cad]
         return a, b
@@ -594,12 +719,15 @@ class TestTheCadenceFormulaHoldsOnTheNewDevice(_Files):
         mean_a = sum(a) / len(a)
         mean_b = sum(b) / len(b)
         self.assertLess(abs(mean_a - api), 0.05)
-        self.assertLess(abs(mean_a - api), abs(mean_b - api),
-                        "the stored formula must fit Garmin's average better "
-                        "than the alternative")
+        self.assertLess(
+            abs(mean_a - api),
+            abs(mean_b - api),
+            "the stored formula must fit Garmin's average better than the alternative",
+        )
 
     def test_the_stored_formula_is_the_one_that_matched(self):
         from trail_factors.analysis.basic import CADENCE_STEPS_PER_STRIDE, _cadence_expr
+
         self.assertEqual(CADENCE_STEPS_PER_STRIDE, 2)
         self.assertIn("fractional_cadence", _cadence_expr())
 
@@ -612,10 +740,13 @@ class TestTheSplitPartitionCheck(CorpusTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.aid, _, path = _fit(cls.con, """EXISTS (SELECT 1 FROM splits s
+        cls.aid, _, path = _fit(
+            cls.con,
+            """EXISTS (SELECT 1 FROM splits s
             WHERE s.activity_id = a.activity_id
               AND s.split_type = 'interval_active')""",
-            "watch run with an interval_active split")
+            "watch run with an interval_active split",
+        )
         cls.m = F.read_messages(path)
 
     def findings(self, **session):
@@ -623,10 +754,11 @@ class TestTheSplitPartitionCheck(CorpusTestCase):
         return V.bronze_checks(F.coalesce_records(self.m["record"]), sess, self.m)
 
     def test_the_whole_run_split_raises_no_partition_finding(self):
-        self.assertNotIn("split_distance_consistency",
-                         [f.check for f in self.findings()],
-                         "a file with nothing wrong with its partition must "
-                         "not flag")
+        self.assertNotIn(
+            "split_distance_consistency",
+            [f.check for f in self.findings()],
+            "a file with nothing wrong with its partition must not flag",
+        )
 
     def test_the_check_still_fires_on_a_REAL_inconsistency(self):
         """THE POSITIVE TWIN. Excluding non-partition splits must not disable
@@ -641,16 +773,23 @@ class TestTheSplitPartitionCheck(CorpusTestCase):
         total = F.session_of(self.m).get("total_distance")
         if total is None:
             self.skipTest("the subject's session carries no total distance")
-        msg = [f.message for f in self.findings(total_distance=total * 3 + 10_000.0)
-               if f.check == "split_distance_consistency"][0]
+        msg = [
+            f.message
+            for f in self.findings(total_distance=total * 3 + 10_000.0)
+            if f.check == "split_distance_consistency"
+        ][0]
         self.assertIn("interval_active", msg)
 
     def test_a_fresh_read_agrees_with_what_ingest_stored(self):
         """The check set as a whole is live: whatever bronze finds on a fresh
         read of the file, ingest recorded too."""
-        stored = {r[0] for r in self.con.execute(
-            "SELECT check_name FROM validation_results WHERE activity_id = ?",
-            [self.aid]).fetchall()}
+        stored = {
+            r[0]
+            for r in self.con.execute(
+                "SELECT check_name FROM validation_results WHERE activity_id = ?",
+                [self.aid],
+            ).fetchall()
+        }
         self.assertLessEqual({f.check for f in self.findings()}, stored)
 
 

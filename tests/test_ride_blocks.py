@@ -27,29 +27,33 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from tests.corpus import CorpusTestCase, one
 from trail_factors.analysis import rides as RD
 from trail_factors.ingest import ride_blocks as RB
 from trail_factors.paths import REPO_ROOT
-from tests.corpus import CorpusTestCase, one
 
-RIDE = "2025-01-15T0700Z"          # synthetic run_id
-DUR = 50.0                         # synthetic timer time, minutes
+RIDE = "2025-01-15T0700Z"  # synthetic run_id
+DUR = 50.0  # synthetic timer time, minutes
 
 # Synthetic log 1: no rpm anywhere, and a complete valid log.
 LOG_NO_RPM = {
     "run_id": RIDE,
     "raw_text": "15m @ 6.5\n15m @ 7.5\n20m @ 9.25",
-    "blocks": [{"resistance": 6.5, "end_min": 15},
-               {"resistance": 7.5, "end_min": 30},
-               {"resistance": 9.25, "end_min": 50}],
+    "blocks": [
+        {"resistance": 6.5, "end_min": 15},
+        {"resistance": 7.5, "end_min": 30},
+        {"resistance": 9.25, "end_min": 50},
+    ],
 }
 # Synthetic log 2: rpm ranges, an event, and the console readout.
 LOG_RPM = {
     "run_id": RIDE,
     "raw_text": "0-30 at 7 @ 90-95, then 8.5 @ 85. water stop ~18m. "
-                "console 25.0km 80rpm",
-    "blocks": [{"resistance": 7.0, "rpm": [90, 95], "end_min": 30},
-               {"resistance": 8.5, "rpm": 85, "end_min": 50}],
+    "console 25.0km 80rpm",
+    "blocks": [
+        {"resistance": 7.0, "rpm": [90, 95], "end_min": 30},
+        {"resistance": 8.5, "rpm": 85, "end_min": 50},
+    ],
     "events": [{"minute": 18, "text": "water stop"}],
     "machine_totals": {"distance": 25.0, "distance_unit": "km", "avg_rpm": 80},
 }
@@ -59,8 +63,11 @@ def scaled(log, run_id, dur):
     """The same log re-keyed to a corpus ride and stretched to its length:
     block ends and event minutes keep their fraction of DUR."""
     k = dur / DUR
-    out = {**log, "run_id": run_id,
-           "blocks": [{**b, "end_min": b["end_min"] * k} for b in log["blocks"]]}
+    out = {
+        **log,
+        "run_id": run_id,
+        "blocks": [{**b, "end_min": b["end_min"] * k} for b in log["blocks"]],
+    }
     if "events" in log:
         out["events"] = [{**e, "minute": e["minute"] * k} for e in log["events"]]
     return out
@@ -93,8 +100,10 @@ class _Store:
         self._tmp = tempfile.TemporaryDirectory()
         d = Path(self._tmp.name)
         self.path = d / "ride_blocks.json"
-        self._p = [mock.patch.object(RB, "RIDE_BLOCKS", self.path),
-                   mock.patch.object(RB, "BIKE_CONFIG", d / "bike_config.json")]
+        self._p = [
+            mock.patch.object(RB, "RIDE_BLOCKS", self.path),
+            mock.patch.object(RB, "BIKE_CONFIG", d / "bike_config.json"),
+        ]
         for p in self._p:
             p.start()
         return self
@@ -134,25 +143,28 @@ class TestTheCorpusActuallyLooksLikeThis(_RideCorpusTest):
     def test_the_odometer_is_not_a_measurement(self):
         """Constant (the watch writes a fake 0.0) or absent -- never a
         distance that moves."""
-        lo, hi, distinct = self.con.execute("""
+        lo, hi, distinct = self.con.execute(
+            """
             SELECT min(r.distance_m), max(r.distance_m),
                    count(DISTINCT r.distance_m)
-            FROM records r WHERE r.activity_id = ?""", [self.aid]).fetchone()
+            FROM records r WHERE r.activity_id = ?""",
+            [self.aid],
+        ).fetchone()
         self.assertLessEqual(distinct, 1)
         if distinct == 1:
             self.assertEqual((lo, hi), (0.0, 0.0))
 
     def test_session_series_already_bins_hr_for_one(self):
         from trail_factors.analysis.series import binned_series
+
         s = binned_series(self.con, self.aid)
-        expected = int(self.dur * 2)            # 30 s bins over the timer
+        expected = int(self.dur * 2)  # 30 s bins over the timer
         self.assertGreaterEqual(s["n_bins"], expected * 0.9)
         with_hr = sum(1 for b in s["bins"] if b["avg_hr"] is not None)
         self.assertGreaterEqual(with_hr, s["n_bins"] * 0.9)
 
 
 class TestTheRoundTrip(unittest.TestCase):
-
     def test_a_block_set_saves_and_reads_back(self):
         with _Store() as s:
             e = RB.save_ride_blocks(dict(LOG_RPM), duration_min=DUR)
@@ -160,9 +172,10 @@ class TestTheRoundTrip(unittest.TestCase):
             back = RB.load_ride_blocks()[RIDE]
             self.assertEqual(len(back["blocks"]), 2)
             self.assertEqual(back["raw_text"], LOG_RPM["raw_text"])
-            self.assertEqual(back["machine_totals"],
-                             {"distance": 25.0, "distance_unit": "km",
-                              "avg_rpm": 80.0})
+            self.assertEqual(
+                back["machine_totals"],
+                {"distance": 25.0, "distance_unit": "km", "avg_rpm": 80.0},
+            )
             self.assertEqual(s.raw()[RIDE]["blocks"][0]["resistance"], 7.0)
 
     def test_an_end_anchored_input_derives_the_intervals(self):
@@ -171,16 +184,19 @@ class TestTheRoundTrip(unittest.TestCase):
             e = RB.save_ride_blocks(dict(LOG_NO_RPM), duration_min=DUR)
         spans = [(b["start_min"], b["end_min"]) for b in e["blocks"]]
         self.assertEqual(spans, [(0.0, 15.0), (15.0, 30.0), (30.0, 50.0)])
-        self.assertEqual([b["resistance"] for b in e["blocks"]],
-                         [6.5, 7.5, 9.25])
+        self.assertEqual([b["resistance"] for b in e["blocks"]], [6.5, 7.5, 9.25])
 
     def test_start_min_may_not_be_supplied(self):
         """One way to state a boundary means no way for two to disagree."""
         with _Store():
             with self.assertRaises(RB.RideBlockError) as ctx:
-                RB.save_ride_blocks({**LOG_NO_RPM, "blocks": [
-                    {"resistance": 6.5, "start_min": 0, "end_min": 15}]},
-                    duration_min=DUR)
+                RB.save_ride_blocks(
+                    {
+                        **LOG_NO_RPM,
+                        "blocks": [{"resistance": 6.5, "start_min": 0, "end_min": 15}],
+                    },
+                    duration_min=DUR,
+                )
             self.assertIn("DERIVED", str(ctx.exception))
 
     def test_a_log_with_no_rpm_anywhere_round_trips(self):
@@ -195,45 +211,52 @@ class TestTheRoundTrip(unittest.TestCase):
     def test_a_single_rpm_becomes_a_range_and_a_range_is_never_collapsed(self):
         with _Store():
             e = RB.save_ride_blocks(dict(LOG_RPM), duration_min=DUR)
-        self.assertEqual(e["blocks"][0]["rpm"], [90.0, 95.0])     # kept as stated
-        self.assertEqual(e["blocks"][1]["rpm"], [85.0, 85.0])     # single -> pair
+        self.assertEqual(e["blocks"][0]["rpm"], [90.0, 95.0])  # kept as stated
+        self.assertEqual(e["blocks"][1]["rpm"], [85.0, 85.0])  # single -> pair
         # NEVER a midpoint: 92.5 would invent precision the memory lacks.
         self.assertNotIn(92.5, e["blocks"][0]["rpm"])
 
 
 class TestRejections(unittest.TestCase):
-
     def test_a_block_past_the_activity_duration_is_rejected_NAMING_the_bound(self):
         with _Store():
             with self.assertRaises(RB.RideBlockError) as ctx:
                 RB.save_ride_blocks(
-                    {**LOG_NO_RPM,
-                     "blocks": [{"resistance": 6.5, "end_min": 90}]},
-                    duration_min=DUR)
+                    {**LOG_NO_RPM, "blocks": [{"resistance": 6.5, "end_min": 90}]},
+                    duration_min=DUR,
+                )
             msg = str(ctx.exception)
             self.assertIn("90", msg)
-            self.assertIn("50", msg)          # the BOUND is named
+            self.assertIn("50", msg)  # the BOUND is named
             self.assertIn("timer time", msg)
 
     def test_contradictory_blocks_are_rejected_naming_BOTH_entries(self):
         """Amendment 2: ambiguity is refused, never resolved."""
         with _Store():
             with self.assertRaises(RB.RideBlockError) as ctx:
-                RB.save_ride_blocks({**LOG_NO_RPM, "blocks": [
-                    {"resistance": 7.0, "end_min": 35},
-                    {"resistance": 8.5, "end_min": 30}]},    # goes backwards
-                    duration_min=DUR)
+                RB.save_ride_blocks(
+                    {
+                        **LOG_NO_RPM,
+                        "blocks": [
+                            {"resistance": 7.0, "end_min": 35},
+                            {"resistance": 8.5, "end_min": 30},
+                        ],
+                    },  # goes backwards
+                    duration_min=DUR,
+                )
             msg = str(ctx.exception)
-            self.assertIn("block 1", msg)     # the offending entry
-            self.assertIn("30", msg)          # ...and its value
-            self.assertIn("35", msg)          # ...and what it collides with
+            self.assertIn("block 1", msg)  # the offending entry
+            self.assertIn("30", msg)  # ...and its value
+            self.assertIn("35", msg)  # ...and what it collides with
             self.assertIn("overlap", msg.lower())
 
     def test_resistance_outside_the_scale_is_rejected(self):
         with _Store():
             with self.assertRaises(RB.RideBlockError) as ctx:
-                RB.save_ride_blocks({**LOG_NO_RPM, "blocks": [
-                    {"resistance": 65, "end_min": 15}]}, duration_min=DUR)
+                RB.save_ride_blocks(
+                    {**LOG_NO_RPM, "blocks": [{"resistance": 65, "end_min": 15}]},
+                    duration_min=DUR,
+                )
             self.assertIn("65", str(ctx.exception))
 
     def test_the_ceiling_says_it_is_DECLARED_not_measured(self):
@@ -243,9 +266,13 @@ class TestRejections(unittest.TestCase):
             ceiling, source = RB.resistance_max()
             self.assertEqual(source, "declared_editorial_not_measured")
             with self.assertRaises(RB.RideBlockError) as ctx:
-                RB.save_ride_blocks({**LOG_NO_RPM, "blocks": [
-                    {"resistance": ceiling + 1, "end_min": 15}]},
-                    duration_min=DUR)
+                RB.save_ride_blocks(
+                    {
+                        **LOG_NO_RPM,
+                        "blocks": [{"resistance": ceiling + 1, "end_min": 15}],
+                    },
+                    duration_min=DUR,
+                )
             self.assertIn("declared editorial", str(ctx.exception))
 
     def test_the_payload_names_WHERE_the_ceiling_lives(self):
@@ -253,6 +280,7 @@ class TestRejections(unittest.TestCase):
         exist -- the number is a constant in the module. A claim about where a
         value lives must be checkable, so it is a field, not prose."""
         from pathlib import Path as _P
+
         with _Store():
             self.assertFalse(_P(str(RB.BIKE_CONFIG)).exists())
             e = RB.save_ride_blocks(dict(LOG_NO_RPM), duration_min=DUR)
@@ -260,8 +288,10 @@ class TestRejections(unittest.TestCase):
         self.assertIn("ride_blocks.py", where)
         self.assertIn("RESISTANCE_MAX_DECLARED", where)
         # ...and that constant is genuinely there.
-        self.assertIn("RESISTANCE_MAX_DECLARED",
-                      (REPO_ROOT / "src/trail_factors/ingest/ride_blocks.py").read_text())
+        self.assertIn(
+            "RESISTANCE_MAX_DECLARED",
+            (REPO_ROOT / "src/trail_factors/ingest/ride_blocks.py").read_text(),
+        )
 
     def test_the_config_file_is_NOT_created_by_a_save(self):
         """data/athlete/ is athlete-SUPPLIED state. Filing a declared default
@@ -284,27 +314,33 @@ class TestRejections(unittest.TestCase):
         """THE TWIN: when the athlete measures it, the label must change."""
         with _Store() as s:
             (s.path.parent / "bike_config.json").write_text(
-                json.dumps({"resistance_max_turns": 30.0}))
+                json.dumps({"resistance_max_turns": 30.0})
+            )
             self.assertEqual(RB.resistance_max(), (30.0, "measured_by_athlete"))
-            e = RB.save_ride_blocks({**LOG_NO_RPM, "blocks": [
-                {"resistance": 25.0, "end_min": 15}]}, duration_min=DUR)
-            self.assertEqual(e["resistance_scale"]["max_source"],
-                             "measured_by_athlete")
+            e = RB.save_ride_blocks(
+                {**LOG_NO_RPM, "blocks": [{"resistance": 25.0, "end_min": 15}]},
+                duration_min=DUR,
+            )
+            self.assertEqual(e["resistance_scale"]["max_source"], "measured_by_athlete")
 
     def test_quarter_turn_resolution_is_NOT_enforced(self):
         """The knob is a 360-degree swivel read by eye. Refusing a 6.3 would
         be hostile to the way the log is actually kept."""
         with _Store():
-            e = RB.save_ride_blocks({**LOG_NO_RPM, "blocks": [
-                {"resistance": 6.3, "end_min": 15}]}, duration_min=DUR)
+            e = RB.save_ride_blocks(
+                {**LOG_NO_RPM, "blocks": [{"resistance": 6.3, "end_min": 15}]},
+                duration_min=DUR,
+            )
             self.assertEqual(e["blocks"][0]["resistance"], 6.3)
             self.assertFalse(e["resistance_scale"]["resolution_enforced"])
 
     def test_raw_text_is_required(self):
         with _Store():
             with self.assertRaises(RB.RideBlockError) as ctx:
-                RB.save_ride_blocks({k: v for k, v in LOG_NO_RPM.items()
-                                     if k != "raw_text"}, duration_min=DUR)
+                RB.save_ride_blocks(
+                    {k: v for k, v in LOG_NO_RPM.items() if k != "raw_text"},
+                    duration_min=DUR,
+                )
             self.assertIn("raw_text", str(ctx.exception))
 
     def test_a_distance_without_its_unit_is_refused(self):
@@ -313,7 +349,8 @@ class TestRejections(unittest.TestCase):
             with self.assertRaises(RB.RideBlockError) as ctx:
                 RB.save_ride_blocks(
                     {**LOG_NO_RPM, "machine_totals": {"distance": 25.0}},
-                    duration_min=DUR)
+                    duration_min=DUR,
+                )
             self.assertIn("distance_unit", str(ctx.exception))
 
 
@@ -325,17 +362,21 @@ class TestRawTextSurvivesSupersede(unittest.TestCase):
         digest = hashlib.sha256(original.encode()).hexdigest()
         with _Store() as s:
             RB.save_ride_blocks(dict(LOG_RPM), duration_min=DUR)
-            corrected = {**LOG_RPM, "blocks": [
-                {"resistance": 7.0, "rpm": [90, 95], "end_min": 25},
-                {"resistance": 8.5, "rpm": 85, "end_min": 50}]}
+            corrected = {
+                **LOG_RPM,
+                "blocks": [
+                    {"resistance": 7.0, "rpm": [90, 95], "end_min": 25},
+                    {"resistance": 8.5, "rpm": 85, "end_min": 50},
+                ],
+            }
             e = RB.save_ride_blocks(corrected, duration_min=DUR, supersede=True)
             self.assertEqual(e["revision"], 1)
-            self.assertEqual(
-                hashlib.sha256(e["raw_text"].encode()).hexdigest(), digest)
+            self.assertEqual(hashlib.sha256(e["raw_text"].encode()).hexdigest(), digest)
             old = s.raw()[RIDE]["superseded"][0]
             self.assertEqual(
-                hashlib.sha256(old["raw_text"].encode()).hexdigest(), digest)
-            self.assertEqual(old["blocks"][0]["end_min"], 30.0)   # kept as was
+                hashlib.sha256(old["raw_text"].encode()).hexdigest(), digest
+            )
+            self.assertEqual(old["blocks"][0]["end_min"], 30.0)  # kept as was
 
     def test_a_second_save_without_supersede_is_refused(self):
         with _Store():
@@ -344,14 +385,14 @@ class TestRawTextSurvivesSupersede(unittest.TestCase):
                 RB.save_ride_blocks(dict(LOG_NO_RPM), duration_min=DUR)
             msg = str(ctx.exception)
             self.assertIn("already has a ride log", msg)
-            self.assertIn("ARGUMENT BESIDE", msg)      # position, not just name
+            self.assertIn("ARGUMENT BESIDE", msg)  # position, not just name
 
 
 class TestTheRead(_RideCorpusTest):
-
     def save(self, log):
-        return RB.save_ride_blocks(scaled(log, self.rid, self.dur),
-                                   duration_min=self.dur)
+        return RB.save_ride_blocks(
+            scaled(log, self.rid, self.dur), duration_min=self.dur
+        )
 
     def test_an_unannotated_ride_is_unavailable_with_a_reason(self):
         """NOT an empty list, which reads as a ride with no blocks in it."""
@@ -399,10 +440,10 @@ class TestTheRead(_RideCorpusTest):
 
 
 class TestTheLongitudinalCut(_RideCorpusTest):
-
     def save(self, log):
-        return RB.save_ride_blocks(scaled(log, self.rid, self.dur),
-                                   duration_min=self.dur)
+        return RB.save_ride_blocks(
+            scaled(log, self.rid, self.dur), duration_min=self.dur
+        )
 
     def test_one_matching_block_returns_n_1_and_refuses_a_trend(self):
         with _Store():
@@ -430,22 +471,26 @@ class TestTheLongitudinalCut(_RideCorpusTest):
         with _Store():
             self.save(LOG_NO_RPM)
             h = RD.resistance_history(self.con)
-            keys = {(g["resistance"], None if g["rpm"] is None
-                     else tuple(g["rpm"])) for g in h["groups"]}
+            keys = {
+                (g["resistance"], None if g["rpm"] is None else tuple(g["rpm"]))
+                for g in h["groups"]
+            }
         self.assertTrue(all(k[1] is None for k in keys))
         self.assertEqual(len(keys), 3)
 
 
 class TestTheRealAthleteFileIsUntouched(unittest.TestCase):
-
     def test_no_test_writes_into_data_athlete(self):
         """The real file is never READ here, only stat-ed: its contents are
         the athlete's, and this test needs only to know it did not change."""
         real = RB.RIDE_BLOCKS
 
         def stamp():
-            return ((real.stat().st_size, real.stat().st_mtime_ns)
-                    if real.exists() else None)
+            return (
+                (real.stat().st_size, real.stat().st_mtime_ns)
+                if real.exists()
+                else None
+            )
 
         before = stamp()
         with _Store() as s:

@@ -17,7 +17,7 @@ from pathlib import Path
 
 from trail_factors.paths import ATHLETE_DIR
 
-STATE_DIR = ATHLETE_DIR    # repo-root anchored (src/trail_factors/paths.py)
+STATE_DIR = ATHLETE_DIR  # repo-root anchored (src/trail_factors/paths.py)
 CONFIRMATIONS = STATE_DIR / "window_confirmations.json"
 
 
@@ -39,7 +39,8 @@ def atomic_write(path: Path, obj) -> None:
     THE STANDING RULE FOR THIS DIRECTORY, and it had not reached this module.
     `jobs.json` needed it first, then the other athlete-state logs -- and the
     files written HERE (window_confirmations, segment names, run notes) were
-    still going out through a plain `write_text` long after. A plain write interrupted or read mid-flight leaves
+    still going out through a plain `write_text` long after. A plain write interrupted
+    or read mid-flight leaves
     unparseable JSON and takes every entry with it, and `data/athlete/` is the
     one directory that cannot be rebuilt from anything.
 
@@ -83,8 +84,9 @@ def _dt(v):
     return datetime.fromisoformat(v) if isinstance(v, str) else v
 
 
-def save_confirmation(file_sha256, valid_start, valid_end, confirmed_at,
-                      note="", source="cli"):
+def save_confirmation(
+    file_sha256, valid_start, valid_end, confirmed_at, note="", source="cli"
+):
     """Record one confirmed window, KEEPING any it replaces.
 
     IT USED TO REPLACE WITHOUT HISTORY. `rows = [r for r in rows if sha != ...]`
@@ -100,12 +102,14 @@ def save_confirmation(file_sha256, valid_start, valid_end, confirmed_at,
     """
     rows = load_confirmations()
     previous = next((r for r in rows if r["file_sha256"] == file_sha256), None)
-    entry = {"file_sha256": file_sha256,
-             "valid_start_utc": _iso(valid_start),
-             "valid_end_utc": _iso(valid_end),
-             "confirmed_at": _iso(confirmed_at),
-             "source": source,
-             "note": note}
+    entry = {
+        "file_sha256": file_sha256,
+        "valid_start_utc": _iso(valid_start),
+        "valid_end_utc": _iso(valid_end),
+        "confirmed_at": _iso(confirmed_at),
+        "source": source,
+        "note": note,
+    }
     revise(previous, entry)
     rows = [r for r in rows if r["file_sha256"] != file_sha256] + [entry]
     rows.sort(key=lambda r: r["file_sha256"])
@@ -146,18 +150,25 @@ def load_segment_names() -> list[dict]:
     return rows
 
 
-def save_segment_name(name: str, anchor: dict, named_at,
-                      previous: dict | None = None) -> dict:
+def save_segment_name(
+    name: str, anchor: dict, named_at, previous: dict | None = None
+) -> dict:
     """Name the slope `anchor` resolves to. `previous` is the existing entry
     that resolves to the SAME segment, found by the caller (which holds the
     database); it is revised, not duplicated."""
     from trail_factors.analysis.venues import validate_anchor
 
-    entry = {"name": name, "anchor": validate_anchor(anchor),
-             "named_at": _iso(named_at)}
+    entry = {
+        "name": name,
+        "anchor": validate_anchor(anchor),
+        "named_at": _iso(named_at),
+    }
     revise(previous, entry)
-    rows = [r for r in load_segment_names()
-            if previous is None or r["anchor"] != previous["anchor"]]
+    rows = [
+        r
+        for r in load_segment_names()
+        if previous is None or r["anchor"] != previous["anchor"]
+    ]
     rows.append(entry)
     rows.sort(key=lambda r: (r["anchor"]["run_id"], r["anchor"]["at_distance_m"]))
     atomic_write(SEGMENT_NAMES, rows)
@@ -192,8 +203,7 @@ def save_venue_anchor(venue: str, anchor: dict, at) -> dict:
     anchors = list(previous["anchors"]) if previous else []
     if anchor in anchors:
         raise ValueError(f"{venue!r} already has this anchor")
-    entry = {"name": venue, "anchors": anchors + [anchor],
-             "updated_at": _iso(at)}
+    entry = {"name": venue, "anchors": anchors + [anchor], "updated_at": _iso(at)}
     revise(previous, entry)
     rows = [v for v in rows if v["name"] != venue] + [entry]
     rows.sort(key=lambda v: v["name"])
@@ -234,8 +244,10 @@ def restore_annotations(con) -> int:
     rows = load_notes()
     con.execute("DELETE FROM annotations")
     for r in rows:
-        con.execute("INSERT INTO annotations (run_id, note, noted_at) VALUES (?,?,?)",
-                    [r["run_id"], r["note"], _dt(r["noted_at"])])
+        con.execute(
+            "INSERT INTO annotations (run_id, note, noted_at) VALUES (?,?,?)",
+            [r["run_id"], r["note"], _dt(r["noted_at"])],
+        )
     return len(rows)
 
 
@@ -244,11 +256,19 @@ def restore_into(con) -> int:
     so a deleted database recovers the athlete's decisions automatically."""
     rows = load_confirmations()
     for r in rows:
-        con.execute("DELETE FROM window_confirmations WHERE file_sha256 = ?",
-                    [r["file_sha256"]])
-        con.execute("INSERT INTO window_confirmations VALUES (?,?,?,?,?)",
-                    [r["file_sha256"], _dt(r["valid_start_utc"]),
-                     _dt(r["valid_end_utc"]), _dt(r["confirmed_at"]), r.get("note")])
+        con.execute(
+            "DELETE FROM window_confirmations WHERE file_sha256 = ?", [r["file_sha256"]]
+        )
+        con.execute(
+            "INSERT INTO window_confirmations VALUES (?,?,?,?,?)",
+            [
+                r["file_sha256"],
+                _dt(r["valid_start_utc"]),
+                _dt(r["valid_end_utc"]),
+                _dt(r["confirmed_at"]),
+                r.get("note"),
+            ],
+        )
     return len(rows)
 
 

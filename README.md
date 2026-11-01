@@ -201,9 +201,12 @@ two segments instead of one; setting `projection_crs` avoids it.
 ## Tests
 
 ```sh
-uv run python -m unittest discover tests                            # unit tests; corpus tests skip
-TRAIL_FACTORS_DB=data/copy.duckdb uv run python -m unittest discover tests   # everything
+uv run pytest                                     # unit tests; corpus tests skip
+TRAIL_FACTORS_DB=data/copy.duckdb uv run pytest   # everything
 ```
+
+The suite is plain `unittest`; pytest runs it, and
+`uv run python -m unittest discover tests` works too.
 
 Corpus tests read an ingested database and run only when `TRAIL_FACTORS_DB` is
 set. Point it at a **copy** of your database. The tests open it read-only and
@@ -217,6 +220,21 @@ the repo. A fresh checkout has none. Run it with `--pin` once to choose the
 pinned activity list, then with no flag to capture the outputs, then with
 `--check` after every refactor (it exits non-zero on a diff).
 
+## Development
+
+```sh
+pre-commit install            # once: gitleaks + ruff on every commit
+pre-commit run --all-files    # everything (gitleaks scans what is staged)
+uv run ruff check . && uv run ruff format --check .
+```
+
+CI (`.github/workflows/ci.yml`) runs ruff and pytest on every push and pull
+request, with `TRAIL_FACTORS_DB` unset, so corpus tests skip. A second
+workflow scans the full git history with TruffleHog on every push and fails
+on any verified or unknown finding. Dependabot proposes weekly updates for the
+GitHub Actions and for the Python dependencies (Dependabot's `uv`
+ecosystem).
+
 ## Privacy defaults
 
 - The entire `data/` directory is gitignored. That includes your raw files
@@ -229,3 +247,7 @@ pinned activity list, then with no flag to capture the outputs, then with
 - Weather requests send one start coordinate per run, rounded to about
   1.1 km. DEM fetches send a 10 km grid cell. Nothing else leaves the
   machine except Garmin's own API calls.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

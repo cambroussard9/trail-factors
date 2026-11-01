@@ -42,6 +42,7 @@ def _short_sha(value: str | None) -> str | None:
         return None
     return hashlib.sha256(value.encode()).hexdigest()[:12]
 
+
 # Bump by hand when a computation that affects STORED values changes in a way
 # the parameter set below does not capture -- an algorithm change rather than a
 # threshold change. The digest catches thresholds automatically; this catches
@@ -60,16 +61,16 @@ def calc_params() -> dict:
     have already changed once in this project's history.
     """
     from trail_factors.analysis import basic as B
-    from trail_factors.analysis import drift_onset as DO
-    from trail_factors.analysis import primitives as PR
     from trail_factors.analysis import cycles as CY
-    from trail_factors.ingest import fit_file as FF
-    from trail_factors.ingest.load import SELFEVAL_SCALE as LOAD_SELFEVAL_SCALE
+    from trail_factors.analysis import drift_onset as DO
+    from trail_factors.analysis import over as O
+    from trail_factors.analysis import primitives as PR
     from trail_factors.analysis import recovery as RC
     from trail_factors.analysis import series as SR
-    from trail_factors.analysis import zones as ZN
     from trail_factors.analysis import venues as VN
-    from trail_factors.analysis import over as O
+    from trail_factors.analysis import zones as ZN
+    from trail_factors.ingest import fit_file as FF
+    from trail_factors.ingest.load import SELFEVAL_SCALE as LOAD_SELFEVAL_SCALE
     from trail_factors.transform import dem as D
     from trail_factors.transform import matcher as M
     from trail_factors.transform import silver as S
@@ -110,10 +111,10 @@ def calc_params() -> dict:
         "venue_link_share_min": VN.LINK_SHARE_MIN,
         "gnss_unknown_age_after_gap_s": FF.GNSS_UNKNOWN_AGE_AFTER_GAP_S,
         "altitude_gnss_pairing": "the last gps_metadata frame written BEFORE "
-                                 "the record, by file order (gps_metadata "
-                                 "carries no timestamp)",
+        "the record, by file order (gps_metadata "
+        "carries no timestamp)",
         "altitude_source_rule": "measured from the two channels; the device "
-                                "map is a cross-check that flags disagreement",
+        "map is a cross-check that flags disagreement",
         # --- session load ---------------------------------------------------
         # The DECODING of Garmin's self-evaluation and the FORMULA built on
         # it. Either changing moves every session load in the corpus.
@@ -206,8 +207,8 @@ def calc_params() -> dict:
         # --- stopped-time definition ---------------------------------------
         "stopped_time_excluded_from_rates": True,
         "stopped_time_source": "stops table for segment-grain rates; for "
-                               "§6.0 the union of stops and rwd_stand splits, "
-                               "merged. Never dropped from bronze (§4.3).",
+        "§6.0 the union of stops and rwd_stand splits, "
+        "merged. Never dropped from bronze (§4.3).",
         # --- other choices that have already changed once ------------------
         "prominence_min_m": S.PROMINENCE_MIN_M,
         "hr_lag_s": 40,
@@ -230,8 +231,11 @@ def calc_version() -> dict:
     envelope, where they were 3,959 of a 4,489-byte sync_status response.
     """
     params = calc_params()
-    return {"pipeline_version": PIPELINE_VERSION, "digest": digest(params),
-            "params": params}
+    return {
+        "pipeline_version": PIPELINE_VERSION,
+        "digest": digest(params),
+        "params": params,
+    }
 
 
 def calc_version_ref() -> dict:

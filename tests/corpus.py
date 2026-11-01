@@ -26,13 +26,16 @@ from unittest import mock
 import duckdb
 
 ENV = "TRAIL_FACTORS_DB"
-SKIP_REASON = (f"{ENV} is not set: this test reads an ingested corpus. Set "
-               f"{ENV} to a database built by `trail-factors ingest-all`.")
+SKIP_REASON = (
+    f"{ENV} is not set: this test reads an ingested corpus. Set "
+    f"{ENV} to a database built by `trail-factors ingest-all`."
+)
 
 
 def corpus_path() -> Path | None:
     """The corpus database, None when unset. Raises if set but missing."""
     from trail_factors.paths import REPO_ROOT
+
     raw = os.environ.get(ENV, "").strip()
     if not raw:
         return None
@@ -42,7 +45,8 @@ def corpus_path() -> Path | None:
         raise RuntimeError(
             f"{ENV}={raw} does not exist (resolved to a path under "
             f"{'the repo' if p.is_relative_to(REPO_ROOT) else 'elsewhere'}). "
-            f"Tests never create a database; fix the path or unset {ENV}.")
+            f"Tests never create a database; fix the path or unset {ENV}."
+        )
     return p
 
 
@@ -96,31 +100,47 @@ def use_config(**fields):
     whatever config/athlete.yaml happens to hold on the machine.
     """
     from trail_factors import config as C
-    clusters = tuple(c if isinstance(c, C.Cluster) else C.Cluster(**c)
-                     for c in fields.pop("clusters", ()))
+
+    clusters = tuple(
+        c if isinstance(c, C.Cluster) else C.Cluster(**c)
+        for c in fields.pop("clusters", ())
+    )
     cfg = dataclasses.replace(C.AthleteConfig(clusters=clusters), **fields)
     with mock.patch.object(C, "get", lambda: cfg):
         yield cfg
 
 
 # Every module that holds a path under ATHLETE_DIR as a module attribute.
-_STATE_MODULES = ("trail_factors.ingest.athlete_state", "trail_factors.ingest.ride_blocks",
-                  "trail_factors.analysis.zones")
+_STATE_MODULES = (
+    "trail_factors.ingest.athlete_state",
+    "trail_factors.ingest.ride_blocks",
+    "trail_factors.analysis.zones",
+)
 
 
+# MODULE-SCOPED USE: enter it in setUpModule and close it in tearDownModule
+# (a module-level contextlib.ExitStack), NOT with unittest.enterModuleContext.
+# That registers the exit as a unittest MODULE CLEANUP, which pytest never
+# runs: under pytest the patched athlete-state paths stayed patched for every
+# later test file, and the isolation guards there failed. setUpModule and
+# tearDownModule run under both runners.
 @contextlib.contextmanager
 def isolated(**config):
     """An EMPTY athlete-state directory and exactly `config`. Every
     module-level path under ATHLETE_DIR is redirected to a temporary
     directory, so a read finds nothing and a stray write lands there."""
     from trail_factors.paths import ATHLETE_DIR
+
     with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
         for name in _STATE_MODULES:
             mod = importlib.import_module(name)
             for attr, val in list(vars(mod).items()):
                 if isinstance(val, Path) and val.is_relative_to(ATHLETE_DIR):
-                    stack.enter_context(mock.patch.object(
-                        mod, attr, Path(tmp) / val.relative_to(ATHLETE_DIR)))
+                    stack.enter_context(
+                        mock.patch.object(
+                            mod, attr, Path(tmp) / val.relative_to(ATHLETE_DIR)
+                        )
+                    )
         stack.enter_context(use_config(**config))
         yield Path(tmp)
 
@@ -129,6 +149,7 @@ def corpus_projection() -> str | None:
     """The WGS84 UTM zone this corpus's runs centre on -- derived from the
     corpus itself, so no test reads the owner's config for it."""
     from trail_factors.transform.dem import utm_zone_at
+
     con = connect()
     try:
         lat, lon = con.execute("""

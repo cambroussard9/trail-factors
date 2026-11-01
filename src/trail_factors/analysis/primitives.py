@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import statistics
 
-CALC_VERSION = 1
-
 from trail_factors.transform.silver import ALL_FLAGS as _ALL_FLAGS
 from trail_factors.units import pace_per_mile
+
+CALC_VERSION = 1
 
 # §6.7: pairs must be far enough apart in time that drift could show. The spec
 # says 10-20 min; 10 is the floor so a short run can still produce a pair.
@@ -27,7 +27,8 @@ def grade_binned_pace(con, activity_id: str) -> dict:
     because each bin mixes walking with running and the median lands between
     the two modes (§6.2).
     """
-    rows = con.execute("""
+    rows = con.execute(
+        """
         WITH d AS (
           SELECT e.activity_id, e.timestamp, e.grade_pct,
                  e.path_distance_m - lag(e.path_distance_m) OVER w AS dx,
@@ -58,32 +59,44 @@ def grade_binned_pace(con, activity_id: str) -> dict:
         WHERE d.dt BETWEEN 1 AND 20 AND d.dx >= 0
           AND s.split_type IN ('rwd_run', 'rwd_walk')
         GROUP BY 1, 2 HAVING count(*) >= 10 ORDER BY 1, 2
-    """, [activity_id]).fetchall()
+    """,
+        [activity_id],
+    ).fetchall()
     return {
         # mps is the STORED quantity; pace_per_mile is its display form,
         # carried so a reader never converts decimal minutes by hand.
-        "bins": [{"split_type": st, "grade_bin": b, "n": n, "mps": mps,
-                  "pace_per_mile": pace_per_mile(mps), "hr": hr,
-                  # UNITS ARE NOT THE OBVIOUS ONES and are named in the key
-                  # itself, because a bare `vertical_oscillation: 80.0` reads
-                  # as centimetres to anyone who has met the metric elsewhere.
-                  "vertical_oscillation_mm": vo,
-                  "vertical_ratio_pct": vr,
-                  "stance_time_ms": gct,
-                  "step_length_mm": sl}
-                 for st, b, n, mps, hr, vo, vr, gct, sl in rows],
+        "bins": [
+            {
+                "split_type": st,
+                "grade_bin": b,
+                "n": n,
+                "mps": mps,
+                "pace_per_mile": pace_per_mile(mps),
+                "hr": hr,
+                # UNITS ARE NOT THE OBVIOUS ONES and are named in the key
+                # itself, because a bare `vertical_oscillation: 80.0` reads
+                # as centimetres to anyone who has met the metric elsewhere.
+                "vertical_oscillation_mm": vo,
+                "vertical_ratio_pct": vr,
+                "stance_time_ms": gct,
+                "step_length_mm": sl,
+            }
+            for st, b, n, mps, hr, vo, vr, gct, sl in rows
+        ],
         "filters": {
             "split_type": ["rwd_run", "rwd_walk"],
             "split_types_pooled": False,
             "terrain_usable_required": True,
             "quality_flags_excluded": True,
-            "running_dynamics_units": {"vertical_oscillation": "mm",
-                                       "vertical_ratio": "percent",
-                                       "stance_time": "ms",
-                                       "step_length": "mm"},
+            "running_dynamics_units": {
+                "vertical_oscillation": "mm",
+                "vertical_ratio": "percent",
+                "stance_time": "ms",
+                "step_length": "mm",
+            },
             "running_dynamics_note": "NULL on any run recorded by a device "
-                                     "without running dynamics (every FR245 "
-                                     "run). Absent, never zero.",
+            "without running dynamics (every FR245 "
+            "run). Absent, never zero.",
             "quality_flags_honoured": list(_ALL_FLAGS),
             "grade_required": True,
             "speed_source": "path_derived",
@@ -92,17 +105,18 @@ def grade_binned_pace(con, activity_id: str) -> dict:
             "stopped_time_excluded": False,
             "grain": "records",
             "note": "run and walk are reported separately and must never be "
-                    "pooled (§6.2)."},
+            "pooled (§6.2).",
+        },
     }
 
 
 # §6.7's stated pairing rule. These are the ONLY tolerances the primitive uses,
 # and they are reported with every result: a reader cannot know what a drift
 # number means without them.
-DRIFT_MAX_DISTANCE_M = 20.0     # "same ground": <10-30 m apart
-DRIFT_MIN_SEPARATION_S = 600    # ">=10-20 min apart"
-DRIFT_SPEED_TOL_MPS = 0.35      # "speed matched within tolerance"
-DRIFT_SPLIT_TYPE = "rwd_run"    # "both rwd_run" -- walking is NOT paired
+DRIFT_MAX_DISTANCE_M = 20.0  # "same ground": <10-30 m apart
+DRIFT_MIN_SEPARATION_S = 600  # ">=10-20 min apart"
+DRIFT_SPEED_TOL_MPS = 0.35  # "speed matched within tolerance"
+DRIFT_SPLIT_TYPE = "rwd_run"  # "both rwd_run" -- walking is NOT paired
 
 
 def matched_terrain_drift(con, activity_id: str) -> dict:
@@ -124,7 +138,8 @@ def matched_terrain_drift(con, activity_id: str) -> dict:
     """
     import numpy as np
 
-    rows = con.execute("""
+    rows = con.execute(
+        """
         SELECT e.timestamp, e.path_distance_m, r.lat, r.lon, r.heart_rate,
                s.split_type
         FROM records_enriched e JOIN records r USING (activity_id, timestamp)
@@ -132,16 +147,19 @@ def matched_terrain_drift(con, activity_id: str) -> dict:
              AND e.timestamp BETWEEN s.start_time AND s.end_time
              -- The rwd_* partition only: the FR265's `interval_active` split
              -- spans the whole run and would match every record twice (§9).
-             AND s.split_type LIKE 'rwd\\_%' ESCAPE '\\' 
+             AND s.split_type LIKE 'rwd\\_%' ESCAPE '\\'
         WHERE e.activity_id = ? AND r.lat IS NOT NULL AND r.heart_rate IS NOT NULL
           -- §15.4: excluded, not down-weighted.
           AND coalesce(e.quality_flags, '') = ''
         ORDER BY e.timestamp
-    """, [activity_id]).fetchall()
+    """,
+        [activity_id],
+    ).fetchall()
     if len(rows) < 20:
         return {"value": None, "n": 0, "filters": drift_filters()}
 
     from trail_factors.transform import matcher as M
+
     xs, ys = M.to_utm([r[2] for r in rows], [r[3] for r in rows])
     secs = np.array([(r[0] - rows[0][0]).total_seconds() for r in rows])
     hr = np.array([r[4] for r in rows], dtype=float)
@@ -161,13 +179,18 @@ def matched_terrain_drift(con, activity_id: str) -> dict:
         if later.size == 0:
             continue
         gap = secs[later] - secs[i]
-        m = ((gap >= DRIFT_MIN_SEPARATION_S)
-             & (np.hypot(xs[later] - xs[i], ys[later] - ys[i]) <= DRIFT_MAX_DISTANCE_M)
-             & (np.abs(speed[later] - speed[i]) <= DRIFT_SPEED_TOL_MPS))
+        m = (
+            (gap >= DRIFT_MIN_SEPARATION_S)
+            & (np.hypot(xs[later] - xs[i], ys[later] - ys[i]) <= DRIFT_MAX_DISTANCE_M)
+            & (np.abs(speed[later] - speed[i]) <= DRIFT_SPEED_TOL_MPS)
+        )
         if m.any():
             rates.extend((hr[later][m] - hr[i]) / (gap[m] / 3600.0))
-    return {"value": float(np.median(rates)) if rates else None,
-            "n": len(rates), "filters": drift_filters()}
+    return {
+        "value": float(np.median(rates)) if rates else None,
+        "n": len(rates),
+        "filters": drift_filters(),
+    }
 
 
 def drift_filters() -> dict:
@@ -190,12 +213,11 @@ def drift_filters() -> dict:
         "quality_flags_honoured": list(_ALL_FLAGS),
         "grain": "record pairs",
         "note": "records only, not whole efforts; see segment_effort_drift for "
-                "the effort-level measure, which is a different quantity",
+        "the effort-level measure, which is a different quantity",
     }
 
 
-def segment_effort_drift(con, activity_id: str,
-                         direction: str | None = None) -> dict:
+def segment_effort_drift(con, activity_id: str, direction: str | None = None) -> dict:
     """HR delta between whole EFFORTS on one slope, as bpm/hour.
 
     NOT §6.7. It pairs effort AVERAGES on a matched slope, applies no speed
@@ -223,7 +245,8 @@ def segment_effort_drift(con, activity_id: str,
     its own name, and the §6.7 mislabelling has already happened once (§6.7's
     reconciliation table).
     """
-    rows = con.execute("""
+    rows = con.execute(
+        """
         SELECT a.segment_id, a.direction,
                date_diff('second', a.start_utc, b.start_utc) / 3600.0 AS hours,
                b.avg_hr - a.avg_hr AS d_hr
@@ -235,11 +258,16 @@ def segment_effort_drift(con, activity_id: str,
           AND date_diff('minute', a.start_utc, b.start_utc) >= ?
           AND a.avg_hr IS NOT NULL AND b.avg_hr IS NOT NULL
           AND (? IS NULL OR a.direction = ?)
-    """, [activity_id, DRIFT_MIN_GAP_MIN, direction, direction]).fetchall()
+    """,
+        [activity_id, DRIFT_MIN_GAP_MIN, direction, direction],
+    ).fetchall()
     rates = [d_hr / hours for _, _, hours, d_hr in rows if hours > 0]
-    return {"value": statistics.median(rates) if rates else None,
-            "n": len(rates), "pairs": rows,
-            "filters": segment_drift_filters(direction)}
+    return {
+        "value": statistics.median(rates) if rates else None,
+        "n": len(rates),
+        "pairs": rows,
+        "filters": segment_drift_filters(direction),
+    }
 
 
 def segment_drift_filters(direction: str | None = None) -> dict:
@@ -258,19 +286,19 @@ def segment_drift_filters(direction: str | None = None) -> dict:
         "quality_flags_excluded": False,
         "grain": "effort pairs",
         "note": "NOT §6.7 and never to be called '§6.7 by direction'. Pairs "
-                "are same-direction by construction, which is why direction "
-                "is available here and not on §6.7. Normalising a short gap "
-                "to an hour amplifies: +20 bpm over 15 min reads as "
-                "+80 bpm/hour.",
-        "ceiling_effect_caveat":
-            "ASCENT AND DESCENT DO NOT START FROM THE SAME PLACE. An athlete "
-            "who holds effort near a habitual HR begins an ascent close to "
-            "that ceiling, with little room to rise, and a descent low, with "
-            "room. So a descent drift much larger than the ascent drift can be "
-            "REAL and still not measure eccentric cost: if the later efforts "
-            "in both directions converge on the same HR, part of the gap is "
-            "headroom, not physiology. Compare the opening HR by direction "
-            "before reading the asymmetry as a cost ratio.",
+        "are same-direction by construction, which is why direction "
+        "is available here and not on §6.7. Normalising a short gap "
+        "to an hour amplifies: +20 bpm over 15 min reads as "
+        "+80 bpm/hour.",
+        "ceiling_effect_caveat": "ASCENT AND DESCENT DO NOT START FROM THE SAME PLACE. "
+        "An athlete "
+        "who holds effort near a habitual HR begins an ascent close to "
+        "that ceiling, with little room to rise, and a descent low, with "
+        "room. So a descent drift much larger than the ascent drift can be "
+        "REAL and still not measure eccentric cost: if the later efforts "
+        "in both directions converge on the same HR, part of the gap is "
+        "headroom, not physiology. Compare the opening HR by direction "
+        "before reading the asymmetry as a cost ratio.",
     }
 
 
@@ -284,24 +312,31 @@ def efficiency_factor(con, activity_id: str) -> dict:
 
     Reported in m/s per bpm, aggregated over the run's segment efforts.
     """
-    rows = con.execute("""
+    rows = con.execute(
+        """
         SELECT segment_id, direction, length_m, duration_s, avg_hr
         FROM segment_efforts
         WHERE activity_id = ? AND avg_hr IS NOT NULL AND duration_s > 0
-    """, [activity_id]).fetchall()
+    """,
+        [activity_id],
+    ).fetchall()
     efs = [(ln / dur) / hr for _, _, ln, dur, hr in rows if hr and hr > 0]
-    return {"value": statistics.median(efs) if efs else None, "n": len(efs),
-            "filters": {
-                "split_type": None,
-                "walking_included": True,
-                "terrain_matched_by": "segment identity (place, side)",
-                "speed_source": "segment length / moving duration",
-                "stopped_time_excluded": True,
-                "gap_used": False,
-                "quality_flags_excluded": False,
-                "grain": "segment efforts",
-                "note": "NOT GAP/HR -- GAP is unvalidated (§12.2), so terrain "
-                        "is matched by segment identity instead."}}
+    return {
+        "value": statistics.median(efs) if efs else None,
+        "n": len(efs),
+        "filters": {
+            "split_type": None,
+            "walking_included": True,
+            "terrain_matched_by": "segment identity (place, side)",
+            "speed_source": "segment length / moving duration",
+            "stopped_time_excluded": True,
+            "gap_used": False,
+            "quality_flags_excluded": False,
+            "grain": "segment efforts",
+            "note": "NOT GAP/HR -- GAP is unvalidated (§12.2), so terrain "
+            "is matched by segment identity instead.",
+        },
+    }
 
 
 def climb_signature(con, activity_id: str) -> dict:
@@ -310,23 +345,30 @@ def climb_signature(con, activity_id: str) -> dict:
     8 rollers and 3 sustained climbs have different signatures despite
     identical totals, which a single ascent number cannot express.
     """
-    rows = con.execute("""
+    rows = con.execute(
+        """
         SELECT direction, length_m, vertical_m, mean_grade_pct
         FROM slope_traversals WHERE activity_id = ?
         ORDER BY vertical_m DESC
-    """, [activity_id]).fetchall()
+    """,
+        [activity_id],
+    ).fetchall()
     asc = [r for r in rows if r[0] == "ascent"]
-    return {"n_slopes": len(rows), "n_ascents": len(asc),
-            "n_descents": len(rows) - len(asc),
-            "total_vertical_m": sum(r[2] for r in asc),
-            "largest": rows[:5],
-            "filters": {
-                "unit": "slope (monotonic stretch), not prominence hill",
-                "min_vertical_m": 8.0,
-                "terrain_usable_required": True,
-                "grain": "slope traversals",
-                "note": "ascent totals here are DEM-derived; Garmin's are "
-                        "amplitude-inflated 2.08x (§5a-bis.4)."}}
+    return {
+        "n_slopes": len(rows),
+        "n_ascents": len(asc),
+        "n_descents": len(rows) - len(asc),
+        "total_vertical_m": sum(r[2] for r in asc),
+        "largest": rows[:5],
+        "filters": {
+            "unit": "slope (monotonic stretch), not prominence hill",
+            "min_vertical_m": 8.0,
+            "terrain_usable_required": True,
+            "grain": "slope traversals",
+            "note": "ascent totals here are DEM-derived; Garmin's are "
+            "amplitude-inflated 2.08x (§5a-bis.4).",
+        },
+    }
 
 
 def percentile_of(value: float | None, population: list[float]) -> float | None:
@@ -348,7 +390,13 @@ def spread(population: list[float]) -> dict:
     pop = sorted(p for p in population if p is not None)
     if not pop:
         return {"median": None, "p25": None, "p75": None, "n": 0}
+
     def q(f):
         return pop[min(int(f * len(pop)), len(pop) - 1)]
-    return {"median": statistics.median(pop), "p25": q(0.25), "p75": q(0.75),
-            "n": len(pop)}
+
+    return {
+        "median": statistics.median(pop),
+        "p25": q(0.25),
+        "p75": q(0.75),
+        "n": len(pop),
+    }

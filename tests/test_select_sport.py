@@ -20,7 +20,7 @@ import duckdb
 from trail_factors.analysis import report as REP
 from trail_factors.analysis import select as S
 
-T0 = datetime.datetime(2025, 3, 1, 7, 0, 0)       # synthetic
+T0 = datetime.datetime(2025, 3, 1, 7, 0, 0)  # synthetic
 
 
 def corpus():
@@ -30,15 +30,18 @@ def corpus():
     con.execute("""CREATE TABLE activities (activity_id VARCHAR,
         run_id VARCHAR, start_time_utc TIMESTAMP, sport VARCHAR,
         source VARCHAR, sampling_regime VARCHAR, coverage_fraction DOUBLE)""")
-    rows = [("a0", "run-a0", 0, "running", "garmin_watch", 1.0),
-            ("ride", "run-ride", 1, "cycling", "garmin_watch", None),
-            ("a1", "run-a1", 2, "running", "garmin_watch", 1.0),
-            ("a2", "run-a2", 3, "running", "garmin_watch", 1.0),
-            ("a0-phone", "run-a0", 0, "running", "strava", 1.0)]
+    rows = [
+        ("a0", "run-a0", 0, "running", "garmin_watch", 1.0),
+        ("ride", "run-ride", 1, "cycling", "garmin_watch", None),
+        ("a1", "run-a1", 2, "running", "garmin_watch", 1.0),
+        ("a2", "run-a2", 3, "running", "garmin_watch", 1.0),
+        ("a0-phone", "run-a0", 0, "running", "strava", 1.0),
+    ]
     for aid, rid, days, sport, source, cov in rows:
-        con.execute("INSERT INTO activities VALUES (?, ?, ?, ?, ?, '1hz', ?)",
-                    [aid, rid, T0 - datetime.timedelta(days=days), sport,
-                     source, cov])
+        con.execute(
+            "INSERT INTO activities VALUES (?, ?, ?, ?, ?, '1hz', ?)",
+            [aid, rid, T0 - datetime.timedelta(days=days), sport, source, cov],
+        )
     return con
 
 
@@ -47,43 +50,44 @@ def stub():
 
 
 class TestTheDefaultIsUnchanged(unittest.TestCase):
-
     def test_the_default_is_running_only_with_the_old_rule_and_rows(self):
         con = corpus()
         with stub():
             s = S.select_runs(con, {}, needs_terrain=False)
-            explicit = S.select_runs(con, {}, needs_terrain=False,
-                                     sport="running")
-        self.assertEqual([r["activity_id"] for r in s["included"]],
-                         ["a0", "a1", "a2"])
+            explicit = S.select_runs(con, {}, needs_terrain=False, sport="running")
+        self.assertEqual([r["activity_id"] for r in s["included"]], ["a0", "a1", "a2"])
         self.assertEqual(s["rule"], "all garmin_watch runs")
         for r in s["included"]:
-            self.assertNotIn("sport", r)       # the row shape is the old one
+            self.assertNotIn("sport", r)  # the row shape is the old one
         self.assertEqual(s, explicit)
 
 
 class TestAnySportIsADose(unittest.TestCase):
-
     def test_any_includes_the_ride_once_per_session(self):
         con = corpus()
         with stub():
             s = S.select_runs(con, {}, needs_terrain=False, sport=S.SPORT_ANY)
         ids = [r["activity_id"] for r in s["included"]]
         self.assertEqual(ids, ["a0", "ride", "a1", "a2"])
-        self.assertNotIn("a0-phone", ids)      # one file per session
-        self.assertEqual({r["activity_id"]: r["sport"] for r in s["included"]}
-                         ["ride"], "cycling")
+        self.assertNotIn("a0-phone", ids)  # one file per session
+        self.assertEqual(
+            {r["activity_id"]: r["sport"] for r in s["included"]}["ride"], "cycling"
+        )
         self.assertIn("every sport (sport=any)", s["rule"])
 
     def test_any_composes_with_the_date_filter(self):
         con = corpus()
         day = (T0 - datetime.timedelta(days=1)).date().isoformat()
         with stub():
-            s = S.select_runs(con, {"start_date": day, "end_date": day},
-                              needs_terrain=False, sport=S.SPORT_ANY)
-            runs_only = S.select_runs(con, {"start_date": day,
-                                            "end_date": day},
-                                      needs_terrain=False)
+            s = S.select_runs(
+                con,
+                {"start_date": day, "end_date": day},
+                needs_terrain=False,
+                sport=S.SPORT_ANY,
+            )
+            runs_only = S.select_runs(
+                con, {"start_date": day, "end_date": day}, needs_terrain=False
+            )
         self.assertEqual([r["activity_id"] for r in s["included"]], ["ride"])
         self.assertEqual(runs_only["included"], [])
 

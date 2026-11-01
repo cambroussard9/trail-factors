@@ -46,8 +46,15 @@ CALC_VERSION = 1
 
 # The filter vocabulary, designed once and applied uniformly by every
 # parameterised primitive. Anything not on this list is not askable.
-FILTER_KEYS = ("run_type", "start_date", "end_date", "cluster", "last_n",
-               "segment_id", "direction")
+FILTER_KEYS = (
+    "run_type",
+    "start_date",
+    "end_date",
+    "cluster",
+    "last_n",
+    "segment_id",
+    "direction",
+)
 
 DIRECTIONS = ("ascent", "descent")
 
@@ -70,9 +77,11 @@ MIN_COVERAGE_FOR_TERRAIN = 0.5
 # A per-run "this session was not representative" statement has no source, so
 # the only exclusions are measured ones (coverage). Stated on every selection
 # rather than left for the reader to assume a check ran.
-TREND_EXCLUSION_NOTE = ("no run is excluded from a trend on the athlete's "
-                        "say-so: per-run exclusion is not collected in this "
-                        "build, so the only exclusions are measured ones")
+TREND_EXCLUSION_NOTE = (
+    "no run is excluded from a trend on the athlete's "
+    "say-so: per-run exclusion is not collected in this "
+    "build, so the only exclusions are measured ones"
+)
 
 
 class FilterUnavailable(ValueError):
@@ -95,7 +104,8 @@ def check_available(filt: dict) -> None:
     if rt is not None and rt != "":
         raise FilterUnavailable(
             f"run_type={rt!r}: {NO_RUN_TYPE_SOURCE}. Omit run_type; a later "
-            f"version re-enables it through user-defined run types.")
+            f"version re-enables it through user-defined run types."
+        )
 
 
 def validate_filter(filt: dict) -> list[str]:
@@ -111,7 +121,8 @@ def validate_filter(filt: dict) -> list[str]:
         if key not in FILTER_KEYS:
             problems.append(
                 f"unknown filter {key!r}. Allowed: {', '.join(FILTER_KEYS)}. "
-                f"There is no arbitrary query interface by design.")
+                f"There is no arbitrary query interface by design."
+            )
     d = filt.get("direction")
     if d is not None and d not in DIRECTIONS:
         problems.append(f"direction={d!r} must be one of {DIRECTIONS}")
@@ -132,15 +143,18 @@ def validate_filter(filt: dict) -> list[str]:
         try:
             datetime.date.fromisoformat(v)
         except ValueError:
-            problems.append(f"{key}={v!r} must be YYYY-MM-DD (ISO), not a "
-                            f"locale format -- it was not parsed, and a date "
-                            f"that silently fails to narrow returns the whole "
-                            f"corpus")
+            problems.append(
+                f"{key}={v!r} must be YYYY-MM-DD (ISO), not a "
+                f"locale format -- it was not parsed, and a date "
+                f"that silently fails to narrow returns the whole "
+                f"corpus"
+            )
     return problems
 
 
-def select_runs(con, filt: dict, needs_terrain: bool = True,
-                sport: str = DEFAULT_SPORT) -> dict:
+def select_runs(
+    con, filt: dict, needs_terrain: bool = True, sport: str = DEFAULT_SPORT
+) -> dict:
     """Resolve a filter to activities, and say what was left out and why.
 
     `sport` is DEFAULT_SPORT for every primitive. SPORT_ANY selects every
@@ -162,35 +176,42 @@ def select_runs(con, filt: dict, needs_terrain: bool = True,
 
     check_available(filt)
     if not isinstance(sport, str) or not sport:
-        raise ValueError(f"sport={sport!r} must be a sport name or "
-                         f"{SPORT_ANY!r}")
+        raise ValueError(f"sport={sport!r} must be a sport name or {SPORT_ANY!r}")
     if sport not in (DEFAULT_SPORT, SPORT_ANY):
-        known = [s for s, in con.execute(
-            "SELECT DISTINCT sport FROM activities "
-            "WHERE source = 'garmin_watch' AND sport IS NOT NULL "
-            "ORDER BY 1").fetchall()]
+        known = [
+            s
+            for (s,) in con.execute(
+                "SELECT DISTINCT sport FROM activities "
+                "WHERE source = 'garmin_watch' AND sport IS NOT NULL "
+                "ORDER BY 1"
+            ).fetchall()
+        ]
         # The default is never checked: a corpus with no runs yet is an
         # empty selection, as it always was.
         if sport not in known:
             raise ValueError(
                 f"sport={sport!r}: no garmin_watch activity has that sport. "
                 f"Recorded: {', '.join(known) or 'none'}; or {SPORT_ANY!r} "
-                f"for every sport")
+                f"for every sport"
+            )
     # ONE FILE PER SESSION: garmin_watch only, so a dually recorded session
     # is never counted twice, whatever the sport.
-    rows = con.execute("""
+    rows = con.execute(
+        """
         SELECT a.activity_id, a.run_id, a.start_time_utc, a.coverage_fraction,
                a.sampling_regime, a.sport
         FROM activities a WHERE a.source = 'garmin_watch'
           AND (? OR a.sport = ?)
         ORDER BY a.start_time_utc DESC
-    """, [sport == SPORT_ANY, sport]).fetchall()
+    """,
+        [sport == SPORT_ANY, sport],
+    ).fetchall()
 
     included, excluded = [], []
     for aid, rid, start, cov, regime, row_sport in rows:
         day = str(start)[:10]
         if filt.get("start_date") and day < filt["start_date"]:
-            continue                       # outside the window: not "excluded"
+            continue  # outside the window: not "excluded"
         if filt.get("end_date") and day > filt["end_date"]:
             continue
         cl = cluster_of(con, aid)
@@ -201,20 +222,33 @@ def select_runs(con, filt: dict, needs_terrain: bool = True,
         if needs_terrain and (cov is None or cov < MIN_COVERAGE_FOR_TERRAIN):
             # An UNMEASURED coverage is named as such, never formatted as a
             # number it is not (and never allowed to crash the selection).
-            excluded.append({
-                "activity_id": aid, "run_id": rid, "date": day,
-                "kind": "coverage",
-                "reason": (f"GPS coverage {cov:.0%} is below "
-                           f"{MIN_COVERAGE_FOR_TERRAIN:.0%}" if cov is not None
-                           else "GPS coverage was not measured for this "
-                                "activity")
-                          + "; terrain-derived quantities would come from "
-                            "part of the ground"})
+            excluded.append(
+                {
+                    "activity_id": aid,
+                    "run_id": rid,
+                    "date": day,
+                    "kind": "coverage",
+                    "reason": (
+                        f"GPS coverage {cov:.0%} is below "
+                        f"{MIN_COVERAGE_FOR_TERRAIN:.0%}"
+                        if cov is not None
+                        else "GPS coverage was not measured for this activity"
+                    )
+                    + "; terrain-derived quantities would come from "
+                    "part of the ground",
+                }
+            )
             continue
-        row = {"activity_id": aid, "run_id": rid, "date": day,
-               "run_type": None, "run_type_status": NOT_COLLECTED,
-               "cluster": cl,
-               "sampling_regime": regime, "coverage_fraction": cov}
+        row = {
+            "activity_id": aid,
+            "run_id": rid,
+            "date": day,
+            "run_type": None,
+            "run_type_status": NOT_COLLECTED,
+            "cluster": cl,
+            "sampling_regime": regime,
+            "coverage_fraction": cov,
+        }
         if sport != DEFAULT_SPORT:
             row["sport"] = row_sport
         included.append(row)
@@ -222,7 +256,7 @@ def select_runs(con, filt: dict, needs_terrain: bool = True,
     truncated = 0
     if filt.get("last_n") and len(included) > filt["last_n"]:
         truncated = len(included) - filt["last_n"]
-        included = included[:filt["last_n"]]
+        included = included[: filt["last_n"]]
 
     parts = []
     if sport == SPORT_ANY:
@@ -240,6 +274,7 @@ def select_runs(con, filt: dict, needs_terrain: bool = True,
         "n_excluded": len(excluded),
         "n_beyond_last_n": truncated,
         "trend_exclusion": TREND_EXCLUSION_NOTE,
-        "date_range": ((included[-1]["date"], included[0]["date"])
-                       if included else None),
+        "date_range": (
+            (included[-1]["date"], included[0]["date"]) if included else None
+        ),
     }

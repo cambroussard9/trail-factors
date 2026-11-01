@@ -36,16 +36,17 @@ class TestSyncKeepsTheIngestResult(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         src = (REPO_ROOT / "src" / "trail_factors" / "mcp_server.py").read_text()
-        job = src[src.index("def work(progress):"):]
-        job = job[:job.index("job_id = start(")]
-        helper = src[src.index("REJECTED_FILES_CMD ="):]
-        helper = helper[:helper.index("@mcp.tool()")]
+        job = src[src.index("def work(progress):") :]
+        job = job[: job.index("job_id = start(")]
+        helper = src[src.index("REJECTED_FILES_CMD =") :]
+        helper = helper[: helper.index("@mcp.tool()")]
         cls.body = job + helper
 
     def test_the_return_value_is_captured_not_discarded(self):
         self.assertIn('ingest_result = ran["outputs"].get("ingest")', self.body)
-        self.assertNotRegex(self.body, r"\n\s+fn\(\)\n",
-                            "fn() with its result discarded is the bug")
+        self.assertNotRegex(
+            self.body, r"\n\s+fn\(\)\n", "fn() with its result discarded is the bug"
+        )
 
     def test_a_rejection_goes_in_problems_by_GARMIN_ID(self):
         self.assertIn('"problems": problems', self.body)
@@ -83,15 +84,16 @@ class TestTheFilterLogicItself(unittest.TestCase):
                 gid = str(name).split("_")[0]
                 if new_ids and gid not in new_ids:
                     continue
-                rejected.append({"garmin_id": gid, "kind": kind,
-                                 "message": str(msg)})
+                rejected.append({"garmin_id": gid, "kind": kind, "message": str(msg)})
                 problems.append(f"{kind.upper()}: garmin {gid} did not ingest")
         return problems, rejected
 
     def test_a_rejection_in_this_sync_is_reported(self):
-        res = {"ok": ["a.fit"],
-               "rejected": [(f"{NEW_ID}_ACTIVITY.fit", "pace impossible")],
-               "failed": []}
+        res = {
+            "ok": ["a.fit"],
+            "rejected": [(f"{NEW_ID}_ACTIVITY.fit", "pace impossible")],
+            "failed": [],
+        }
         problems, rejected = self._filter(res, [NEW_ID])
         self.assertEqual(len(problems), 1)
         self.assertIn(NEW_ID, problems[0])
@@ -99,21 +101,24 @@ class TestTheFilterLogicItself(unittest.TestCase):
 
     def test_an_OLD_rejection_is_not_re_raised(self):
         """THE TWIN: historical rejections must not resurface every sync."""
-        res = {"ok": [], "rejected": [(f"{OLD_ID}_ACTIVITY.fit", "junk")],
-               "failed": []}
+        res = {"ok": [], "rejected": [(f"{OLD_ID}_ACTIVITY.fit", "junk")], "failed": []}
         problems, _ = self._filter(res, [NEW_ID])
         self.assertEqual(problems, [])
 
     def test_a_clean_sync_has_no_problems(self):
         """THE TWIN for the whole feature."""
         problems, rejected = self._filter(
-            {"ok": ["a.fit", "b.fit"], "rejected": [], "failed": []}, ["1"])
+            {"ok": ["a.fit", "b.fit"], "rejected": [], "failed": []}, ["1"]
+        )
         self.assertEqual(problems, [])
         self.assertEqual(rejected, [])
 
     def test_a_FAILED_file_is_reported_too(self):
-        res = {"ok": [], "rejected": [],
-               "failed": [(f"{NEW_ID}_ACTIVITY.fit", "TypeError: boom")]}
+        res = {
+            "ok": [],
+            "rejected": [],
+            "failed": [(f"{NEW_ID}_ACTIVITY.fit", "TypeError: boom")],
+        }
         problems, rejected = self._filter(res, [NEW_ID])
         self.assertEqual(len(problems), 1)
         self.assertIn("FAILED", problems[0])
@@ -126,9 +131,12 @@ class TestIngestAllStillReturnsWhatSyncReads(unittest.TestCase):
 
     def test_the_four_keys_exist(self):
         src = (REPO_ROOT / "src" / "trail_factors" / "cli" / "ingest.py").read_text()
-        body = src[src.index("def ingest_all"):]
-        self.assertIn('return {"ok": ok, "rejected": rejected, '
-                      '"failed": failed, "warned": warned}', body)
+        body = src[src.index("def ingest_all") :]
+        self.assertIn(
+            'return {"ok": ok, "rejected": rejected, '
+            '"failed": failed, "warned": warned}',
+            body,
+        )
 
 
 if __name__ == "__main__":

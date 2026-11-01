@@ -25,14 +25,14 @@ from unittest import mock
 
 import duckdb
 
+from tests.corpus import connect, isolated, needs_corpus, one
 from trail_factors.analysis import primitives as P
 from trail_factors.analysis import report as REP
 from trail_factors.analysis import select
 from trail_factors.ingest.answers import NOT_COLLECTED
-from tests.corpus import connect, isolated, needs_corpus, one
 
-T0 = datetime.datetime(2025, 1, 15, 7, 0, 0)      # synthetic
-CLUSTER = "CLUSTER_A"                             # synthetic cluster name
+T0 = datetime.datetime(2025, 1, 15, 7, 0, 0)  # synthetic
+CLUSTER = "CLUSTER_A"  # synthetic cluster name
 
 # activity_id -> (sport, days before the subject, metric value)
 CORPUS = {
@@ -41,7 +41,7 @@ CORPUS = {
     "r2": ("running", 2, 2.0),
     "r3": ("running", 3, 3.0),
     "r4": ("running", 4, 4.0),
-    "odd": ("running", 5, 100.0),   # an outlier nothing may drop
+    "odd": ("running", 5, 100.0),  # an outlier nothing may drop
 }
 
 
@@ -52,8 +52,10 @@ def corpus(extra=None):
                    start_time_utc TIMESTAMP, sport VARCHAR, source VARCHAR,
                    coverage_fraction DOUBLE, sampling_regime VARCHAR)""")
     for aid, (sport, days, _) in rows.items():
-        con.execute("INSERT INTO activities VALUES (?,?,?,?,'garmin_watch',1.0,'1hz')",
-                    [aid, f"run-{aid}", T0 - datetime.timedelta(days=days), sport])
+        con.execute(
+            "INSERT INTO activities VALUES (?,?,?,?,'garmin_watch',1.0,'1hz')",
+            [aid, f"run-{aid}", T0 - datetime.timedelta(days=days), sport],
+        )
     return con, {aid: v for aid, (_, _, v) in rows.items()}
 
 
@@ -61,9 +63,12 @@ def stubs():
     # The fixture holds no segment tables, so venue assignment (§19) is
     # stubbed to "no run has a venue" -- the cluster fallback these tests ran
     # under before venues existed.
-    return (mock.patch.object(REP, "cluster_of", lambda con, aid: CLUSTER),
-            mock.patch("trail_factors.analysis.venues.assign_all",
-                       lambda con: {"by_run": {}}))
+    return (
+        mock.patch.object(REP, "cluster_of", lambda con, aid: CLUSTER),
+        mock.patch(
+            "trail_factors.analysis.venues.assign_all", lambda con: {"by_run": {}}
+        ),
+    )
 
 
 class TestNothingIsExcludedOnSaySoInComparisonSet(unittest.TestCase):
@@ -109,14 +114,16 @@ class TestSportInComparisonSet(unittest.TestCase):
     def test_a_ride_does_not_enter_a_runs_set(self):
         c, _ = self.comp({"bike": ("cycling", 1.5, 999.0)})
         self.assertNotIn("bike", c["members"])
-        self.assertEqual([(e["activity_id"], e["kind"]) for e in c["excluded"]],
-                         [("bike", "sport")])
+        self.assertEqual(
+            [(e["activity_id"], e["kind"]) for e in c["excluded"]], [("bike", "sport")]
+        )
         self.assertIn("cycling", c["excluded"][0]["reason"])
 
     def test_a_hike_is_not_measured_against_runs(self):
         """The original shape: a hike as the SUBJECT got the runs' set."""
-        c, values = self.comp({"hike": ("hiking", -1, 7.0),
-                               "hike2": ("hiking", 6, 8.0)}, subject="hike")
+        c, values = self.comp(
+            {"hike": ("hiking", -1, 7.0), "hike2": ("hiking", 6, 8.0)}, subject="hike"
+        )
         self.assertEqual(c["members"], ["hike2"])
         self.assertEqual(c["sport"], "hiking")
         self.assertTrue(all(e["kind"] == "sport" for e in c["excluded"]))
@@ -128,15 +135,22 @@ class TestSportInComparisonSet(unittest.TestCase):
 
     def test_the_percentile_changes(self):
         """Before the fix a hike's population was the RUNS' values."""
-        c, values = self.comp({"hike": ("hiking", -1, 7.0),
-                               "hike2": ("hiking", 6, 8.0),
-                               "hike3": ("hiking", 7, 9.0),
-                               "hike4": ("hiking", 8, 10.0)}, subject="hike")
+        c, values = self.comp(
+            {
+                "hike": ("hiking", -1, 7.0),
+                "hike2": ("hiking", 6, 8.0),
+                "hike3": ("hiking", 7, 9.0),
+                "hike4": ("hiking", 8, 10.0),
+            },
+            subject="hike",
+        )
         runs = [values[a] for a in ("r1", "r2", "r3", "r4", "odd")]
         hikes = [values[m] for m in c["members"]]
         self.assertEqual(sorted(hikes), [8.0, 9.0, 10.0])
-        self.assertNotEqual(P.percentile_of(values["hike"], runs),
-                            P.percentile_of(values["hike"], hikes))
+        self.assertNotEqual(
+            P.percentile_of(values["hike"], runs),
+            P.percentile_of(values["hike"], hikes),
+        )
 
 
 class TestNoLookAhead(unittest.TestCase):
@@ -144,8 +158,11 @@ class TestNoLookAhead(unittest.TestCase):
     query had no date bound, so re-running an old report compared it with
     runs that happened later."""
 
-    LATER = {"later1": ("running", -1, 999.0), "later2": ("running", -3, 999.0),
-             "later_odd": ("running", -2, 999.0)}
+    LATER = {
+        "later1": ("running", -1, 999.0),
+        "later2": ("running", -3, 999.0),
+        "later_odd": ("running", -2, 999.0),
+    }
 
     def comp(self, extra=None):
         con, values = corpus(dict(self.LATER, **(extra or {})))
@@ -171,8 +188,7 @@ class TestNoLookAhead(unittest.TestCase):
         """Excluded entries come from the same bounded candidates: a LATER
         ride is neither a member nor a reported exclusion."""
         c, _ = self.comp({"later_bike": ("cycling", -1.5, 999.0)})
-        self.assertNotIn("later_bike",
-                         [e["activity_id"] for e in c["excluded"]])
+        self.assertNotIn("later_bike", [e["activity_id"] for e in c["excluded"]])
         self.assertNotIn("later_bike", c["members"])
 
     def test_the_percentile_ignores_the_future(self):
@@ -197,8 +213,9 @@ class TestNothingIsExcludedOnSaySoInSelectRuns(unittest.TestCase):
         con, _ = corpus()
         a, v = stubs()
         with a, v:
-            return select.select_runs(con, dict({"cluster": CLUSTER},
-                                                **(filt or {})), **kw)
+            return select.select_runs(
+                con, dict({"cluster": CLUSTER}, **(filt or {})), **kw
+            )
 
     def test_every_run_is_included_and_the_note_says_why(self):
         s = self.sel()
@@ -218,24 +235,27 @@ class TestNothingIsExcludedOnSaySoInSelectRuns(unittest.TestCase):
         """The positive twin: an exclusion still happens when it is MEASURED,
         and it is the only kind a selection can carry."""
         con, _ = corpus()
-        con.execute("UPDATE activities SET coverage_fraction = 0.1 "
-                    "WHERE activity_id = 'odd'")
+        con.execute(
+            "UPDATE activities SET coverage_fraction = 0.1 WHERE activity_id = 'odd'"
+        )
         a, v = stubs()
         with a, v:
             s = select.select_runs(con, {"cluster": CLUSTER})
-        self.assertEqual([(e["activity_id"], e["kind"]) for e in s["excluded"]],
-                         [("odd", "coverage")])
+        self.assertEqual(
+            [(e["activity_id"], e["kind"]) for e in s["excluded"]],
+            [("odd", "coverage")],
+        )
         with a, v:
-            s = select.select_runs(con, {"cluster": CLUSTER},
-                                   needs_terrain=False)
+            s = select.select_runs(con, {"cluster": CLUSTER}, needs_terrain=False)
         self.assertIn("odd", [r["activity_id"] for r in s["included"]])
 
     def test_the_switch_that_kept_excluded_runs_is_gone(self):
         """With no say-so exclusion there is nothing for ceiling and dose
         tools to opt out of, so the keyword no longer exists -- a caller
         still passing it fails loudly rather than being silently ignored."""
-        self.assertNotIn("honour_trend_exclusion",
-                         inspect.signature(select.select_runs).parameters)
+        self.assertNotIn(
+            "honour_trend_exclusion", inspect.signature(select.select_runs).parameters
+        )
         with self.assertRaises(TypeError):
             self.sel(honour_trend_exclusion=False)
 
@@ -249,27 +269,37 @@ class TestNoToolExcludesOnSaySo(unittest.TestCase):
     @needs_corpus
     def test_only_measured_exclusion_kinds_appear(self):
         from trail_factors.analysis import over
+
         con = connect()
         try:
-            rid = one(con, """
+            rid = one(
+                con,
+                """
                 SELECT a.run_id FROM activities a
                 WHERE a.sport = 'running' AND a.source = 'garmin_watch'
                   AND EXISTS (SELECT 1 FROM records r
                               WHERE r.activity_id = a.activity_id
                                 AND r.heart_rate IS NOT NULL)
                 ORDER BY a.start_time_utc LIMIT 1""",
-                what="watch running activity with heart rate")[0]
+                what="watch running activity with heart rate",
+            )[0]
             with isolated():
                 m = over.max_hr_over(con)
                 row = next(r for r in m["per_run"] if r["run_id"] == rid)
                 self.assertIsNone(row["exclude_from_trend"])
-                self.assertEqual(row["exclude_from_trend_status"],
-                                 NOT_COLLECTED)
-                for fn in (over.max_hr_over, over.hr_above,
-                           over.time_above_hr, over.zone_by_gait,
-                           over.cadence_table):
-                    kinds = {e.get("kind") for e in fn(con)["excluded"]
-                             if e.get("kind") is not None}
+                self.assertEqual(row["exclude_from_trend_status"], NOT_COLLECTED)
+                for fn in (
+                    over.max_hr_over,
+                    over.hr_above,
+                    over.time_above_hr,
+                    over.zone_by_gait,
+                    over.cadence_table,
+                ):
+                    kinds = {
+                        e.get("kind")
+                        for e in fn(con)["excluded"]
+                        if e.get("kind") is not None
+                    }
                     self.assertLessEqual(kinds, {"coverage"}, fn.__name__)
         finally:
             con.close()

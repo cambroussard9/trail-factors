@@ -16,18 +16,30 @@ import duckdb
 from trail_factors.ingest.load import refresh_run_start, resolve_run
 from trail_factors.ingest.schema import DDL
 
-BASE = datetime(2023, 6, 20, 7, 0, 49)       # synthetic
+BASE = datetime(2023, 6, 20, 7, 0, 49)  # synthetic
 
 
 def make_activity(activity_id, source, start, duration_s=3600.0, sport="running"):
     """A synthetic activities row in production column order."""
     return dict(
-        activity_id=activity_id, run_id=None, file_hash="hash-" + activity_id,
-        source_file=f"{source}.fit", start_time_utc=start, local_tz=1.0,
-        sport=sport, sub_sport="generic", device="test", total_distance_m=7000.0,
-        total_ascent_m=200.0, duration_s=duration_s, source=source,
-        sampling_regime="1hz", median_gap_s=1.0,
-        coverage_fraction=1.0, gps_contiguous=True, pipeline_version=1,
+        activity_id=activity_id,
+        run_id=None,
+        file_hash="hash-" + activity_id,
+        source_file=f"{source}.fit",
+        start_time_utc=start,
+        local_tz=1.0,
+        sport=sport,
+        sub_sport="generic",
+        device="test",
+        total_distance_m=7000.0,
+        total_ascent_m=200.0,
+        duration_s=duration_s,
+        source=source,
+        sampling_regime="1hz",
+        median_gap_s=1.0,
+        coverage_fraction=1.0,
+        gps_contiguous=True,
+        pipeline_version=1,
     )
 
 
@@ -110,8 +122,11 @@ class PairingTest(unittest.TestCase):
         keeps them apart.
         """
         self.attach(make_activity("a", "garmin_watch", BASE, duration_s=60.0))
-        self.attach(make_activity(
-            "b", "strava_phone", BASE + timedelta(seconds=150), duration_s=60.0))
+        self.attach(
+            make_activity(
+                "b", "strava_phone", BASE + timedelta(seconds=150), duration_s=60.0
+            )
+        )
         self.assertEqual(self.run_count(), 2)
 
     # --- idempotency ---

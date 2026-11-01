@@ -17,20 +17,22 @@ coverage check is a pure function of its inputs.
 import contextlib
 import unittest
 
+from tests.corpus import CorpusTestCase, use_config
+from tests.isolation import state_sandbox
+from tests.test_checks import recs
 from trail_factors.analysis import cycles as CY
 from trail_factors.analysis import report as REP
 from trail_factors.analysis.select import MIN_COVERAGE_FOR_TERRAIN
 from trail_factors.ingest.validate import WARNING, silver_checks
-from tests.corpus import CorpusTestCase, use_config
-from tests.isolation import state_sandbox
-from tests.test_checks import recs
 
 
 def coverage_message(frac):
-    f = silver_checks(recs(), {"coverage_fraction": frac, "contiguous": True,
-                               "islands": 1})
-    [msg] = [x.message for x in f if x.check == "gps_coverage"
-             and x.severity == WARNING]
+    f = silver_checks(
+        recs(), {"coverage_fraction": frac, "contiguous": True, "islands": 1}
+    )
+    [msg] = [
+        x.message for x in f if x.check == "gps_coverage" and x.severity == WARNING
+    ]
     return msg
 
 
@@ -60,9 +62,12 @@ class TestCountsAgreeWithTheirText(CorpusTestCase):
         stack.enter_context(use_config())
 
     def test_a_gated_cycles_reason_states_n_cycles(self):
-        aids = [r[0] for r in self.con.execute("""
+        aids = [
+            r[0]
+            for r in self.con.execute("""
             SELECT DISTINCT activity_id FROM splits
-            WHERE split_type = 'rwd_run'""").fetchall()]
+            WHERE split_type = 'rwd_run'""").fetchall()
+        ]
         gated = 0
         for aid in aids:
             r = CY.cycles(self.con, aid)
@@ -72,7 +77,10 @@ class TestCountsAgreeWithTheirText(CorpusTestCase):
             self.assertTrue(
                 r["reason"].startswith(
                     f"{r['n_cycles']} run blocks (n_cycles), "
-                    f"{r['n_complete_cycles']} of them complete"), r["reason"])
+                    f"{r['n_complete_cycles']} of them complete"
+                ),
+                r["reason"],
+            )
         if gated == 0:
             self.skipTest("this corpus has no run whose cycles are gated")
 
@@ -84,8 +92,11 @@ class TestCountsAgreeWithTheirText(CorpusTestCase):
         if row is None:
             self.skipTest("no accepted tau in the corpus")
         aid, n_reportable = row
-        [t] = [p for p in REP.build(self.con, aid)["primitives"]
-               if p["name"] == "climb_recovery_tau"]
+        [t] = [
+            p
+            for p in REP.build(self.con, aid)["primitives"]
+            if p["name"] == "climb_recovery_tau"
+        ]
         self.assertEqual(t["status"], REP.OK)
         self.assertEqual(t["n"], n_reportable)
         self.assertEqual(t["n_qualifying"], n_reportable)

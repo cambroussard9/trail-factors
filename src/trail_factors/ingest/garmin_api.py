@@ -27,13 +27,18 @@ from __future__ import annotations
 import json
 import os
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from trail_factors.paths import (GARMIN_AUTH_STATE, GARMIN_TOKENSTORE, RAW_DIR,
-                       display_path, inside_repo)
-
 from garminconnect import Garmin, GarminConnectTooManyRequestsError
+
+from trail_factors.paths import (
+    GARMIN_AUTH_STATE,
+    GARMIN_TOKENSTORE,
+    RAW_DIR,
+    display_path,
+    inside_repo,
+)
 
 # Module attributes, read by every function at CALL time, so a test can patch
 # them. Defaults are ~/.garminconnect and ~/.garminconnect_auth_state.json.
@@ -61,8 +66,10 @@ class CredentialPathError(Exception):
 
 def _describe_auth_state() -> str:
     """Where the auth-state file is, without printing a home directory."""
-    return (f"{display_path(AUTH_STATE)} (set by TRAIL_FACTORS_GARMIN_AUTH_STATE; "
-            f"default ~/.garminconnect_auth_state.json)")
+    return (
+        f"{display_path(AUTH_STATE)} (set by TRAIL_FACTORS_GARMIN_AUTH_STATE; "
+        f"default ~/.garminconnect_auth_state.json)"
+    )
 
 
 def check_locations() -> None:
@@ -71,18 +78,21 @@ def check_locations() -> None:
     Structural, not a .gitignore rule: an ignore pattern is one edit away
     from publishing a refresh token, and this check is not.
     """
-    for env, path in (("TRAIL_FACTORS_GARMIN_TOKENSTORE", Path(TOKENSTORE)),
-                      ("TRAIL_FACTORS_GARMIN_AUTH_STATE", Path(AUTH_STATE))):
+    for env, path in (
+        ("TRAIL_FACTORS_GARMIN_TOKENSTORE", Path(TOKENSTORE)),
+        ("TRAIL_FACTORS_GARMIN_AUTH_STATE", Path(AUTH_STATE)),
+    ):
         if inside_repo(path.expanduser()):
             raise CredentialPathError(
                 f"Refusing to contact Garmin: {env} resolves INSIDE the "
                 f"repository ({display_path(path.expanduser())}), where a "
                 f"commit could publish it. Point it at a directory outside "
-                f"the working tree (see .env.example). Nothing was sent.")
+                f"the working tree (see .env.example). Nothing was sent."
+            )
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def check_backoff() -> None:
@@ -121,8 +131,9 @@ def record_failure(error: str) -> None:
     path = Path(AUTH_STATE)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(
-        {"last_failure_utc": _now().isoformat(), "error": error}, indent=2))
+    tmp.write_text(
+        json.dumps({"last_failure_utc": _now().isoformat(), "error": error}, indent=2)
+    )
     os.replace(tmp, path)
 
 
@@ -189,8 +200,9 @@ def list_activities(api: Garmin, start: str, end: str) -> list[dict]:
     return api.get_activities_by_date(start, end)
 
 
-def list_all_activities(api: Garmin, page_size: int = 200,
-                        max_pages: int = 50) -> list[dict]:
+def list_all_activities(
+    api: Garmin, page_size: int = 200, max_pages: int = 50
+) -> list[dict]:
     """EVERY activity on the account, paged. No date window, no sport filter.
 
     §4.1 IS "DOWNLOAD BROADLY, MODEL STRICTLY", and a date window at the door
@@ -239,7 +251,9 @@ def cache_listing(api, days: int = 400) -> Path:
 
     API_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     end = date.today()
-    acts = list_activities(api, (end - timedelta(days=days)).isoformat(), end.isoformat())
+    acts = list_activities(
+        api, (end - timedelta(days=days)).isoformat(), end.isoformat()
+    )
     out = API_CACHE_DIR / f"activities_{end.isoformat()}.json"
     out.write_text(json.dumps(acts, indent=2, default=str))
     return out

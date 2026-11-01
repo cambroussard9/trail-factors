@@ -32,16 +32,16 @@ zone from -- and it names the setting that would fix it.
 from __future__ import annotations
 
 import math
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
-
-from trail_factors import config
-from trail_factors.paths import CONFIG_FILE, display_path
-from trail_factors.paths import DEM_DIR as _DEM_DIR
 
 import numpy as np
 import tifffile
 from pyproj import CRS, Transformer
+
+from trail_factors import config
+from trail_factors.paths import CONFIG_FILE, display_path
+from trail_factors.paths import DEM_DIR as _DEM_DIR
 
 DEM_DIR = _DEM_DIR
 WGS84 = "EPSG:4326"
@@ -55,7 +55,8 @@ NODATA_BELOW = -1e30
 # THE PROJECTION -- configured, read at call time, transformers cached per CRS
 # --------------------------------------------------------------------------
 
-@lru_cache(maxsize=None)
+
+@cache
 def transformer(src: str, dst: str) -> Transformer:
     """One pyproj Transformer per (src, dst) pair, built on first use.
 
@@ -118,20 +119,22 @@ def resolve_projection(lats=None, lons=None) -> dict:
     """
     configured = config.get().projection_crs
     if configured is not None:
-        return {"crs": configured, "basis": CONFIGURED_BASIS,
-                "configured": True}
+        return {"crs": configured, "basis": CONFIGURED_BASIS, "configured": True}
     c = _centre(lats, lons) if lats is not None and lons is not None else None
     if c is None:
         raise Unplaceable(
             "projection_crs is not set, and these positions cannot be placed: "
             "none is a finite latitude/longitude, so there is no UTM zone to "
             "derive. Set projection_crs in "
-            f"{display_path(CONFIG_FILE)} to project them anyway.")
+            f"{display_path(CONFIG_FILE)} to project them anyway."
+        )
     zone, north = utm_zone_at(*c)
-    return {"crs": utm_crs_for(zone, north),
-            "basis": f"derived from this run's position: UTM zone "
-                     f"{zone_label(zone, north)}",
-            "configured": False}
+    return {
+        "crs": utm_crs_for(zone, north),
+        "basis": f"derived from this run's position: UTM zone "
+        f"{zone_label(zone, north)}",
+        "configured": False,
+    }
 
 
 def run_projection(con, activity_id: str) -> dict:
@@ -142,12 +145,16 @@ def run_projection(con, activity_id: str) -> dict:
     disagree about which zone a run is in. Raises Unplaceable for a run with
     no position when nothing is configured.
     """
-    lat, lon = con.execute("""
+    lat, lon = con.execute(
+        """
         SELECT median(lat), median(lon) FROM records
         WHERE activity_id = ? AND lat IS NOT NULL AND lon IS NOT NULL
-    """, [activity_id]).fetchone()
-    return resolve_projection([] if lat is None else [lat],
-                              [] if lon is None else [lon])
+    """,
+        [activity_id],
+    ).fetchone()
+    return resolve_projection(
+        [] if lat is None else [lat], [] if lon is None else [lon]
+    )
 
 
 def public_projection(p: dict | None) -> dict | None:
@@ -169,8 +176,7 @@ def utm_suggestion(lats, lons) -> str | None:
     zone, north = utm_zone_at(*c)
     hemi = "N" if north else "S"
     code = f"EPSG:{32600 + zone if north else 32700 + zone}"
-    text = (f"positions centre on UTM zone {zone}{hemi}: set "
-            f"projection_crs: {code}")
+    text = f"positions centre on UTM zone {zone}{hemi}: set projection_crs: {code}"
     usgs = usgs_grid_for_zone(zone, north)
     if usgs is not None:
         text += f" (or {usgs}, the NAD83 / UTM zone USGS names DEM tiles in)"
@@ -215,7 +221,7 @@ class OutsideTile(ValueError):
     """
 
 
-def _crs_of(tf: "tifffile.TiffFile", name: str) -> str:
+def _crs_of(tf: tifffile.TiffFile, name: str) -> str:
     """The tile's declared projected CRS, from the GeoTIFF GeoKeys.
 
     Falls back to the CONFIGURED projection only if the key is absent, and
@@ -229,7 +235,8 @@ def _crs_of(tf: "tifffile.TiffFile", name: str) -> str:
     if configured is None:
         raise ValueError(
             f"{name} carries no ProjectedCSTypeGeoKey and projection_crs is "
-            f"not set, so nothing says where its pixels are")
+            f"not set, so nothing says where its pixels are"
+        )
     return configured
 
 
@@ -243,7 +250,8 @@ class DemTile:
         if not path.exists():
             raise FileNotFoundError(
                 f"{path} missing. Download it from USGS 3DEP; it is gitignored "
-                f"because it is ~430 MB of public data and re-downloadable.")
+                f"because it is ~430 MB of public data and re-downloadable."
+            )
         self.path = path
         with tifffile.TiffFile(path) as tf:
             page = tf.pages[0]
@@ -281,7 +289,9 @@ class DemTile:
 
     def _pixel(self, lats, lons):
         xs, ys = self.to_utm.transform(np.asarray(lons), np.asarray(lats))
-        return (np.asarray(xs) - self.ox) / self.sx, (self.oy - np.asarray(ys)) / self.sy
+        return (np.asarray(xs) - self.ox) / self.sx, (
+            self.oy - np.asarray(ys)
+        ) / self.sy
 
     def elevation(self, lats, lons) -> np.ndarray:
         """Bilinearly interpolated elevation, in metres.
@@ -291,22 +301,30 @@ class DemTile:
         into grade (§9).
         """
         col, row = self._pixel(lats, lons)
-        outside = (col < 0) | (col >= self.width - 1) | (row < 0) | (row >= self.height - 1)
+        outside = (
+            (col < 0) | (col >= self.width - 1) | (row < 0) | (row >= self.height - 1)
+        )
         if outside.any():
             n = int(outside.sum())
             raise OutsideTile(
                 f"{n} of {len(col)} coordinates fall outside {self.path.name}. "
                 f"A tile that does not cover the run must fail loudly rather "
-                f"than return NoData (§5a). Fetch the neighbouring tile.")
+                f"than return NoData (§5a). Fetch the neighbouring tile."
+            )
         c0, r0 = np.floor(col).astype(int), np.floor(row).astype(int)
         fc, fr = col - c0, row - r0
         g = self.grid
-        v = (g[r0, c0] * (1 - fc) * (1 - fr) + g[r0, c0 + 1] * fc * (1 - fr)
-             + g[r0 + 1, c0] * (1 - fc) * fr + g[r0 + 1, c0 + 1] * fc * fr)
+        v = (
+            g[r0, c0] * (1 - fc) * (1 - fr)
+            + g[r0, c0 + 1] * fc * (1 - fr)
+            + g[r0 + 1, c0] * (1 - fc) * fr
+            + g[r0 + 1, c0 + 1] * fc * fr
+        )
         if (v < NODATA_BELOW).any():
             raise OutsideTile(
                 f"{int((v < NODATA_BELOW).sum())} coordinates hit NoData inside "
-                f"{self.path.name} — a hole in the lidar coverage, not a miss.")
+                f"{self.path.name} — a hole in the lidar coverage, not a miss."
+            )
         return v
 
 
@@ -400,8 +418,7 @@ def usgs_grid_crs() -> str | None:
     return usgs_grid_for_zone(*uz) if uz is not None else None
 
 
-def _coverage_grid(lats, lons) -> tuple[str, bool, int | None,
-                                        bool | None, bool]:
+def _coverage_grid(lats, lons) -> tuple[str, bool, int | None, bool | None, bool]:
     """The CRS missing cells are labelled in, for coverage().
 
     Returns (grid_crs, is_usgs_grid, zone, is_north, projection_configured);
@@ -424,8 +441,13 @@ def _coverage_grid(lats, lons) -> tuple[str, bool, int | None,
         grid = usgs_grid_for_zone(*uz) if uz is not None else None
         if grid is not None:
             return grid, True, uz[0], uz[1], True
-        return (crs, False, (uz[0] if uz is not None else None),
-                (uz[1] if uz is not None else None), True)
+        return (
+            crs,
+            False,
+            (uz[0] if uz is not None else None),
+            (uz[1] if uz is not None else None),
+            True,
+        )
     c = _centre(lats, lons)
     zone, north = utm_zone_at(*c) if c is not None else (1, True)
     grid = usgs_grid_for_zone(zone, north)
@@ -434,20 +456,23 @@ def _coverage_grid(lats, lons) -> tuple[str, bool, int | None,
     return utm_crs_for(zone, north), False, zone, north, False
 
 
-def _no_fetch_reason(grid: str, zone: int | None,
-                     north: bool | None) -> str:
+def _no_fetch_reason(grid: str, zone: int | None, north: bool | None) -> str:
     """Why a cell labelled in `grid` has no fetch command. Only called when
     `usgs_grid_for_zone` has already returned None for this zone, so the
     reason states what was checked and nothing more."""
     if zone is None:
-        return (f"no USGS grid exists for {grid}: it is not a UTM projection, "
-                f"so no USGS tile name can be computed in it and fetch-tile "
-                f"cannot resolve this cell. No fetch command is given.")
-    return (f"no USGS grid exists for UTM zone {zone_label(zone, north)}: "
-            f"NAD83 / UTM, the grid USGS names 3DEP tiles in, is defined for "
-            f"northern zones 1-23 only. A `--zone {zone}` would be read as "
-            f"zone {zone}N and name different ground, so no fetch command is "
-            f"given; a tile for this ground has to come from elsewhere.")
+        return (
+            f"no USGS grid exists for {grid}: it is not a UTM projection, "
+            f"so no USGS tile name can be computed in it and fetch-tile "
+            f"cannot resolve this cell. No fetch command is given."
+        )
+    return (
+        f"no USGS grid exists for UTM zone {zone_label(zone, north)}: "
+        f"NAD83 / UTM, the grid USGS names 3DEP tiles in, is defined for "
+        f"northern zones 1-23 only. A `--zone {zone}` would be read as "
+        f"zone {zone}N and name different ground, so no fetch command is "
+        f"given; a tile for this ground has to come from elsewhere."
+    )
 
 
 def _in_grid_zone(tx: int, ty: int, grid: str, zone: int | None) -> bool:
@@ -458,8 +483,9 @@ def _in_grid_zone(tx: int, ty: int, grid: str, zone: int | None) -> bool:
     """
     if zone is None:
         return False
-    lon, _ = transformer(grid, WGS84).transform((tx + 0.5) * TILE_SPAN_M,
-                                                (ty + 0.5) * TILE_SPAN_M)
+    lon, _ = transformer(grid, WGS84).transform(
+        (tx + 0.5) * TILE_SPAN_M, (ty + 0.5) * TILE_SPAN_M
+    )
     lo, hi = zone_lon_band(zone)
     return lo <= lon <= hi
 
@@ -478,7 +504,8 @@ class TileSet:
     """Every loaded tile, queried as one surface.
 
     WHY A SET RATHER THAN A TILE. `DemTile` took a single path defaulting to
-    the first trail's tile, so a run anywhere else failed and was counted as "outside the
+    the first trail's tile, so a run anywhere else failed and was counted as "outside
+    the
     loaded tile" with no indication of which tile would fix it. Adding a
     second trail meant editing code. Now adding a tile to data/dem/ is the
     entire installation step, and a run outside every tile can be TOLD what
@@ -486,8 +513,9 @@ class TileSet:
     """
 
     def __init__(self, paths: list[Path] | None = None):
-        self.tiles = [DemTile(p) for p in (paths if paths is not None
-                                           else loaded_tiles())]
+        self.tiles = [
+            DemTile(p) for p in (paths if paths is not None else loaded_tiles())
+        ]
 
     def __bool__(self) -> bool:
         return bool(self.tiles)
@@ -519,8 +547,12 @@ class TileSet:
                 break
             idx = np.flatnonzero(remaining)
             col, row = tile._pixel(lats[idx], lons[idx])
-            inside = ((col >= 0) & (col < tile.width - 1)
-                      & (row >= 0) & (row < tile.height - 1))
+            inside = (
+                (col >= 0)
+                & (col < tile.width - 1)
+                & (row >= 0)
+                & (row < tile.height - 1)
+            )
             if not inside.any():
                 continue
             take = idx[inside]
@@ -530,7 +562,8 @@ class TileSet:
         if remaining.any():
             raise OutsideTile(
                 f"{int(remaining.sum())} of {lats.size} coordinates fall "
-                f"outside every loaded tile ({', '.join(self.names) or 'none'})")
+                f"outside every loaded tile ({', '.join(self.names) or 'none'})"
+            )
         return (out, names) if with_tiles else out
 
     def coverage(self, lats, lons) -> dict:
@@ -545,14 +578,24 @@ class TileSet:
         lons = np.asarray(lons, dtype=float)
         n = int(lats.size)
         if n == 0:
-            return {"n_points": 0, "n_covered": 0, "n_uncovered": 0,
-                    "fraction_covered": None, "missing_tiles": [],
-                    "loaded_tiles": self.names, "projection": None}
+            return {
+                "n_points": 0,
+                "n_covered": 0,
+                "n_uncovered": 0,
+                "fraction_covered": None,
+                "missing_tiles": [],
+                "loaded_tiles": self.names,
+                "projection": None,
+            }
         covered = np.zeros(lats.shape, dtype=bool)
         for tile in self.tiles:
             col, row = tile._pixel(lats, lons)
-            covered |= ((col >= 0) & (col < tile.width - 1)
-                        & (row >= 0) & (row < tile.height - 1))
+            covered |= (
+                (col >= 0)
+                & (col < tile.width - 1)
+                & (row >= 0)
+                & (row < tile.height - 1)
+            )
         missing = {}
         grid, usgs_grid, zone, north, configured = _coverage_grid(lats, lons)
         # THE PROJECTION THIS RUN'S TERRAIN IS COMPUTED IN, LABELLED. `crs`
@@ -564,8 +607,7 @@ class TileSet:
         except Unplaceable:
             projection = None
         if (~covered).any():
-            xs, ys = transformer(WGS84, grid).transform(lons[~covered],
-                                                        lats[~covered])
+            xs, ys = transformer(WGS84, grid).transform(lons[~covered], lats[~covered])
             # NO FILENAME WITHOUT A CONFIGURED GRID OR A SUFFIX. Either gap
             # makes the name a fabrication; None says "unresolved" outright.
             suffix = _suffix_guess() if configured and usgs_grid else None
@@ -574,62 +616,68 @@ class TileSet:
             # here would be read as a NORTHERN zone and send fetch-tile to the
             # northern mirror of this cell -- which can be US ground, pass
             # every guard, and download a tile for the wrong continent.
-            no_fetch = (None if usgs_grid
-                        else _no_fetch_reason(grid, zone, north))
-            for x, y in zip(np.atleast_1d(xs), np.atleast_1d(ys)):
+            no_fetch = None if usgs_grid else _no_fetch_reason(grid, zone, north)
+            for x, y in zip(np.atleast_1d(xs), np.atleast_1d(ys), strict=False):
                 tx, ty = tile_grid_id(float(x), float(y))
                 key = (tx, ty)
-                cell = missing.setdefault(key, {"tile": f"x{tx}y{ty}",
-                                                "usgs_cell": f"x{tx}y{ty + 1}",
-                                                "filename": (tile_filename(tx, ty, suffix)
-                                                             if suffix is not None
-                                                             else None),
-                                                "filename_is_resolved": False,
-                                                "in_grid_crs_zone": (
-                                                    usgs_grid and
-                                                    _in_grid_zone(tx, ty, grid, zone)),
-                                                "fetch_command": (
-                                                    f"uv run trail-factors "
-                                                    f"fetch-tile x{tx}y{ty + 1}"
-                                                    + ("" if configured
-                                                       else f" --zone {zone}")
-                                                    if no_fetch is None else None),
-                                                "fetch_unavailable_reason":
-                                                    no_fetch,
-                                                "n_points": 0,
-                                                "easting_range": [tx * TILE_SPAN_M,
-                                                                  (tx + 1) * TILE_SPAN_M],
-                                                "northing_range": [ty * TILE_SPAN_M,
-                                                                   (ty + 1) * TILE_SPAN_M]})
+                cell = missing.setdefault(
+                    key,
+                    {
+                        "tile": f"x{tx}y{ty}",
+                        "usgs_cell": f"x{tx}y{ty + 1}",
+                        "filename": (
+                            tile_filename(tx, ty, suffix)
+                            if suffix is not None
+                            else None
+                        ),
+                        "filename_is_resolved": False,
+                        "in_grid_crs_zone": (
+                            usgs_grid and _in_grid_zone(tx, ty, grid, zone)
+                        ),
+                        "fetch_command": (
+                            f"uv run trail-factors "
+                            f"fetch-tile x{tx}y{ty + 1}"
+                            + ("" if configured else f" --zone {zone}")
+                            if no_fetch is None
+                            else None
+                        ),
+                        "fetch_unavailable_reason": no_fetch,
+                        "n_points": 0,
+                        "easting_range": [tx * TILE_SPAN_M, (tx + 1) * TILE_SPAN_M],
+                        "northing_range": [ty * TILE_SPAN_M, (ty + 1) * TILE_SPAN_M],
+                    },
+                )
                 cell["n_points"] += 1
-        note = ("`filename` is a GUESS and `filename_is_resolved` says so: "
-                "the project suffix is copied from the tiles already on disk "
-                "(or the configured guess), and where `in_grid_crs_zone` is "
-                "false the x/y pair is wrong too, because the real tile is "
-                "named in its own UTM zone. A null `filename` means no guess "
-                "could be made at all. The GROUND (easting_range/"
-                "northing_range) is exact in `crs`. Run `fetch_command`, which "
-                "resolves the real filename against the 3DEP index and "
-                "downloads it; a null `fetch_command` means no USGS grid "
-                "exists for this ground and `fetch_unavailable_reason` says "
-                "why.")
+        note = (
+            "`filename` is a GUESS and `filename_is_resolved` says so: "
+            "the project suffix is copied from the tiles already on disk "
+            "(or the configured guess), and where `in_grid_crs_zone` is "
+            "false the x/y pair is wrong too, because the real tile is "
+            "named in its own UTM zone. A null `filename` means no guess "
+            "could be made at all. The GROUND (easting_range/"
+            "northing_range) is exact in `crs`. Run `fetch_command`, which "
+            "resolves the real filename against the 3DEP index and "
+            "downloads it; a null `fetch_command` means no USGS grid "
+            "exists for this ground and `fetch_unavailable_reason` says "
+            "why."
+        )
         if not configured and missing:
             hint = utm_suggestion(lats, lons)
-            note = ("projection_crs is not set, so terrain is projected in the "
-                    "UTM zone derived from this run's position (`projection`) "
-                    "and cells are labelled in that zone's grid. The filename "
-                    "is UNRESOLVED; `fetch_command` carries the derived "
-                    "northern zone (`--zone`), because a cell name means "
-                    "nothing to `fetch-tile` without the zone it was computed "
-                    "in. "
-                    + (f"The {hint}. " if hint else "") + note)
+            note = (
+                "projection_crs is not set, so terrain is projected in the "
+                "UTM zone derived from this run's position (`projection`) "
+                "and cells are labelled in that zone's grid. The filename "
+                "is UNRESOLVED; `fetch_command` carries the derived "
+                "northern zone (`--zone`), because a cell name means "
+                "nothing to `fetch-tile` without the zone it was computed "
+                "in. " + (f"The {hint}. " if hint else "") + note
+            )
         return {
             "n_points": n,
             "n_covered": int(covered.sum()),
             "n_uncovered": int((~covered).sum()),
             "fraction_covered": float(covered.mean()),
-            "missing_tiles": sorted(missing.values(),
-                                    key=lambda m: -m["n_points"]),
+            "missing_tiles": sorted(missing.values(), key=lambda m: -m["n_points"]),
             "loaded_tiles": self.names,
             "crs": grid,
             "projection_configured": configured,

@@ -34,9 +34,11 @@ def _zones_line() -> str:
 
     z = configured_zones()
     if z["status"] != "ok":
-        return (f"Zones: NOT CONFIGURED ({display_path(ZONE_CONFIG)} has no "
-                f"running set). Each FIT file's own boundaries still apply to "
-                f"time in zone; quote no boundary the tools did not return.")
+        return (
+            f"Zones: NOT CONFIGURED ({display_path(ZONE_CONFIG)} has no "
+            f"running set). Each FIT file's own boundaries still apply to "
+            f"time in zone; quote no boundary the tools did not return."
+        )
     bands = ", ".join(f"z{n} {lo:.0f}-{hi:.0f}" for n, lo, hi in z["zones"])
     return f"Configured zones ({z['source']}): {bands}."
 
@@ -53,8 +55,11 @@ def spec_context() -> str:
     from trail_factors.ingest.answers import NO_RUN_TYPE_SOURCE, NOT_COLLECTED
 
     goal = config.get().goal_event
-    athlete = (f"Single athlete, training for {goal}." if goal is not None
-               else "Single athlete.")
+    athlete = (
+        f"Single athlete, training for {goal}."
+        if goal is not None
+        else "Single athlete."
+    )
     zones = _zones_line()
 
     return f"""\

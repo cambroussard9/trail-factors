@@ -34,11 +34,12 @@ def profile(records, direction, lo=0.0, hi=None):
     """effort_profile over (path_distance_m, grade_pct) records."""
     con = duckdb.connect(":memory:")
     try:
-        con.execute("CREATE TABLE records_enriched (activity_id VARCHAR, "
-                    "path_distance_m DOUBLE, grade_pct DOUBLE)")
+        con.execute(
+            "CREATE TABLE records_enriched (activity_id VARCHAR, "
+            "path_distance_m DOUBLE, grade_pct DOUBLE)"
+        )
         for d, g in records:
-            con.execute("INSERT INTO records_enriched VALUES (?, ?, ?)",
-                        [AID, d, g])
+            con.execute("INSERT INTO records_enriched VALUES (?, ?, ?)", [AID, d, g])
         hi = hi if hi is not None else records[-1][0]
         return B.effort_profile(con, AID, lo, hi, direction)
     finally:
@@ -49,17 +50,16 @@ THRESHOLD = B.GRADE_BAND_MODERATE_PCT
 
 
 class TestTheSteepMeanKeepsTheEffortsSign(unittest.TestCase):
-
     def test_a_descents_steep_mean_is_at_most_minus_the_threshold(self):
-        p = profile([(0, -2.0), (10, -8.0), (20, -15.0), (30, -6.0),
-                     (40, -1.0)], "descent")
+        p = profile(
+            [(0, -2.0), (10, -8.0), (20, -15.0), (30, -6.0), (40, -1.0)], "descent"
+        )
         self.assertIsNotNone(p["steep_mean_grade_pct"])
         self.assertLessEqual(p["steep_mean_grade_pct"], -THRESHOLD)
 
     def test_an_ascents_steep_mean_is_at_least_the_threshold(self):
         """The mirror image."""
-        p = profile([(0, 2.0), (10, 8.0), (20, 15.0), (30, 6.0),
-                     (40, 1.0)], "ascent")
+        p = profile([(0, 2.0), (10, 8.0), (20, 15.0), (30, 6.0), (40, 1.0)], "ascent")
         self.assertIsNotNone(p["steep_mean_grade_pct"])
         self.assertGreaterEqual(p["steep_mean_grade_pct"], THRESHOLD)
 
@@ -67,7 +67,7 @@ class TestTheSteepMeanKeepsTheEffortsSign(unittest.TestCase):
         """Every sample in the set is >= the threshold in the effort's
         direction, so their weighted mean must be too -- on irregular spacing
         and mixed-sign grades alike."""
-        rng = random.Random(20250101)              # fixed seed: reproducible
+        rng = random.Random(20250101)  # fixed seed: reproducible
         n_with_mean = 0
         for _ in range(80):
             n = rng.randint(3, 25)
@@ -78,33 +78,28 @@ class TestTheSteepMeanKeepsTheEffortsSign(unittest.TestCase):
                 if m is None:
                     continue
                 n_with_mean += 1
-                self.assertGreaterEqual(sign * m, THRESHOLD - 1e-9,
-                                        (direction, recs))
-        self.assertGreater(n_with_mean, 40)        # the property was exercised
+                self.assertGreaterEqual(sign * m, THRESHOLD - 1e-9, (direction, recs))
+        self.assertGreater(n_with_mean, 40)  # the property was exercised
 
 
 class TestAWrongSignSampleNeverEntersTheSet(unittest.TestCase):
-
     def test_a_steep_climb_inside_a_descent_is_left_out(self):
         """A +20% record inside a descent is wrong-sign: counted in
         wrong_sign_m, never averaged into the descent's steep mean."""
-        with_it = profile([(0, -8.0), (10, 20.0), (20, -8.0), (30, -8.0)],
-                          "descent")
+        with_it = profile([(0, -8.0), (10, 20.0), (20, -8.0), (30, -8.0)], "descent")
         self.assertAlmostEqual(with_it["steep_mean_grade_pct"], -8.0)
         self.assertGreater(with_it["wrong_sign_m"], 0)
         self.assertEqual(with_it["len_steep_m"], 0.0)
 
     def test_a_steep_drop_inside_an_ascent_is_left_out(self):
-        with_it = profile([(0, 8.0), (10, -20.0), (20, 8.0), (30, 8.0)],
-                          "ascent")
+        with_it = profile([(0, 8.0), (10, -20.0), (20, 8.0), (30, 8.0)], "ascent")
         self.assertAlmostEqual(with_it["steep_mean_grade_pct"], 8.0)
         self.assertGreater(with_it["wrong_sign_m"], 0)
 
     def test_positive_twin_the_same_sample_with_the_right_sign_enters(self):
         """So the exclusion above is about SIGN, not about the value being
         extreme: flip the record to the descent's sign and it is averaged."""
-        p = profile([(0, -8.0), (10, -20.0), (20, -8.0), (30, -8.0)],
-                    "descent")
+        p = profile([(0, -8.0), (10, -20.0), (20, -8.0), (30, -8.0)], "descent")
         self.assertLess(p["steep_mean_grade_pct"], -8.0)
         self.assertEqual(p["wrong_sign_m"], 0.0)
         self.assertGreater(p["len_steep_m"], 0)
@@ -112,8 +107,10 @@ class TestAWrongSignSampleNeverEntersTheSet(unittest.TestCase):
     def test_a_sample_just_under_the_threshold_stays_out(self):
         """The set is >= THRESHOLD in the effort's direction, edge
         inclusive."""
-        p = profile([(0, -THRESHOLD + 0.01), (10, -THRESHOLD),
-                     (20, -THRESHOLD + 0.01)], "descent")
+        p = profile(
+            [(0, -THRESHOLD + 0.01), (10, -THRESHOLD), (20, -THRESHOLD + 0.01)],
+            "descent",
+        )
         self.assertAlmostEqual(p["steep_mean_grade_pct"], -THRESHOLD)
 
 
@@ -128,14 +125,13 @@ class TestTheSparseShortEffort(unittest.TestCase):
     """
 
     RECORDS = [(2.0, -2.0), (10.0, -30.0), (20.0, -14.0), (34.0, -16.0)]
-    END_TO_END_PCT = -8.28 / 36.0 * 100          # -23.0, the stored figure
+    END_TO_END_PCT = -8.28 / 36.0 * 100  # -23.0, the stored figure
 
     def setUp(self):
         self.p = profile(self.RECORDS, "descent", lo=0.0, hi=36.0)
 
     def test_the_hand_computation(self):
-        self.assertAlmostEqual(self.p["steep_mean_grade_pct"], -19.4,
-                               places=9)
+        self.assertAlmostEqual(self.p["steep_mean_grade_pct"], -19.4, places=9)
         self.assertAlmostEqual(self.END_TO_END_PCT, -23.0, places=9)
 
     def test_it_reads_shallower_than_end_to_end_with_the_right_sign(self):
@@ -146,12 +142,13 @@ class TestTheSparseShortEffort(unittest.TestCase):
 
     def test_the_weights_cover_the_effort(self):
         p = self.p
-        total = (p["len_steep_m"] + p["len_moderate_m"] + p["len_gentle_m"]
-                 + p["len_flat_m"])
+        total = (
+            p["len_steep_m"] + p["len_moderate_m"] + p["len_gentle_m"] + p["len_flat_m"]
+        )
         self.assertAlmostEqual(total, 36.0)
         self.assertAlmostEqual(p["grade_coverage_fraction"], 1.0)
-        self.assertAlmostEqual(p["len_steep_m"], 30.0)    # 9 + 12 + 9
-        self.assertAlmostEqual(p["len_gentle_m"], 6.0)    # the -2% record
+        self.assertAlmostEqual(p["len_steep_m"], 30.0)  # 9 + 12 + 9
+        self.assertAlmostEqual(p["len_gentle_m"], 6.0)  # the -2% record
 
 
 class TestTheLabelStatesTheThresholdUsed(unittest.TestCase):
@@ -162,8 +159,7 @@ class TestTheLabelStatesTheThresholdUsed(unittest.TestCase):
         self.f = B.profile_filters()
 
     def test_the_threshold_field_is_the_constant_the_code_applies(self):
-        self.assertEqual(self.f["steep_threshold_pct"],
-                         B.GRADE_BAND_MODERATE_PCT)
+        self.assertEqual(self.f["steep_threshold_pct"], B.GRADE_BAND_MODERATE_PCT)
 
     def test_the_definition_names_that_threshold_and_not_the_band(self):
         t = self.f["steep_threshold_definition"]
@@ -186,10 +182,10 @@ class TestTheLabelStatesTheThresholdUsed(unittest.TestCase):
 
     def test_positive_twin_the_band_text_still_names_the_10_percent_band(self):
         """The bands DO cut at 10%, so their text must still say so."""
-        self.assertIn(f"{B.GRADE_BAND_STEEP_PCT:.0f}%",
-                      self.f["band_definition"])
-        self.assertEqual(self.f["bands_pct"]["steep"],
-                         f">= {B.GRADE_BAND_STEEP_PCT:.0f}")
+        self.assertIn(f"{B.GRADE_BAND_STEEP_PCT:.0f}%", self.f["band_definition"])
+        self.assertEqual(
+            self.f["bands_pct"]["steep"], f">= {B.GRADE_BAND_STEEP_PCT:.0f}"
+        )
 
 
 if __name__ == "__main__":

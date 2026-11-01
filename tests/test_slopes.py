@@ -14,7 +14,7 @@ import unittest
 
 import numpy as np
 
-from trail_factors.transform.silver import BENCH_MAX_M, detect_slopes, profile_grade
+from trail_factors.transform.silver import detect_slopes, profile_grade
 
 
 def profile(*legs, step=10.0):
@@ -50,8 +50,11 @@ class TestFlatsBelongToNeither(unittest.TestCase):
         elev, cum = profile((500, 6.0), (500, -6.0))
         slopes = detect_slopes(elev, cum)
         self.assertEqual(len(slopes), 2)
-        self.assertLess(slopes[1]["start_distance_m"] - slopes[0]["end_distance_m"],
-                        100, "with no flat the two slopes should be adjacent")
+        self.assertLess(
+            slopes[1]["start_distance_m"] - slopes[0]["end_distance_m"],
+            100,
+            "with no flat the two slopes should be adjacent",
+        )
 
     def test_climb_to_plateau_then_a_different_descent(self):
         """A climb that tops out onto a plateau. There is NO col to key on."""
@@ -83,8 +86,11 @@ class TestPeakKeyingDoesNotReintroduceUpThenDown(unittest.TestCase):
         # high end of the ascent vs high end of the descent, along the path
         asc_high = asc["end_distance_m"]
         desc_high = desc["start_distance_m"]
-        self.assertGreater(abs(desc_high - asc_high), 2500,
-                           "the two high ends must be separated by the flat")
+        self.assertGreater(
+            abs(desc_high - asc_high),
+            2500,
+            "the two high ends must be separated by the flat",
+        )
 
     def test_a_summit_followed_by_a_flat_yields_one_slope(self):
         """A climb onto a plateau. Hysteresis never enters on the flat side,
@@ -102,7 +108,9 @@ class TestPeakKeyingDoesNotReintroduceUpThenDown(unittest.TestCase):
         self.assertEqual(len(slopes), 2)
         self.assertLess(
             abs(slopes[1]["start_distance_m"] - slopes[0]["end_distance_m"]),
-            100, "the two flanks must meet at a shared summit")
+            100,
+            "the two flanks must meet at a shared summit",
+        )
 
 
 class TestBenchTolerance(unittest.TestCase):
@@ -133,7 +141,7 @@ class TestSignificanceThreshold(unittest.TestCase):
     """Reversal significance reuses the 8 m prominence threshold."""
 
     def test_a_small_dip_mid_climb_is_absorbed(self):
-        elev, cum = profile((400, 6.0), (60, -8.0), (400, 6.0))   # ~4.8 m dip
+        elev, cum = profile((400, 6.0), (60, -8.0), (400, 6.0))  # ~4.8 m dip
         slopes = detect_slopes(elev, cum)
         self.assertEqual(len(slopes), 1, [s["vertical_m"] for s in slopes])
 
@@ -144,11 +152,11 @@ class TestSignificanceThreshold(unittest.TestCase):
         self.assertIn("descent", [s["direction"] for s in slopes])
 
     def test_a_slope_below_the_vertical_threshold_is_not_a_segment(self):
-        elev, cum = profile((100, 5.0))          # 5 m of vertical
+        elev, cum = profile((100, 5.0))  # 5 m of vertical
         self.assertEqual(detect_slopes(elev, cum), [])
 
     def test_positive_twin_just_above_the_threshold_is_a_segment(self):
-        elev, cum = profile((200, 5.0))          # 10 m of vertical
+        elev, cum = profile((200, 5.0))  # 10 m of vertical
         self.assertEqual(len(detect_slopes(elev, cum)), 1)
 
 
@@ -159,12 +167,21 @@ class TestMergeVeto(unittest.TestCase):
         """Three short rises joined by three 350 m benches: each merge is
         individually legal, and iterating them produced a 1,400 m 'ascent'
         averaging +0.9% on the real corpus. The result must stay a slope."""
-        elev, cum = profile((120, 5.0), (350, 0.0), (120, 5.0), (350, 0.0),
-                            (120, 5.0), (350, 0.0), (120, 5.0))
+        elev, cum = profile(
+            (120, 5.0),
+            (350, 0.0),
+            (120, 5.0),
+            (350, 0.0),
+            (120, 5.0),
+            (350, 0.0),
+            (120, 5.0),
+        )
         for s in detect_slopes(elev, cum):
             self.assertGreaterEqual(
-                abs(s["mean_grade_pct"]), 1.0,
-                f"{s['length_m']:.0f} m at {s['mean_grade_pct']:+.1f}% is not a slope")
+                abs(s["mean_grade_pct"]),
+                1.0,
+                f"{s['length_m']:.0f} m at {s['mean_grade_pct']:+.1f}% is not a slope",
+            )
 
     def test_positive_twin_a_real_climb_with_one_bench_still_merges(self):
         """The veto must not block a legitimate merge."""
@@ -178,12 +195,22 @@ class TestPartitionInvariants(unittest.TestCase):
     """Non-overlap is structural, not something a threshold has to protect."""
 
     def test_slopes_never_overlap(self):
-        elev, cum = profile((400, 6.0), (200, 0.0), (300, -7.0), (150, 0.0),
-                            (600, 5.0), (2000, 0.0), (400, -6.0))
+        elev, cum = profile(
+            (400, 6.0),
+            (200, 0.0),
+            (300, -7.0),
+            (150, 0.0),
+            (600, 5.0),
+            (2000, 0.0),
+            (400, -6.0),
+        )
         slopes = detect_slopes(elev, cum)
-        for a, b in zip(slopes, slopes[1:]):
-            self.assertLessEqual(a["end_distance_m"], b["start_distance_m"],
-                                 "ascent and descent must not overlap")
+        for a, b in zip(slopes, slopes[1:], strict=False):
+            self.assertLessEqual(
+                a["end_distance_m"],
+                b["start_distance_m"],
+                "ascent and descent must not overlap",
+            )
 
     def test_endpoints_are_direction_normalised(self):
         """A slope is keyed low-to-high however it was run, so the ascent and
@@ -208,8 +235,7 @@ class TestPartitionInvariants(unittest.TestCase):
         mid = g[len(g) // 2]
         self.assertAlmostEqual(mid, 6.0, delta=0.5)
         elev2, cum2 = profile((500, -6.0))
-        self.assertAlmostEqual(profile_grade(elev2, cum2)[len(g) // 2], -6.0,
-                               delta=0.5)
+        self.assertAlmostEqual(profile_grade(elev2, cum2)[len(g) // 2], -6.0, delta=0.5)
 
 
 if __name__ == "__main__":

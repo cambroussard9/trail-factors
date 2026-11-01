@@ -19,8 +19,8 @@ import unittest
 
 import duckdb
 
-from trail_factors.analysis import session_load as SL
 from tests.corpus import CorpusTestCase
+from trail_factors.analysis import session_load as SL
 
 
 def table(*rows):
@@ -30,18 +30,21 @@ def table(*rows):
                    run_id VARCHAR, timer_time_s DOUBLE, garmin_rpe DOUBLE,
                    garmin_feel INTEGER)""")
     for aid, timer, rpe, feel in rows:
-        con.execute("INSERT INTO activities VALUES (?, ?, ?, ?, ?)",
-                    [aid, f"run-{aid}", timer, rpe, feel])
+        con.execute(
+            "INSERT INTO activities VALUES (?, ?, ?, ?, ?)",
+            [aid, f"run-{aid}", timer, rpe, feel],
+        )
     return con
 
 
 class TestTheFormula(unittest.TestCase):
-
     def setUp(self):
-        self.con = table(("rated", 3000.0, 4.0, 3),
-                         ("unrated", 3000.0, None, None),
-                         ("feel_only", 3000.0, None, 4),
-                         ("no_timer", None, 6.0, 2))
+        self.con = table(
+            ("rated", 3000.0, 4.0, 3),
+            ("unrated", 3000.0, None, None),
+            ("feel_only", 3000.0, None, 4),
+            ("no_timer", None, 6.0, 2),
+        )
 
     def tearDown(self):
         self.con.close()
@@ -54,14 +57,14 @@ class TestTheFormula(unittest.TestCase):
         self.assertAlmostEqual(r["foster_load_au"], 4.0 * 50.0)
         self.assertEqual(r["run_id"], "run-rated")
         self.assertEqual(r["garmin_rpe"], 4.0)
-        self.assertEqual(r["garmin_feel"], 3)      # shown
+        self.assertEqual(r["garmin_feel"], 3)  # shown
 
     def test_an_unrated_activity_is_unavailable_never_zero(self):
         r = SL.session_load(self.con, "unrated")
         self.assertEqual(r["status"], "unavailable")
         self.assertEqual(r["reason"], SL.UNRATED_REASON)
         self.assertIsNone(r["foster_load_au"])
-        self.assertIsNotNone(r["duration_min"])    # the timer is still shown
+        self.assertIsNotNone(r["duration_min"])  # the timer is still shown
 
     def test_feel_alone_does_not_price_a_session(self):
         """A feel with no RPE is still unrated: feel never stands in."""
@@ -92,8 +95,7 @@ class TestFeelNeverChangesTheLoad(unittest.TestCase):
         rows = [(f"f{v}", 2700.0, 7.0, v) for v in (None, 1, 2, 3, 4, 5)]
         con = table(*rows)
         try:
-            loads = {SL.session_load(con, aid)["foster_load_au"]
-                     for aid, *_ in rows}
+            loads = {SL.session_load(con, aid)["foster_load_au"] for aid, *_ in rows}
         finally:
             con.close()
         self.assertEqual(loads, {7.0 * 45.0})
@@ -120,6 +122,7 @@ class TestTheSelectionSummary(unittest.TestCase):
 
     def summary(self, *rows):
         from trail_factors.mcp_server import load_summary
+
         con = table(*rows)
         try:
             return load_summary([SL.session_load(con, r[0]) for r in rows])
@@ -127,9 +130,11 @@ class TestTheSelectionSummary(unittest.TestCase):
             con.close()
 
     def test_a_rated_session_with_no_timer_is_not_counted_unrated(self):
-        s = self.summary(("rated", 3000.0, 4.0, 3),
-                         ("unrated", 3000.0, None, None),
-                         ("no_timer", None, 6.0, 2))
+        s = self.summary(
+            ("rated", 3000.0, 4.0, 3),
+            ("unrated", 3000.0, None, None),
+            ("no_timer", None, 6.0, 2),
+        )
         self.assertEqual((s["n"], s["n_priced"], s["n_rated"]), (3, 1, 2))
         self.assertEqual(s["n_unrated"], 1)
         self.assertEqual(s["n_rated_unpriced"], 1)
@@ -144,13 +149,13 @@ class TestTheSelectionSummary(unittest.TestCase):
     def test_positive_twin_every_session_priced_is_not_a_lower_bound(self):
         s = self.summary(("a", 3000.0, 4.0, 3), ("b", 1800.0, 6.0, None))
         self.assertEqual((s["n_unrated"], s["n_rated_unpriced"]), (0, 0))
-        self.assertAlmostEqual(s["sum_foster_load_au_priced"],
-                               4.0 * 50.0 + 6.0 * 30.0)
+        self.assertAlmostEqual(s["sum_foster_load_au_priced"], 4.0 * 50.0 + 6.0 * 30.0)
         self.assertIs(s["is_lower_bound"], False)
         self.assertNotIn("LOWER BOUND", s["note"])
 
     def test_an_empty_selection_is_null_not_zero(self):
         from trail_factors.mcp_server import load_summary
+
         s = load_summary([])
         self.assertIsNone(s["sum_foster_load_au_priced"])
         self.assertIs(s["is_lower_bound"], False)
@@ -171,8 +176,9 @@ class TestEveryActivityInTheCorpus(CorpusTestCase):
             r = SL.session_load(self.con, aid)
             if rpe is not None and timer_s is not None:
                 self.assertEqual(r["status"], "ok", aid)
-                self.assertAlmostEqual(r["foster_load_au"],
-                                       rpe * timer_s / 60.0, places=9)
+                self.assertAlmostEqual(
+                    r["foster_load_au"], rpe * timer_s / 60.0, places=9
+                )
                 n_ok += 1
             else:
                 self.assertEqual(r["status"], "unavailable", aid)
@@ -181,8 +187,10 @@ class TestEveryActivityInTheCorpus(CorpusTestCase):
                 if rpe is None:
                     self.assertEqual(r["reason"], SL.UNRATED_REASON, aid)
         if n_ok == 0:
-            self.skipTest("no activity in this corpus carries a Garmin RPE, "
-                          "so only the unavailable path ran")
+            self.skipTest(
+                "no activity in this corpus carries a Garmin RPE, "
+                "so only the unavailable path ran"
+            )
 
 
 if __name__ == "__main__":

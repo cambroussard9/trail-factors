@@ -11,33 +11,52 @@ it either way: the tests assert that the verdict FOLLOWS from the gate's own
 counts, whichever way it falls.
 """
 
+import contextlib
 import unittest
 from unittest import mock
 
+from tests.corpus import (
+    CorpusTestCase,
+    corpus_path,
+    corpus_projection,
+    isolated,
+    one,
+    use_config,
+)
 from trail_factors.analysis import drift_onset as DO
-from tests.corpus import CorpusTestCase, connect, corpus_path, one, use_config, isolated, corpus_projection
 
 ONSET_STATUSES = {"onset", "no_onset", "insufficient"}
 
+
 # --- isolation: never the real athlete state or config ----------------------
+# Entered in setUpModule, CLOSED in tearDownModule -- see tests/corpus.py
+# isolated() for why this is not unittest.enterModuleContext.
+_ISOLATION = contextlib.ExitStack()
+
+
 def setUpModule():
     if corpus_path() is not None:
-        unittest.enterModuleContext(
-            isolated(projection_crs=corpus_projection()))
+        _ISOLATION.enter_context(isolated(projection_crs=corpus_projection()))
+
+
+def tearDownModule():
+    _ISOLATION.close()
 
 
 def _drift_runs(con):
     """Watch runs with enriched records: the ones §6.7 can pair at all."""
-    return [aid for aid, in con.execute("""
+    return [
+        aid
+        for (aid,) in con.execute("""
         SELECT a.activity_id FROM activities a
         WHERE a.source = 'garmin_watch' AND a.sport = 'running' AND EXISTS (
             SELECT 1 FROM records_enriched e
             WHERE e.activity_id = a.activity_id)
-        ORDER BY a.start_time_utc""").fetchall()]
+        ORDER BY a.start_time_utc""").fetchall()
+    ]
 
 
 class TestGate(CorpusTestCase):
-
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -46,8 +65,10 @@ class TestGate(CorpusTestCase):
     def test_the_verdict_follows_from_the_counts(self):
         """Too few onsets is ALWAYS a refusal, whatever else is true."""
         g = self.gate
-        self.assertEqual(g["n_with_onset"],
-                         sum(1 for c in g["cohort"] if c["onset_status"] == "onset"))
+        self.assertEqual(
+            g["n_with_onset"],
+            sum(1 for c in g["cohort"] if c["onset_status"] == "onset"),
+        )
         if g["n_with_onset"] < DO.MIN_ONSET_RUNS:
             self.assertFalse(g["reportable"])
             self.assertIsNone(g["cv"])
@@ -76,9 +97,11 @@ class TestGate(CorpusTestCase):
         n = self.gate["n_with_onset"]
         if n == 0:
             self.skipTest("no run in this corpus produces an onset")
-        with mock.patch.object(DO, "MIN_ONSET_RUNS", 1), \
-                mock.patch.object(DO, "MAX_ONSET_CV", float("inf")), \
-                mock.patch.object(DO, "DEW_POINT_BAND_C", float("inf")):
+        with (
+            mock.patch.object(DO, "MIN_ONSET_RUNS", 1),
+            mock.patch.object(DO, "MAX_ONSET_CV", float("inf")),
+            mock.patch.object(DO, "DEW_POINT_BAND_C", float("inf")),
+        ):
             g = DO.gate_status(self.con)
         self.assertTrue(g["reportable"])
         self.assertIsNotNone(g["cv"])
@@ -110,7 +133,8 @@ class TestGate(CorpusTestCase):
         """
         naive = self.con.execute(
             "SELECT count(DISTINCT run_id) FROM activities "
-            "WHERE sampling_regime = '1hz'").fetchone()[0]
+            "WHERE sampling_regime = '1hz'"
+        ).fetchone()[0]
         mixed = self.con.execute("""
             SELECT run_id FROM activities WHERE sampling_regime = '1hz'
               AND source <> 'garmin_watch'
@@ -121,7 +145,7 @@ class TestGate(CorpusTestCase):
             self.skipTest("no mixed-regime dual recording in the corpus")
         self.assertLess(self.gate["n_1hz_runs"], naive)
         counted = {c["run_id"] for c in self.gate["cohort"]}
-        for run_id, in mixed:
+        for (run_id,) in mixed:
             self.assertNotIn(run_id, counted)
 
     def test_the_cohort_is_listed_rather_than_summarised_away(self):
@@ -146,14 +170,17 @@ class TestCurve(CorpusTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.aid = one(cls.con, """
+        cls.aid = one(
+            cls.con,
+            """
             SELECT a.activity_id FROM activities a
             WHERE a.sampling_regime = '1hz' AND a.source = 'garmin_watch'
               AND a.sport = 'running' AND EXISTS (
                 SELECT 1 FROM records_enriched e
                 WHERE e.activity_id = a.activity_id)
             ORDER BY a.timer_time_s DESC LIMIT 1""",
-            what="1 Hz watch run with enriched records")[0]
+            what="1 Hz watch run with enriched records",
+        )[0]
         cls.c = DO.curve(cls.con, cls.aid)
 
     def test_dew_point_travels_with_the_value(self):
@@ -194,6 +221,7 @@ class TestCurve(CorpusTestCase):
 
     def test_it_inherits_every_one_of_6_7s_filters(self):
         from trail_factors.analysis import primitives as P
+
         base = P.drift_filters()
         for k, v in base.items():
             # `grain` and `note` are deliberately overridden: this IS a
@@ -214,6 +242,7 @@ class TestCurve(CorpusTestCase):
         the SAME curve as configuring that zone explicitly, so derivation
         changes where the frame comes from, never the answer."""
         from trail_factors.transform import dem
+
         with use_config(projection_crs=None):
             p = dem.run_projection(self.con, self.aid)
             derived = DO.curve(self.con, self.aid)
@@ -234,8 +263,9 @@ class TestOnsetCategories(CorpusTestCase):
         super().setUpClass()
         cls.curves = {aid: DO.curve(cls.con, aid) for aid in _drift_runs(cls.con)}
         if not cls.curves:
-            raise unittest.SkipTest("this corpus has no watch run with "
-                                    "enriched records")
+            raise unittest.SkipTest(
+                "this corpus has no watch run with enriched records"
+            )
 
     def test_every_run_lands_in_a_named_category(self):
         seen = {c["onset_status"] for c in self.curves.values()}
@@ -250,8 +280,9 @@ class TestOnsetCategories(CorpusTestCase):
 
     def test_an_onset_run_carries_a_real_number(self):
         """The positive twin."""
-        onsets = {aid: c for aid, c in self.curves.items()
-                  if c["onset_status"] == "onset"}
+        onsets = {
+            aid: c for aid, c in self.curves.items() if c["onset_status"] == "onset"
+        }
         if not onsets:
             self.skipTest("no run in this corpus produces an onset")
         for aid, c in onsets.items():
@@ -269,21 +300,27 @@ class TestOnsetCategories(CorpusTestCase):
         """The structural fact the gate's reason cites, pinned on the runs
         themselves: under MIN_ONSET_DURATION_MIN nothing produces an onset."""
         for aid, c in self.curves.items():
-            if (c.get("duration_min") is not None
-                    and c["duration_min"] < DO.MIN_ONSET_DURATION_MIN):
+            if (
+                c.get("duration_min") is not None
+                and c["duration_min"] < DO.MIN_ONSET_DURATION_MIN
+            ):
                 self.assertNotEqual(c["onset_status"], "onset", aid)
 
 
 class TestReportIntegration(CorpusTestCase):
-
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
         from trail_factors.analysis import report as REP
-        aid = one(cls.con, """
+
+        aid = one(
+            cls.con,
+            """
             SELECT activity_id FROM activities
             WHERE source = 'garmin_watch' AND sport = 'running'
-            ORDER BY start_time_utc DESC LIMIT 1""", what="watch run")[0]
+            ORDER BY start_time_utc DESC LIMIT 1""",
+            what="watch run",
+        )[0]
         cls.rep = REP.build(cls.con, aid)
         cls.gate = DO.gate_status(cls.con)
 

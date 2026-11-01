@@ -560,10 +560,12 @@ First-time setup:
     cp .env.example .env                                 # optional; export what you need
     uv run trail-factors garmin-login
 
-Tests:
+Tests and checks:
 
-    uv run python -m unittest discover tests                       # corpus tests skip
-    TRAIL_FACTORS_DB=data/test-copy.duckdb uv run python -m unittest discover tests
+    uv run pytest                                          # corpus tests skip
+    TRAIL_FACTORS_DB=data/test-copy.duckdb uv run pytest   # everything
+    uv run ruff check . && uv run ruff format --check .    # what CI enforces
+    pre-commit run --all-files                             # gitleaks + ruff
     TRAIL_FACTORS_DB=data/test-copy.duckdb uv run python tests/golden/capture.py --pin   # once
     TRAIL_FACTORS_DB=data/test-copy.duckdb uv run python tests/golden/capture.py         # capture
     TRAIL_FACTORS_DB=data/test-copy.duckdb uv run python tests/golden/capture.py --check # after a refactor

@@ -6,7 +6,7 @@ Each check exists because we hit the bug it catches; each test pins that bug.
 import unittest
 from datetime import datetime, timedelta
 
-from trail_factors.ingest.validate import (FATAL, WARNING, bronze_checks, silver_checks)
+from trail_factors.ingest.validate import FATAL, WARNING, bronze_checks, silver_checks
 
 BASE = datetime(2025, 1, 15, 7, 0, 0)
 SEMI = 2**31 / 180.0
@@ -19,11 +19,14 @@ def recs(n=200, gap=5.0, **over):
     for i in range(n):
         # HR and speed must VARY: a constant column is itself a finding, and
         # a fixture that holds them fixed trips constant_column legitimately.
-        r = {"timestamp": BASE + timedelta(seconds=i * gap),
-             "distance": i * 10.0,
-             "enhanced_speed": 2.5 + (i % 7) * 0.1,
-             "heart_rate": 145 + (i % 11),
-             "position_lat": int(LAT * SEMI), "position_long": int(LON * SEMI)}
+        r = {
+            "timestamp": BASE + timedelta(seconds=i * gap),
+            "distance": i * 10.0,
+            "enhanced_speed": 2.5 + (i % 7) * 0.1,
+            "heart_rate": 145 + (i % 11),
+            "position_lat": int(LAT * SEMI),
+            "position_long": int(LON * SEMI),
+        }
         r.update({k: (v(i) if callable(v) else v) for k, v in over.items()})
         out.append(r)
     return out
@@ -59,7 +62,9 @@ class BronzeCheckTest(unittest.TestCase):
     def test_duplicate_timestamps_flagged(self):
         r = recs()
         r[50]["timestamp"] = r[49]["timestamp"]
-        self.assertIn("duplicate_timestamps", names(bronze_checks(r, SESSION, {}), WARNING))
+        self.assertIn(
+            "duplicate_timestamps", names(bronze_checks(r, SESSION, {}), WARNING)
+        )
 
     def test_record_count_wildly_off_is_flagged(self):
         """Un-coalesced Strava records look exactly like this: ~2x expected."""
@@ -88,14 +93,20 @@ class SilverCheckTest(unittest.TestCase):
     def test_sustained_impossible_pace_is_fatal(self):
         """A sustained impossibility means a unit error, not a GPS glitch."""
         r = recs(enhanced_speed=lambda i: 19.0 if 10 <= i <= 30 else 2.5)
-        self.assertIn("pace_sustained_impossible", names(silver_checks(r, self.FULL), FATAL))
+        self.assertIn(
+            "pace_sustained_impossible", names(silver_checks(r, self.FULL), FATAL)
+        )
 
     def test_partial_coverage_is_flagged_for_15_4_exclusion(self):
-        f = silver_checks(recs(), {"coverage_fraction": 0.35, "contiguous": True, "islands": 1})
+        f = silver_checks(
+            recs(), {"coverage_fraction": 0.35, "contiguous": True, "islands": 1}
+        )
         self.assertIn("gps_coverage", names(f, WARNING))
 
     def test_scattered_coverage_flagged_separately(self):
-        f = silver_checks(recs(), {"coverage_fraction": 0.25, "contiguous": False, "islands": 5})
+        f = silver_checks(
+            recs(), {"coverage_fraction": 0.25, "contiguous": False, "islands": 5}
+        )
         self.assertIn("gps_scattered", names(f, WARNING))
 
     def test_impossible_heart_rate_flagged(self):

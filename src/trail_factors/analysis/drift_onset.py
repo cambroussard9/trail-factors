@@ -33,7 +33,8 @@ development corpus and recorded in §6.9 so they are not re-derived:
 2. ONSET IS LARGELY RUN LENGTH. Only a minority of DEM-covered runs produce
    an onset at all, and across those few onset correlated strongly with
    duration -- though a handful of runs is itself too small to lean on, which
-   is part of the same problem. A cohort that varies in duration will show "onset" varying with
+   is part of the same problem. A cohort that varies in duration will show "onset"
+   varying with
    duration and nothing else.
 3. THE X-AXIS IS THE Y-AXIS'S OWN WINDOW. On an out-and-back, ground visited at
    time t is revisited near T - t, so the pair gap is forced to T - 2t. Time
@@ -105,7 +106,7 @@ def _passages(times: list[float]) -> int:
         return 0
     ts = sorted(times)
     n = 1
-    for a, b in zip(ts, ts[1:]):
+    for a, b in zip(ts, ts[1:], strict=False):
         if b - a > PASSAGE_SPLIT_GAP_S:
             n += 1
     return n
@@ -121,17 +122,24 @@ def curve(con, activity_id: str) -> dict:
     """
     import numpy as np
 
-    meta = con.execute("""
+    meta = con.execute(
+        """
         SELECT sampling_regime, duration_s FROM activities WHERE activity_id = ?
-    """, [activity_id]).fetchone()
+    """,
+        [activity_id],
+    ).fetchone()
     if meta is None:
         raise LookupError(f"no activity {activity_id}")
     regime, duration_s = meta
-    dew = con.execute("""
+    dew = con.execute(
+        """
         SELECT min(dew_point_c), max(dew_point_c), any_value(weather_source)
-        FROM weather_records WHERE activity_id = ?""", [activity_id]).fetchone()
+        FROM weather_records WHERE activity_id = ?""",
+        [activity_id],
+    ).fetchone()
 
-    rows = con.execute("""
+    rows = con.execute(
+        """
         SELECT e.timestamp, e.path_distance_m, r.lat, r.lon, r.heart_rate,
                s.split_type
         FROM records_enriched e JOIN records r USING (activity_id, timestamp)
@@ -139,32 +147,39 @@ def curve(con, activity_id: str) -> dict:
              AND e.timestamp BETWEEN s.start_time AND s.end_time
              -- The rwd_* partition only: the FR265's `interval_active` split
              -- spans the whole run and would match every record twice (§9).
-             AND s.split_type LIKE 'rwd\\_%' ESCAPE '\\' 
+             AND s.split_type LIKE 'rwd\\_%' ESCAPE '\\'
         WHERE e.activity_id = ? AND r.lat IS NOT NULL AND r.heart_rate IS NOT NULL
           AND coalesce(e.quality_flags, '') = ''
         ORDER BY e.timestamp
-    """, [activity_id]).fetchall()
+    """,
+        [activity_id],
+    ).fetchall()
     base = _filters(regime, dew)
     if len(rows) < 20:
-        return {"bins": [], "onset_min": None, "onset_status": "insufficient",
-                "reason": "fewer than 20 usable positioned records with HR",
-                # THE SAME KEYS AS THE FULL RETURN. gate_status reads
-                # duration_min off every curve, and a missing key turned one
-                # thin run into a KeyError that cost the whole section.
-                "duration_min": (duration_s / 60.0) if duration_s is not None
-                                else None,
-                "dew_point_c": (dew[0], dew[1]) if dew else (None, None),
-                "sampling_regime": regime, "filters": base}
+        return {
+            "bins": [],
+            "onset_min": None,
+            "onset_status": "insufficient",
+            "reason": "fewer than 20 usable positioned records with HR",
+            # THE SAME KEYS AS THE FULL RETURN. gate_status reads
+            # duration_min off every curve, and a missing key turned one
+            # thin run into a KeyError that cost the whole section.
+            "duration_min": (duration_s / 60.0) if duration_s is not None else None,
+            "dew_point_c": (dew[0], dew[1]) if dew else (None, None),
+            "sampling_regime": regime,
+            "filters": base,
+        }
 
     from trail_factors.transform import matcher as M
+
     xs, ys = M.to_utm([r[2] for r in rows], [r[3] for r in rows])
     # Elapsed time is measured from the ACTIVITY start, not from the first
     # positioned record. §6.7's own implementation uses the first row it has,
     # which is fine for a difference but wrong for an x-axis: on the runs whose
     # GPS fixes late, that would shift every bin by up to an hour.
     t_start = con.execute(
-        "SELECT min(timestamp) FROM records WHERE activity_id = ?",
-        [activity_id]).fetchone()[0]
+        "SELECT min(timestamp) FROM records WHERE activity_id = ?", [activity_id]
+    ).fetchone()[0]
     secs = np.array([(r[0] - t_start).total_seconds() for r in rows])
     hr = np.array([r[4] for r in rows], dtype=float)
     dist = np.array([r[1] for r in rows], dtype=float)
@@ -182,16 +197,18 @@ def curve(con, activity_id: str) -> dict:
         if later.size == 0:
             continue
         gap = secs[later] - secs[i]
-        m = ((gap >= P.DRIFT_MIN_SEPARATION_S)
-             & (np.hypot(xs[later] - xs[i], ys[later] - ys[i])
-                <= P.DRIFT_MAX_DISTANCE_M)
-             & (np.abs(speed[later] - speed[i]) <= P.DRIFT_SPEED_TOL_MPS))
+        m = (
+            (gap >= P.DRIFT_MIN_SEPARATION_S)
+            & (np.hypot(xs[later] - xs[i], ys[later] - ys[i]) <= P.DRIFT_MAX_DISTANCE_M)
+            & (np.abs(speed[later] - speed[i]) <= P.DRIFT_SPEED_TOL_MPS)
+        )
         if not m.any():
             continue
-        for j, g in zip(later[m], gap[m]):
-            b = per_bin.setdefault(_bin_index(secs[j]),
-                                   {"rates": [], "signs": [], "later_t": [],
-                                    "gaps": []})
+        for j, g in zip(later[m], gap[m], strict=False):
+            b = per_bin.setdefault(
+                _bin_index(secs[j]),
+                {"rates": [], "signs": [], "later_t": [], "gaps": []},
+            )
             b["rates"].append(float((hr[j] - hr[i]) / (g / 3600.0)))
             b["signs"].append(int(np.sign(hr[j] - hr[i])))
             b["later_t"].append(float(secs[j]))
@@ -204,19 +221,23 @@ def curve(con, activity_id: str) -> dict:
         pos = sum(1 for s in b["signs"] if s > 0)
         neg = sum(1 for s in b["signs"] if s < 0)
         tie = sum(1 for s in b["signs"] if s == 0)
-        bins.append({
-            "bin_start_min": k * ONSET_BIN_S / 60.0,
-            "bin_end_min": (k + 1) * ONSET_BIN_S / 60.0,
-            "median_bpm_per_hour": statistics.median(b["rates"]),
-            "n_pairs": len(b["rates"]),
-            "n_passages": n_pass,
-            "n_positive": pos, "n_negative": neg, "n_zero": tie,
-            "median_pair_gap_s": statistics.median(b["gaps"]),
-            # Usable means "the sign of this bin may be read at all". A bin
-            # below the passage floor is REPORTED with its numbers and marked
-            # unusable, never silently dropped.
-            "usable": n_pass >= MIN_PASSAGES_PER_BIN,
-        })
+        bins.append(
+            {
+                "bin_start_min": k * ONSET_BIN_S / 60.0,
+                "bin_end_min": (k + 1) * ONSET_BIN_S / 60.0,
+                "median_bpm_per_hour": statistics.median(b["rates"]),
+                "n_pairs": len(b["rates"]),
+                "n_passages": n_pass,
+                "n_positive": pos,
+                "n_negative": neg,
+                "n_zero": tie,
+                "median_pair_gap_s": statistics.median(b["gaps"]),
+                # Usable means "the sign of this bin may be read at all". A bin
+                # below the passage floor is REPORTED with its numbers and marked
+                # unusable, never silently dropped.
+                "usable": n_pass >= MIN_PASSAGES_PER_BIN,
+            }
+        )
 
     onset_min, onset_status, reason = _locate_onset(bins)
     return {
@@ -251,9 +272,12 @@ def _locate_onset(bins: list[dict]) -> tuple:
     """
     usable = [b for b in bins if b["usable"]]
     if len(usable) < MIN_USABLE_BINS:
-        return (None, "insufficient",
-                f"{len(usable)} usable bins; {MIN_USABLE_BINS} are needed to "
-                f"tell 'leaves zero and stays' from a single excursion")
+        return (
+            None,
+            "insufficient",
+            f"{len(usable)} usable bins; {MIN_USABLE_BINS} are needed to "
+            f"tell 'leaves zero and stays' from a single excursion",
+        )
     up = [b["n_positive"] > b["n_negative"] + b["n_zero"] for b in usable]
     for i, b in enumerate(usable):
         if up[i] and all(up[i:]):
@@ -262,8 +286,11 @@ def _locate_onset(bins: list[dict]) -> tuple:
     # nothing is what keeps the category countable: on the development corpus
     # all three outcomes occurred in quantity, and collapsing the middle group
     # into the last would make drift look universal.
-    return (None, "no_onset",
-            "the curve does not leave zero and stay there on this run")
+    return (
+        None,
+        "no_onset",
+        "the curve does not leave zero and stay there on this run",
+    )
 
 
 def gate_status(con) -> dict:
@@ -277,7 +304,8 @@ def gate_status(con) -> dict:
     # A run can be a smart_recording watch file plus a 1 Hz PHONE file, and a
     # phone file carries no heart rate. Filtering on "any 1 Hz file for this
     # run" would admit it and promise HR drift on a file that has none.
-    runs = con.execute("""
+    runs = con.execute(
+        """
         WITH picked AS (
             SELECT a.activity_id, a.run_id, a.start_time_utc, a.sampling_regime,
                    row_number() OVER (PARTITION BY a.run_id ORDER BY
@@ -292,7 +320,9 @@ def gate_status(con) -> dict:
         FROM picked p
         WHERE p.pick = 1 AND p.sampling_regime = ?
         ORDER BY p.start_time_utc
-    """, [REQUIRED_SAMPLING_REGIME]).fetchall()
+    """,
+        [REQUIRED_SAMPLING_REGIME],
+    ).fetchall()
 
     onsets, cohort = [], []
     for aid, run_id, start, dew in runs:
@@ -300,11 +330,17 @@ def gate_status(con) -> dict:
             c = curve(con, aid)
         except LookupError:
             continue
-        cohort.append({"run_id": run_id, "activity_id": aid,
-                       "date": str(start)[:10], "dew_point_c": dew,
-                       "onset_status": c["onset_status"],
-                       "onset_min": c["onset_min"],
-                       "duration_min": c["duration_min"]})
+        cohort.append(
+            {
+                "run_id": run_id,
+                "activity_id": aid,
+                "date": str(start)[:10],
+                "dew_point_c": dew,
+                "onset_status": c["onset_status"],
+                "onset_min": c["onset_min"],
+                "duration_min": c["duration_min"],
+            }
+        )
         if c["onset_status"] == "onset":
             onsets.append((c["onset_min"], dew))
 
@@ -325,34 +361,56 @@ def gate_status(con) -> dict:
                 f"{MIN_ONSET_DURATION_MIN:.0f} minutes cannot produce an "
                 f"onset, because §6.7's 600 s minimum separation plus the "
                 f"first terrain revisit leaves no room for three 5-minute "
-                f"bins. {_projection(con)}"),
+                f"bins. {_projection(con)}"
+            ),
         }
     # Restrict to a comparable dew-point band before testing repeatability:
     # drift at a 20 C dew point and drift at a 10 C one are not the same
     # quantity, and pooling them would fail the CV test for the wrong reason.
-    med_dew = statistics.median([d for _, d in onsets if d is not None]) \
-        if any(d is not None for _, d in onsets) else None
-    band = [o for o, d in onsets
-            if med_dew is None or d is None or abs(d - med_dew) <= DEW_POINT_BAND_C]
+    med_dew = (
+        statistics.median([d for _, d in onsets if d is not None])
+        if any(d is not None for _, d in onsets)
+        else None
+    )
+    band = [
+        o
+        for o, d in onsets
+        if med_dew is None or d is None or abs(d - med_dew) <= DEW_POINT_BAND_C
+    ]
     if len(band) < MIN_ONSET_RUNS:
-        return {"reportable": False, "n_1hz_runs": n_1hz,
-                "n_with_onset": len(onsets), "cohort": cohort, "cv": None,
-                "reason": (f"{len(band)} of {len(onsets)} onsets fall within "
-                           f"{DEW_POINT_BAND_C:.0f} C of the median dew point "
-                           f"({med_dew:.1f} C); onset is uninterpretable "
-                           f"pooled across dew point (§8)")}
+        return {
+            "reportable": False,
+            "n_1hz_runs": n_1hz,
+            "n_with_onset": len(onsets),
+            "cohort": cohort,
+            "cv": None,
+            "reason": (
+                f"{len(band)} of {len(onsets)} onsets fall within "
+                f"{DEW_POINT_BAND_C:.0f} C of the median dew point "
+                f"({med_dew:.1f} C); onset is uninterpretable "
+                f"pooled across dew point (§8)"
+            ),
+        }
     med = statistics.median(band)
     sd = statistics.pstdev(band)
     cv = (sd / med) if med else None
     ok = cv is not None and cv <= MAX_ONSET_CV
     return {
-        "reportable": ok, "n_1hz_runs": n_1hz, "n_with_onset": len(onsets),
-        "n_in_dew_band": len(band), "median_onset_min": med,
-        "sd_onset_min": sd, "cv": cv, "cohort": cohort,
-        "reason": None if ok else
-        (f"onset SD {sd:.1f} min against a median of {med:.1f} min "
-         f"(CV {cv:.2f} > {MAX_ONSET_CV}) -- onset does not repeat across "
-         f"comparable runs, so it is noise"),
+        "reportable": ok,
+        "n_1hz_runs": n_1hz,
+        "n_with_onset": len(onsets),
+        "n_in_dew_band": len(band),
+        "median_onset_min": med,
+        "sd_onset_min": sd,
+        "cv": cv,
+        "cohort": cohort,
+        "reason": None
+        if ok
+        else (
+            f"onset SD {sd:.1f} min against a median of {med:.1f} min "
+            f"(CV {cv:.2f} > {MAX_ONSET_CV}) -- onset does not repeat across "
+            f"comparable runs, so it is noise"
+        ),
     }
 
 
@@ -362,7 +420,8 @@ def _projection(con) -> str:
     Derived from the corpus rather than from an assumed schedule: counting
     every run would be wrong here, because short runs can never qualify.
     """
-    n_long, weeks = con.execute("""
+    n_long, weeks = con.execute(
+        """
         SELECT count(*),
                greatest(1.0, date_diff('day', min(start_time_utc),
                                        max(start_time_utc)) / 7.0)
@@ -370,10 +429,14 @@ def _projection(con) -> str:
         WHERE source = 'garmin_watch' AND duration_s >= ? * 60
           AND start_time_utc >= (SELECT max(start_time_utc) FROM activities)
                                 - INTERVAL 90 DAY
-    """, [MIN_ONSET_DURATION_MIN]).fetchone()
+    """,
+        [MIN_ONSET_DURATION_MIN],
+    ).fetchone()
     if not n_long:
-        return ("No run in the last 90 days is long enough to qualify, so "
-                "there is no rate to project from.")
+        return (
+            "No run in the last 90 days is long enough to qualify, so "
+            "there is no rate to project from."
+        )
     per_week = n_long / weeks
     # Only about two thirds of qualifying runs yielded an onset on the
     # development corpus, so the run count needed is larger than the onset
@@ -381,37 +444,41 @@ def _projection(con) -> str:
     needed = MIN_ONSET_RUNS / 0.67
     if per_week <= 0:
         return "No qualifying-run rate to project from."
-    return (f"At the athlete's recent rate of {per_week:.1f} qualifying runs "
-            f"per week and an assumed yield of two onsets per three qualifying "
-            f"runs, "
-            f"{MIN_ONSET_RUNS} onsets is roughly {needed / per_week:.0f} weeks "
-            f"of long runs away -- materially later than a count of all runs "
-            f"would suggest.")
+    return (
+        f"At the athlete's recent rate of {per_week:.1f} qualifying runs "
+        f"per week and an assumed yield of two onsets per three qualifying "
+        f"runs, "
+        f"{MIN_ONSET_RUNS} onsets is roughly {needed / per_week:.0f} weeks "
+        f"of long runs away -- materially later than a count of all runs "
+        f"would suggest."
+    )
 
 
 def _filters(regime, dew) -> dict:
     """§6.7's filters, unchanged, plus this view's own."""
     f = dict(P.drift_filters())
-    f.update({
-        "view_of": "§6.7 matched_terrain_drift",
-        "bin_by": "later record's elapsed time from activity start",
-        "bin_width_s": ONSET_BIN_S,
-        "bin_statistic": "median of per-pair bpm/hour",
-        "zero_test": "majority of independent PASSAGES positive; ties counted "
-                     "as evidence for the null",
-        "independence_unit": "passage",
-        "passage_split_gap_s": PASSAGE_SPLIT_GAP_S,
-        "min_passages_per_bin": MIN_PASSAGES_PER_BIN,
-        "min_usable_bins": MIN_USABLE_BINS,
-        "ties_counted": True,
-        "required_sampling_regime": REQUIRED_SAMPLING_REGIME,
-        "sampling_regime": regime,
-        "dew_point_required": True,
-        "dew_point_c": (dew[0], dew[1]) if dew else (None, None),
-        "grain": "record pairs, binned by time into run",
-        "note": "a view of §6.7, not a changepoint detector: no new baseline "
-                "and no fitted constant. Onset is confounded with run length "
-                "and its floor is §6.7's own 600 s minimum separation -- read "
-                "§6.9 before using it.",
-    })
+    f.update(
+        {
+            "view_of": "§6.7 matched_terrain_drift",
+            "bin_by": "later record's elapsed time from activity start",
+            "bin_width_s": ONSET_BIN_S,
+            "bin_statistic": "median of per-pair bpm/hour",
+            "zero_test": "majority of independent PASSAGES positive; ties counted "
+            "as evidence for the null",
+            "independence_unit": "passage",
+            "passage_split_gap_s": PASSAGE_SPLIT_GAP_S,
+            "min_passages_per_bin": MIN_PASSAGES_PER_BIN,
+            "min_usable_bins": MIN_USABLE_BINS,
+            "ties_counted": True,
+            "required_sampling_regime": REQUIRED_SAMPLING_REGIME,
+            "sampling_regime": regime,
+            "dew_point_required": True,
+            "dew_point_c": (dew[0], dew[1]) if dew else (None, None),
+            "grain": "record pairs, binned by time into run",
+            "note": "a view of §6.7, not a changepoint detector: no new baseline "
+            "and no fitted constant. Onset is confounded with run length "
+            "and its floor is §6.7's own 600 s minimum separation -- read "
+            "§6.9 before using it.",
+        }
+    )
     return f

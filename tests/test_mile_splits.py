@@ -20,7 +20,7 @@ from trail_factors.analysis import miles as MS
 from trail_factors.ingest.schema import DDL
 from trail_factors.units import METERS_PER_MILE
 
-T0 = dt.datetime(2025, 1, 15, 7, 0, 0)     # synthetic
+T0 = dt.datetime(2025, 1, 15, 7, 0, 0)  # synthetic
 END_S = 3600
 
 
@@ -42,27 +42,47 @@ class _Fixture(unittest.TestCase):
             "INSERT INTO activities (activity_id, run_id, file_hash, source_file,"
             " start_time_utc, source, sampling_regime, pipeline_version, sport)"
             " VALUES ('a1','r1','h1','x.fit',?,'garmin_watch','1hz',1,'running')",
-            [T0])
-        recs = [("a1", T0 + dt.timedelta(seconds=t), dist(t),
-                 100 if 200 <= t < 300 else 150) for t in range(END_S + 1)]
+            [T0],
+        )
+        recs = [
+            (
+                "a1",
+                T0 + dt.timedelta(seconds=t),
+                dist(t),
+                100 if 200 <= t < 300 else 150,
+            )
+            for t in range(END_S + 1)
+        ]
         self.con.executemany(
             "INSERT INTO records (activity_id, timestamp, distance_m, heart_rate)"
-            " VALUES (?,?,?,?)", recs)
-        for i, (kind, s, e) in enumerate((("rwd_run", 0, 200),
-                                          ("rwd_walk", 200, 300),
-                                          ("rwd_run", 300, END_S))):
+            " VALUES (?,?,?,?)",
+            recs,
+        )
+        for i, (kind, s, e) in enumerate(
+            (("rwd_run", 0, 200), ("rwd_walk", 200, 300), ("rwd_run", 300, END_S))
+        ):
             self.con.execute(
                 "INSERT INTO splits (activity_id, split_index, split_type, "
                 "start_time, end_time, total_timer_time) VALUES (?,?,?,?,?,?)",
-                ["a1", i, kind, T0 + dt.timedelta(seconds=s),
-                 T0 + dt.timedelta(seconds=e), float(e - s)])
-        if self.ELEVATION:   # rising 0.01 m per second, no descent
+                [
+                    "a1",
+                    i,
+                    kind,
+                    T0 + dt.timedelta(seconds=s),
+                    T0 + dt.timedelta(seconds=e),
+                    float(e - s),
+                ],
+            )
+        if self.ELEVATION:  # rising 0.01 m per second, no descent
             self.con.executemany(
                 "INSERT INTO records_enriched (activity_id, timestamp, "
                 "altitude_smooth_m, terrain_usable, calc_version) "
                 "VALUES (?,?,?,TRUE,1)",
-                [("a1", T0 + dt.timedelta(seconds=t), 100.0 + 0.01 * t)
-                 for t in range(0, END_S + 1, 5)])
+                [
+                    ("a1", T0 + dt.timedelta(seconds=t), 100.0 + 0.01 * t)
+                    for t in range(0, END_S + 1, 5)
+                ],
+            )
         self.r = MS.mile_splits(self.con, "a1")
 
     def tearDown(self):
@@ -74,11 +94,9 @@ class TestBoundaries(_Fixture):
         units = self.r["units"]
         for u in units[:-1]:
             k = u["index"]
-            self.assertAlmostEqual(u["end_distance_m"], k * METERS_PER_MILE,
-                                   delta=1e-6)
+            self.assertAlmostEqual(u["end_distance_m"], k * METERS_PER_MILE, delta=1e-6)
             # ...and the TIME placed there puts the odometer within 1 m of it.
-            self.assertLess(abs(dist(u["end_elapsed_s"]) - k * METERS_PER_MILE),
-                            1.0)
+            self.assertLess(abs(dist(u["end_elapsed_s"]) - k * METERS_PER_MILE), 1.0)
         self.assertAlmostEqual(units[0]["end_elapsed_s"], 589.781, delta=0.01)
 
     def test_the_last_unit_is_a_partial_with_its_real_length(self):
@@ -89,8 +107,9 @@ class TestBoundaries(_Fixture):
 
     def test_quarters_on_request(self):
         q = MS.mile_splits(self.con, "a1", unit="quarter")
-        self.assertAlmostEqual(q["units"][0]["end_distance_m"],
-                               METERS_PER_MILE / 4, delta=1e-6)
+        self.assertAlmostEqual(
+            q["units"][0]["end_distance_m"], METERS_PER_MILE / 4, delta=1e-6
+        )
         self.assertEqual(q["unit"], "quarter")
 
 
@@ -132,6 +151,7 @@ class TestNoDem(_Fixture):
 class TestWithDem(_Fixture):
     """THE TWIN: with a DEM profile rising 0.01 m/s, mile 1's gain is
     0.01 x 589.781 = 5.898 m and its loss 0."""
+
     ELEVATION = True
 
     def test_gain_and_loss_from_the_smoothed_profile(self):
@@ -147,7 +167,9 @@ class TestGarminLapsAreBesideNotInstead(_Fixture):
         self.con.execute(
             "INSERT INTO laps (activity_id, lap_index, start_time, "
             "total_timer_time, distance_m, avg_hr, trigger) "
-            "VALUES ('a1', 0, ?, 600.0, 1609.0, 140, 'distance')", [T0])
+            "VALUES ('a1', 0, ?, 600.0, 1609.0, 140, 'distance')",
+            [T0],
+        )
         r = MS.mile_splits(self.con, "a1")
         self.assertEqual(r["garmin_laps"][0]["trigger"], "distance")
         self.assertAlmostEqual(r["units"][0]["running_mps"], 3.0, places=3)

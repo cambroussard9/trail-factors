@@ -1,4 +1,5 @@
-"""Pace is displayed as M:SS per mile, never as decimal minutes (src/trail_factors/units.py).
+"""Pace is displayed as M:SS per mile, never as decimal minutes
+(src/trail_factors/units.py).
 
 The failure this guards against is quiet: "12.45 min/mi" is a well-formed
 number that a reader will take as 12:45 and that is really 12:27. It is wrong
@@ -39,7 +40,6 @@ class TestKnownPace(unittest.TestCase):
 
 
 class TestRounding(unittest.TestCase):
-
     def test_rounding_carries_into_the_minute(self):
         """13.999 min/mi must be 14:00. Splitting before rounding gives 13:60."""
         self.assertEqual(mmss(13.999 * 60), "14:00")
@@ -79,7 +79,6 @@ class TestNoPaceToShow(unittest.TestCase):
 
 
 class TestMiles(unittest.TestCase):
-
     def test_the_mile_is_the_international_mile(self):
         self.assertAlmostEqual(miles(1609.344), 1.0, places=9)
 

@@ -20,9 +20,9 @@ from unittest import mock
 
 import duckdb
 
+from tests.isolation import state_sandbox
 from trail_factors import mcp_server as M
 from trail_factors.paths import REPO_ROOT
-from tests.isolation import state_sandbox
 
 ABSOLUTE = re.compile(r"(?<![\w.~<])/(?:Users|home|private|tmp|var|root|Volumes)/")
 
@@ -38,7 +38,6 @@ def leaks(text: str, *extra: Path) -> list[str]:
 
 
 class TestTheDetectorCanFire(unittest.TestCase):
-
     def test_it_flags_the_home_directory_and_the_repo_root(self):
         self.assertTrue(leaks(f"no corpus at {Path.home() / 'x.duckdb'}"))
         self.assertTrue(leaks(f"see {REPO_ROOT / 'data'}"))
@@ -64,7 +63,6 @@ class _Sandboxed(unittest.TestCase):
 
 
 class TestTheNoCorpusMessage(_Sandboxed):
-
     def _no_corpus(self):
         r = json.loads(M.list_runs())
         self.assertEqual(r["outcome"], M.BROKEN)
@@ -92,7 +90,6 @@ class TestTheNoCorpusMessage(_Sandboxed):
 
 
 class TestPing(_Sandboxed):
-
     def _ping(self, *extra):
         r = json.loads(M.ping())
         self.assertEqual(r["outcome"], M.RESULT, r)

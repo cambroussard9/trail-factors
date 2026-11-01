@@ -3,8 +3,8 @@ Garmin's. Read-only against the corpus (TRAIL_FACTORS_DB)."""
 
 import unittest
 
-from trail_factors.analysis import report as REP
 from tests.corpus import CorpusTestCase, one, use_config
+from trail_factors.analysis import report as REP
 
 
 class TestTheElevationNote(CorpusTestCase):
@@ -13,12 +13,15 @@ class TestTheElevationNote(CorpusTestCase):
         super().setUpClass()
         # Subject by property: the running activity with the most slope
         # traversals, i.e. one whose climb signature has content.
-        aid = one(cls.con, """
+        aid = one(
+            cls.con,
+            """
             SELECT t.activity_id FROM slope_traversals t
             JOIN activities a USING (activity_id)
             WHERE a.sport = 'running'
             GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT 1""",
-                  what="running activity with slope traversals")[0]
+            what="running activity with slope traversals",
+        )[0]
         # Default config: nothing here depends on the athlete's settings, and
         # sections that need one degrade on their own.
         with use_config():
@@ -29,7 +32,7 @@ class TestTheElevationNote(CorpusTestCase):
 
     def test_it_is_printed_under_the_climb_signature(self):
         lines = REP.render(self.rep).splitlines()
-        i = next(k for k, l in enumerate(lines) if "CLIMB SIGNATURE" in l)
+        i = next(k for k, line in enumerate(lines) if "CLIMB SIGNATURE" in line)
         self.assertIn(REP.ELEVATION_NOTE, lines[i + 1])
 
     def test_it_is_device_specific_and_names_the_reference(self):
