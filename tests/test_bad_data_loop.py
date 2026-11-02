@@ -66,9 +66,17 @@ socket.create_connection = _no_network
 
 import trail_factors.cli.report as R
 R.garmin_download_all = lambda days=None, dest=None: print("(download disabled)")
-from trail_factors.cli.main import main
+from trail_factors.cli.main import ensure_schema, main
 sys.argv = ["trail_factors.cli"] + sys.argv[1:]
-main()
+if sys.argv[1:2] == ["sync"]:
+    # The sync FUNCTION, exactly as main() dispatches it (schema, then sync).
+    # main() itself refuses `sync` in a coding-agent session (garmin_refusal,
+    # pinned in test_garmin_agent_guard.py); this child has no download and no
+    # sockets, so it exercises the loop, never Garmin.
+    ensure_schema()
+    R.sync(None)
+else:
+    main()
 """
 
 

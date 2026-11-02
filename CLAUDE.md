@@ -12,6 +12,23 @@ decision.** Section numbers (§N) below refer to it. This file is the short
 version: the rules that were learned the hard way, the commands, and the
 conventions every change must keep.
 
+## Agents never contact Garmin
+
+**A coding agent never runs `sync`, `garmin-login`, or any other command that
+contacts Garmin or uses the real token store** — that includes
+`garmin-download`, `garmin-download-all`, `garmin-list`, `coverage-report`,
+`validate --refresh`, and any script or test that would reach
+`garmin_api.client()` or `interactive_login()` with a real token. When a step
+needs Garmin, STOP and ask the user to run it in their own terminal. Do not
+work around this by pointing the token store elsewhere, unsetting variables,
+or calling the functions directly. Why: an agent once ran `sync` while
+exploring, used the owner's real token, listed the account and downloaded a
+file nobody asked for. The CLI enforces it: `cli/main.garmin_refusal` refuses
+these commands when `CLAUDECODE` or `AI_AGENT` is set, before anything is sent
+(tests/test_garmin_agent_guard.py). The guard is a backstop, not permission:
+the rule applies in every agent, with or without it. Tests use synthetic
+fixtures and patched clients only.
+
 ## Setup
 
 - Athlete-specific values live in `config/athlete.yaml` (gitignored). Copy

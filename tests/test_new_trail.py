@@ -198,27 +198,20 @@ class TestTileCoverageIsReported(CorpusTestCase):
 
     # THE FIXTURE IS CHOSEN FROM THE CORPUS, NOT HARD-CODED. A pinned run is
     # a premise that data arrival expires: the moment its tile is fetched it
-    # stops being a gap. With tiles on disk, a positioned RUNNING activity
-    # with no DEM elevations is the case; with NO tile loaded at all, every
-    # positioned run is outside the loaded tiles, so the latest one serves.
+    # stops being a gap. A positioned RUNNING activity with no DEM elevations
+    # is the case, tiles or no tiles: a run whose elevation is stored is
+    # covered by the database whatever the tile directory holds.
     def _uncovered(self) -> str:
-        if D.loaded_tiles():
-            sql = """
-                SELECT a.activity_id FROM activities a
-                WHERE a.source = 'garmin_watch' AND a.sport = 'running'
-                  AND a.coverage_fraction > 0
-                  AND NOT EXISTS (SELECT 1 FROM dem_elevations d
-                                  WHERE d.activity_id = a.activity_id)
-                ORDER BY a.start_time_utc DESC LIMIT 1"""
-        else:
-            sql = """
-                SELECT a.activity_id FROM activities a
-                WHERE a.source = 'garmin_watch' AND a.sport = 'running'
-                  AND a.coverage_fraction > 0
-                ORDER BY a.start_time_utc DESC LIMIT 1"""
-        return one(self.con, sql, what="positioned run outside every loaded DEM tile")[
-            0
-        ]
+        sql = """
+            SELECT a.activity_id FROM activities a
+            WHERE a.source = 'garmin_watch' AND a.sport = 'running'
+              AND a.coverage_fraction > 0
+              AND NOT EXISTS (SELECT 1 FROM dem_elevations d
+                              WHERE d.activity_id = a.activity_id)
+              AND NOT EXISTS (SELECT 1 FROM records_enriched e
+                              WHERE e.activity_id = a.activity_id)
+            ORDER BY a.start_time_utc DESC LIMIT 1"""
+        return one(self.con, sql, what="positioned run with no stored elevation")[0]
 
     def test_a_run_outside_every_tile_names_the_tile_it_needs(self):
         aid = self._uncovered()
@@ -290,10 +283,8 @@ class TestTileCoverageIsReported(CorpusTestCase):
         """THE POSITIVE TWIN. A check that fired on every run would be noise.
 
         Subject: a run whose every positioned record has a DEM elevation --
-        covered by the tiles that populated it, which must still be on disk.
+        covered by the DATABASE, whether or not its tiles are still on disk.
         """
-        if not D.loaded_tiles():
-            self.skipTest("no DEM tile is loaded, so no run can be covered")
         aid = one(
             self.con,
             """
@@ -308,6 +299,7 @@ class TestTileCoverageIsReported(CorpusTestCase):
         )[0]
         rep = self._report(aid)
         self.assertEqual(rep["terrain_coverage"]["status"], "covered")
+        self.assertTrue(rep["terrain_coverage"]["basis"].startswith("database"))
         self.assertFalse([i for i in rep["notable"] if i["kind"] == "terrain_gap"])
 
     def test_no_coordinate_is_emitted_in_the_coverage_block(self):

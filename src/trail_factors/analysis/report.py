@@ -1200,7 +1200,25 @@ def _terrain_coverage(con, activity_id: str) -> dict:
     NEVER emits a coordinate: the answer is a 10 km GRID CELL, which is what
     fetching a tile needs and is two orders of magnitude coarser than a
     position (§5a's reasoning, the same as rounding weather coordinates).
+
+    THE DATABASE IS ASKED FIRST. A run whose elevation is already stored is
+    covered whatever the tile directory holds; asking only the tiles told
+    every run in a tile-less copy (the demo) to fetch ground it already had.
     """
+    from trail_factors.analysis.basic import db_elevation
+
+    elev = db_elevation(con, activity_id)
+    if elev["complete"]:
+        return {
+            "status": "covered",
+            "basis": "database: every positioned record has a DEM elevation "
+            "stored, so no tile is needed",
+            "n_points": elev["n_points"],
+            "n_covered": elev["n_with_elevation"],
+            "n_uncovered": 0,
+            "fraction_covered": 1.0,
+            "missing_tiles": [],
+        }
     rows = con.execute(
         """
         SELECT lat, lon FROM records
@@ -1225,9 +1243,14 @@ def _terrain_coverage(con, activity_id: str) -> dict:
             "reason": f"{type(exc).__name__}: {exc}",
             "missing_tiles": [],
         }
+    # The elevation is absent from the database, so the tiles decide.
+    basis = {
+        "basis": "tiles on disk: the database holds a DEM elevation for "
+        f"{elev['n_with_elevation']:,} of {elev['n_points']:,} positions",
+    }
     if not cov["missing_tiles"]:
-        return {"status": "covered", **cov}
-    return {"status": "outside_loaded_tiles", **cov}
+        return {"status": "covered", **basis, **cov}
+    return {"status": "outside_loaded_tiles", **basis, **cov}
 
 
 def _garmin_id(source_file: str | None) -> str | None:

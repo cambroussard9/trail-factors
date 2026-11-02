@@ -18,6 +18,7 @@ import statistics
 
 from trail_factors import config
 from trail_factors.analysis import primitives as P
+from trail_factors.analysis.queries import SEGMENT_LIBRARY_COUNTS
 from trail_factors.analysis.select import select_runs, validate_filter
 from trail_factors.units import pace_per_mile
 
@@ -363,6 +364,16 @@ def segment_history(con, segment_id: str, direction: str | None = None, **filt) 
         "excluded": sel["excluded"],
         "efforts": efforts,
         "n_efforts_in_selection": len(efforts),
+        # TWO COUNTS, AND THEY ARE NOT THE SAME QUANTITY: a reader comparing
+        # them must not take the gap for lost or double-counted efforts.
+        "counts": {
+            "segment": SEGMENT_LIBRARY_COUNTS,
+            "n_efforts_in_selection": (
+                "the efforts listed under `efforts`: only runs this call's "
+                f"selection includes ({sel['rule']})"
+                + (f", and only direction={direction}" if direction else "")
+            ),
+        },
         "profile_filters": B.profile_filters(),
         "applied_filters": (
             B.effort_paces(

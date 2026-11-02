@@ -204,6 +204,17 @@ def resolve_run_id(con, run_ref: str) -> tuple[str, str]:
     return row[0], row[1].isoformat()
 
 
+# WHAT THE LIBRARY'S COUNTS COUNT, stated wherever they are served. They are
+# the matcher's tally over the whole corpus; segment_history's
+# n_efforts_in_selection counts only the runs its filters select, so the two
+# differ by design whenever a filter excludes a run.
+SEGMENT_LIBRARY_COUNTS = (
+    "n_efforts, n_ascents and n_descents count every effort the matcher "
+    "assigned to the segment over ALL runs in the database (one recording "
+    "per run), as of the last `match`; no selection filter applies"
+)
+
+
 def segment_library(con) -> list[dict]:
     """The slope library, WITHOUT coordinates.
 

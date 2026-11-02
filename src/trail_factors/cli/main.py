@@ -23,10 +23,12 @@ usage: uv run trail-factors <command> [args]
   garmin-download <garmin-id> | garmin-download-all [days]
   garmin-list history             sweep account SUMMARIES into the lookup dir
   hr-ceiling                      HR ceiling picture from those summaries
+  demo                            build data/demo.duckdb from demo/; no network
 """
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -86,8 +88,63 @@ DB_COMMANDS = {
 }
 
 
+# COMMANDS THAT CONTACT GARMIN (or use the real token store), plus the one
+# flag that makes `validate` do so. Each reaches garmin_api.client() or
+# interactive_login(); tests/test_garmin_agent_guard.py fails if a CLI function
+# starts calling either without being listed here.
+GARMIN_COMMANDS = frozenset(
+    {
+        "sync",
+        "garmin-login",
+        "garmin-download",
+        "garmin-download-all",
+        "garmin-list",
+        "coverage-report",
+    }
+)
+# Set in every shell a coding agent runs: Claude Code sets CLAUDECODE (and
+# AI_AGENT). A human's own terminal carries neither.
+AGENT_ENV_MARKERS = ("CLAUDECODE", "AI_AGENT")
+
+
+def garmin_refusal(args: list[str]) -> str | None:
+    """Why this invocation must not run here, or None if it may.
+
+    AN AGENT NEVER CONTACTS GARMIN. A coding agent once ran `sync` while
+    exploring and used the owner's real token: it listed the account and
+    downloaded a file nobody asked for. Garmin steps belong to the human, so
+    inside an agent session they are refused BEFORE anything is sent, and the
+    message tells the agent to stop and ask. The MCP server's `sync` tool is a
+    separate path and is not affected.
+    """
+    if not args:
+        return None
+    contacts = args[0] in GARMIN_COMMANDS or (
+        args[0] == "validate" and "--refresh" in args
+    )
+    marker = next((m for m in AGENT_ENV_MARKERS if os.environ.get(m, "").strip()), None)
+    if not contacts or marker is None:
+        return None
+    return (
+        f"Refusing `{' '.join(args)}`: it contacts Garmin (or uses the real "
+        f"token store), and this shell is a coding-agent session ({marker} is "
+        f"set). Nothing was sent. Agents never run Garmin steps: stop and ask "
+        f"the user to run this command in their own terminal."
+    )
+
+
 def main() -> None:
     args = sys.argv[1:]
+    refusal = garmin_refusal(args)
+    if refusal is not None:
+        raise SystemExit(refusal)
+    if args and args[0] == "demo":
+        # NOT a DB command: it never opens TRAIL_FACTORS_DB, only builds its
+        # own database from the committed demo files.
+        from trail_factors.cli.demo import demo_build
+
+        demo_build()
+        return
     if args and args[0] == "silver":
         ensure_schema()
         silver_build(args[1] if len(args) > 1 else None)

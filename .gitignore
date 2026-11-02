@@ -2,7 +2,8 @@
 # Everything under data/ is either private (raw recordings carry GPS position;
 # athlete-supplied state is personal) or derived and rebuildable. None of it is
 # committed. Back up data/athlete/ yourself: it cannot be regenerated.
-data/
+# Anchored to the repo root: demo/data/ (the published demo) is NOT ignored.
+/data/
 *.duckdb
 *.duckdb.wal
 

@@ -20,6 +20,7 @@ def dem_populate(activity_ref: str | None = None) -> None:
     """Populate dem_elevations from the LOCAL tile (§5a). No network."""
     import duckdb
 
+    from trail_factors.analysis.basic import db_elevation
     from trail_factors.transform.dem import CALC_VERSION, OutsideTile, TileSet
 
     tiles = TileSet()
@@ -56,7 +57,7 @@ def dem_populate(activity_ref: str | None = None) -> None:
                 WHERE r.lat IS NOT NULL AND a.sport = 'running'
             """).fetchall()
             ]
-        done = skipped = 0
+        done = skipped = kept = 0
         outside: dict[tuple[str, str], dict] = {}
         for aid in targets:
             rows = con.execute(
@@ -77,6 +78,11 @@ def dem_populate(activity_ref: str | None = None) -> None:
                     [r[1] for r in rows], [r[2] for r in rows], with_tiles=True
                 )
             except OutsideTile:
+                # ELEVATION ALREADY STORED IS NOT A GAP. Its tile is gone from
+                # disk, but the rows stand and nothing needs fetching.
+                if db_elevation(con, aid)["complete"]:
+                    kept += 1
+                    continue
                 # Loud, not silent, AND NAMED. A count alone told the athlete
                 # that something was skipped but not which tile would fix it,
                 # so the report showed a page of absent terrain numbers with
@@ -96,7 +102,14 @@ def dem_populate(activity_ref: str | None = None) -> None:
             )
             con.execute("COMMIT")
             done += 1
-        print(f"populated {done} activities; {skipped} outside every loaded tile")
+        print(
+            f"populated {done} activities; {skipped} outside every loaded tile"
+            + (
+                f"; {kept} outside the loaded tiles kept the elevation already stored"
+                if kept
+                else ""
+            )
+        )
         for line in missing_tile_lines(outside):
             print(line)
         n, lo, hi = con.execute(
@@ -1040,12 +1053,14 @@ def corpus_missing_cells() -> list[dict]:
     more. This reads the same coverage call `dem` prints, so the set of cells
     is exactly the set the athlete has already been shown -- it cannot widen
     to "tiles near where you run", which would be a different act with a
-    different disclosure.
+    different disclosure. A run whose elevation is already in the database
+    has refused nothing, whatever tiles are on disk, so it adds no cell.
     """
     import collections
 
     import duckdb
 
+    from trail_factors.analysis.basic import db_elevation
     from trail_factors.transform.dem import TileSet
 
     tiles = TileSet()
@@ -1063,6 +1078,8 @@ def corpus_missing_cells() -> list[dict]:
         cells: dict[tuple[str, str], dict] = {}
         counts: collections.Counter = collections.Counter()
         for aid in acts:
+            if db_elevation(con, aid)["complete"]:
+                continue
             pts = con.execute(
                 """
                 SELECT lat, lon FROM records

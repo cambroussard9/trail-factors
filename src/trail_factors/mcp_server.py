@@ -1916,7 +1916,15 @@ def segment_history(
             _opt(direction),
             **_filters(run_type, start_date, end_date, cluster, last_n),
         )
-        return r, f"{r['n_efforts_in_selection']} efforts on {segment_id}"
+        key = {"ascent": "n_ascents", "descent": "n_descents"}.get(
+            direction, "n_efforts"
+        )
+        kind = f"{direction} efforts" if direction else "efforts"
+        return r, (
+            f"{r['n_efforts_in_selection']} {kind} in this selection on "
+            f"{segment_id}; the library counts {r['segment'][key]} over all "
+            f"runs (see `counts`)"
+        )
 
     return _call("segment_history", go)
 
@@ -1926,10 +1934,13 @@ def list_segments() -> str:
     """The slope library: every segment, with where the reference run meets it."""
 
     def go(con):
-        from trail_factors.analysis.queries import segment_library
+        from trail_factors.analysis.queries import (
+            SEGMENT_LIBRARY_COUNTS,
+            segment_library,
+        )
 
         rows = segment_library(con)
-        return rows, f"{len(rows)} slopes"
+        return rows, f"{len(rows)} slopes; {SEGMENT_LIBRARY_COUNTS}"
 
     return _call("list_segments", go)
 

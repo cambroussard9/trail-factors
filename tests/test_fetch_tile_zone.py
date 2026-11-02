@@ -250,6 +250,12 @@ class TestDemKeysMissingCellsByGrid(unittest.TestCase):
                 "timestamp TIMESTAMP, altitude_dem_m DOUBLE, "
                 "tile VARCHAR, calc_version INTEGER)"
             )
+            # `dem` asks whether elevation is already stored before it names
+            # a missing cell, and silver's table is half of that answer.
+            con.execute(
+                "CREATE TABLE records_enriched (activity_id VARCHAR, "
+                "timestamp TIMESTAMP, altitude_dem_m DOUBLE)"
+            )
             for aid, (lats, lons) in runs.items():
                 con.execute("INSERT INTO activities VALUES (?, 'running')", [aid])
                 for i, (la, lo) in enumerate(zip(lats, lons, strict=False)):

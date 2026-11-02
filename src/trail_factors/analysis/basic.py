@@ -1288,6 +1288,40 @@ SPORT_HOLD_SITE = (
 )
 
 
+def db_elevation(con, activity_id: str) -> dict:
+    """How much of this run's ground already has DEM elevation IN THE DATABASE.
+
+    THE DATABASE, NOT THE TILE DIRECTORY, says whether a run has elevation.
+    Tiles are only the means of populating it: a database built elsewhere (the
+    demo, a copy, a machine whose tiles were cleared) carries complete
+    elevation with no tile on disk, and asking the tiles alone told those runs
+    to fetch-tile ground they already had. A positioned record counts if
+    dem_elevations or records_enriched holds its elevation. `complete` is the
+    question every caller asks; `dem` writes a run all-or-nothing, so partial
+    coverage is a stale state, not a normal one.
+    """
+    n_points, n_with = con.execute(
+        """
+        SELECT count(*),
+               count(*) FILTER (WHERE
+                   EXISTS (SELECT 1 FROM dem_elevations d
+                           WHERE d.activity_id = r.activity_id
+                             AND d.timestamp = r.timestamp)
+                   OR EXISTS (SELECT 1 FROM records_enriched e
+                              WHERE e.activity_id = r.activity_id
+                                AND e.timestamp = r.timestamp
+                                AND e.altitude_dem_m IS NOT NULL))
+        FROM records r WHERE r.activity_id = ? AND r.lat IS NOT NULL
+    """,
+        [activity_id],
+    ).fetchone()
+    return {
+        "n_points": n_points,
+        "n_with_elevation": n_with,
+        "complete": n_points > 0 and n_with == n_points,
+    }
+
+
 def terrain_state(con, activity_id: str) -> dict:
     """Why this activity has no enriched records -- or that it has.
 
@@ -1300,10 +1334,13 @@ def terrain_state(con, activity_id: str) -> dict:
       outside_loaded_tiles no loaded tile covers the ground
       unpopulated          a tile covers it, the sport is running, and
                            dem_elevations simply has no rows -- `dem` has not
-                           been run since the tile or the activity arrived
+                           been run since the tile or the activity arrived --
+                           OR dem_elevations is complete and `silver` has not
+                           been run, whatever tiles are on disk
 
     The tile question is answered by ASKING THE TILES, which is the step whose
-    absence produced a payload that contradicted itself.
+    absence produced a payload that contradicted itself -- but only once the
+    database has said the elevation is absent (db_elevation).
     """
     n_enr = con.execute(
         "SELECT count(*) FROM records_enriched WHERE activity_id = ?", [activity_id]
@@ -1315,6 +1352,20 @@ def terrain_state(con, activity_id: str) -> dict:
         "SELECT sport FROM activities WHERE activity_id = ?", [activity_id]
     ).fetchone()
     sport = sport[0] if sport else None
+    elev = db_elevation(con, activity_id)
+    if elev["complete"]:
+        return {
+            "state": "unpopulated",
+            "enriched_records": 0,
+            "sport": sport,
+            "covered_fraction": 1.0,
+            "reason": (
+                f"dem_elevations holds an elevation for all "
+                f"{elev['n_points']:,} positions on this run, but "
+                f"records_enriched has no rows for it: `silver` has not "
+                f"been run. Run `uv run trail-factors silver {activity_id}`."
+            ),
+        }
     pts = con.execute(
         "SELECT lat, lon FROM records WHERE activity_id = ? AND lat IS NOT NULL",
         [activity_id],

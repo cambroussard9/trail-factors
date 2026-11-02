@@ -1,252 +1,134 @@
 # Trail Factors
 
-Training analysis for ONE trail/ultra runner, built from their own Garmin FIT
-files. It ingests every activity into a local DuckDB database, looks up terrain
-from USGS 1 m lidar instead of trusting the watch's altitude, identifies hills
-as reusable segments, joins hourly weather, and computes a fixed set of
-gated primitives (heart-rate drift on matched terrain, recovery after climbs,
-pace by grade, run/walk structure, and more). A post-run report and an MCP
-server expose those results to a coaching chat, read-only.
+Trail and ultra running analysis from your own Garmin FIT files, served to Claude through a local MCP server.
 
-It is a single-user tool: there is no web UI, no accounts and no cloud
-service. Your data stays on your machine.
+[![CI](https://github.com/cambroussard9/trail-factors/actions/workflows/ci.yml/badge.svg)](https://github.com/cambroussard9/trail-factors/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+<!-- SonarQube badge goes here -->
 
-- **SPEC.md** is the full design: data model, algorithms, and the reasoning
-  (and measured failures) behind each decision.
-- **CLAUDE.md** is the condensed rule book: invariants, commands, conventions.
+![Trail Factors demo](docs/demo.gif)
 
-## Requirements
+## Why I built this
 
-- Python 3.12 and [uv](https://docs.astral.sh/uv/)
-- A Garmin watch and account (FIT files can also be added by hand)
-- Optional, for terrain: USGS 3DEP 1 m DEM tiles covering where you run
-  (US only; `fetch-tile` downloads them)
+I'm training for my first 50-mile trail race. Garmin Connect reports averages, and on rolling trail terrain averaging destroys the signal: an average heart rate across eight climbs can't tell me whether I was tired or the trail was hard. Trails add a second problem. Under ridges and in creek drainages, GPS coverage drops out, and elevation read from a drifting position turns into noise.
 
-## Setup
+So I built my own analytics layer and connected it to the AI chat I use for coaching. Trail Factors takes FIT files from my watch, loads them into a local DuckDB database, refines them through a medallion architecture (raw bronze, enriched silver, summarized gold), and exposes the gold layer to Claude through an MCP server. Elevation comes from a digital elevation model instead of the watch, so the same hill returns the same profile every time. I ask questions in plain English and get answers computed from my own data: running-only pace by grade, heart rate drift on matched terrain, the same hill compared across months.
 
-```sh
-uv sync                                              # installs the package editable
-cp config/athlete.example.yaml config/athlete.yaml   # then edit it
-cp .env.example .env                                 # optional
+Two design rules shaped it:
+- The tools carry the filters. The chat never queries the database directly. Every number comes through a tool that applies the gates and exclusions that make it trustworthy, and if a tool can't answer a question, it says so.
+- The athlete outranks the instrument. When the data and my account of a run disagree, the first question is what the measurement couldn't see, like a GPS dead spot in a creek drainage or a watch that died mid-run.
+
+I built it in VS Code with the Claude Code extension. I designed the system and wrote the specs; Claude Code wrote most of the code. I use it after nearly every run.
+
+## How it works
+
+```mermaid
+flowchart LR
+    FIT["FIT files"] --> B["Bronze: parsed as recorded"]
+    B --> S["Silver: enriched records"]
+    DEM["DEM elevation tiles"] --> S
+    WX["Weather"] --> S
+    S --> G["Gold: per-run and per-segment summaries"]
+    G --> T["MCP tools"]
+    T --> C["Claude"]
 ```
 
-`uv sync` installs the `trail_factors` package from this clone in editable
-mode, with two commands: `trail-factors` (the CLI) and `trail-factors-mcp`
-(the MCP server). Run them through `uv run`, or activate `.venv`. Data
-directories default to folders inside the clone, so run it from a clone
-rather than from a copy installed elsewhere.
+Raw FIT files are the immutable source of truth. The database is derived from them, with athlete-supplied state re-applied, and can be rebuilt. Elevation is looked up locally from downloaded USGS 3DEP tiles rather than taken from the watch, so no per-coordinate query leaves the machine and the same trail returns the identical profile on every traversal. The MCP server is a thin wrapper over the same functions the CLI calls: it runs over stdio only and opens every database connection read-only.
 
-**`config/athlete.yaml`** holds your static configuration: your training
-areas (`clusters`), an optional projected CRS for terrain work
-(`projection_crs`; unset, each run's UTM zone is derived from its own
-position and the output says so), the run that orders your segment list,
-and a few heart-rate thresholds. Everything you supply or decide over time lives in the
-athlete-state directory instead (see below). Every config field is optional
-and documented in the example file. The file is validated strictly when it
-is loaded: an unknown key, a wrong type or an out-of-range value is an error
-that names the field and the line. It is gitignored.
+More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/tools.md](docs/tools.md) (all 29 MCP tools), [docs/HISTORY.md](docs/HISTORY.md), and [SPEC.md](SPEC.md) (the full design).
 
-**Environment variables** (all optional, documented in `.env.example`) move
-the database and data directories. A relative path is resolved against the
-repo root, not the current directory. The main one:
+## What you can ask
 
-| Variable | Default | What |
+These answers come from the bundled demo database (`data/demo.duckdb`, built by `uv run trail-factors demo`), not from a live account.
+
+**"On my most recent long run, show my running pace per mile and when my heart rate started to drift."** → `mile_splits()` and `drift_onset()`
+
+The most recent long run in the demo is 2026-10-11: 7.62 mi in 106 minutes. Pace counts running time only; walk breaks are left out of the pace and shown in their own column.
+
+| Mile | Running pace | HR (running) | Walking |
+|---|---|---|---|
+| 1 | **11:12/mi** | 129 | 0:00 |
+| 2 | **13:26/mi** | 162 | 1:48 |
+| 3 | **13:53/mi** | 154 | 8:02 |
+| 4 | **12:57/mi** | 162 | 7:14 |
+| 5 | **11:49/mi** | 168 | 6:55 |
+| 6 | **10:53/mi** | 164 | 2:14 |
+| 7 | **12:12/mi** | 168 | 5:56 |
+| 8 (0.62 mi) | **11:46/mi** | 175 | 3:11 |
+
+Garmin's own lap for mile 2 reads 14:05/mi because it includes the walking; it is returned beside these figures for cross-checking and never substituted for them.
+
+On drift, the tool finds an onset at **85 minutes**: the first 5-minute bin where heart rate on matched ground drifts upward and keeps drifting upward in every later bin (dew point 63–66 °F). It also refuses to call that a finding. Only **1 of 7** demo runs recorded every second produces an onset, and **8** at a comparable dew point are needed before anyone can tell whether the onset repeats. So the 85 minutes is reported as a diagnostic, with the reason attached.
+
+**"Is my heart rate drifting on the same ground?"** → `matched_terrain_drift()`
+
+"matched_terrain_drift: median **9.79 bpm/hour** over 9 of 10 runs." It pairs records on the same ground (within 20 m, at least 600 s apart, both running, speed matched within 0.35 m/s). The tenth run had no qualifying pairs, and the result says so instead of reporting a number.
+
+**"What training load have I done recently?"** → `session_load(last_n=11)`
+
+"6 of 11 sessions priced, **2625 AU** (a lower bound: 5 unpriced)." Load is Garmin's post-run RPE × timer minutes. The five runs with no Garmin self-evaluation are left out rather than counted as zero, so the total is labelled a lower bound.
+
+## Quick start
+
+Requires Python 3.12, [uv](https://docs.astral.sh/uv/) and [Claude Code](https://claude.com/claude-code). The demo needs no Garmin account and no network.
+
+```sh
+git clone https://github.com/cambroussard9/trail-factors.git && cd trail-factors
+uv sync
+uv run trail-factors demo
+```
+
+Register the MCP server with Claude Code, from the clone root:
+
+```sh
+claude mcp add trail-factors -e TRAIL_FACTORS_DB=data/demo.duckdb -- uv run --directory "$PWD" trail-factors-mcp
+claude mcp get trail-factors      # or: claude mcp list
+```
+
+Then ask Claude one of the questions above.
+
+Using Codex instead? See [SETUP.md, step 11](SETUP.md#step-11-register-the-mcp-server-with-codex-from-openais-docs-untested) (from OpenAI's docs, untested).
+
+## Use your own Garmin data
+
+Copy `config/athlete.example.yaml` to `config/athlete.yaml`, log in once with `uv run trail-factors garmin-login`, and run `uv run trail-factors sync` to download, ingest and validate your activities. Your data stays in the gitignored `data/` directory on your machine. The full walkthrough is in [SETUP.md](SETUP.md).
+
+## Security and quality
+
+| Control | Where | Why it exists |
 |---|---|---|
-| `TRAIL_FACTORS_DB` | `data/ultra.duckdb` | the database |
-| `TRAIL_FACTORS_DATA_DIR` | `data` | root for the directories below |
-| `TRAIL_FACTORS_RAW_DIR`, `_DEM_DIR`, `_ATHLETE_DIR`, `_LOOKUP_DIR`, `_JOBS_FILE` | under `data/` | raw files, DEM tiles, your confirmations and names, lookups, job state |
-| `TRAIL_FACTORS_CONFIG` | `config/athlete.yaml` | the athlete config |
-| `TRAIL_FACTORS_GARMIN_TOKENSTORE` | `~/.garminconnect` | Garmin OAuth token (must be outside the repo) |
-| `TRAIL_FACTORS_GARMIN_AUTH_STATE` | `~/.garminconnect_auth_state.json` | failed-login lockout (must be outside the repo) |
+| gitleaks | pre-commit (`.pre-commit-config.yaml`) | Blocks a commit whose staged changes contain a secret. |
+| ruff (lint + format) | pre-commit (`.pre-commit-config.yaml`) | Keeps style and common errors out of commits. |
+| ruff and pytest | CI (`.github/workflows/ci.yml`), every push and pull request | Installs from the lockfile, checks lint and formatting, runs the tests. Corpus tests skip because no database is set. |
+| TruffleHog | `.github/workflows/secrets.yml`, every push | Scans the full git history and fails on any verified or unknown finding. |
+| Dependabot | `.github/dependabot.yml` | Proposes weekly updates for GitHub Actions and the uv-managed Python dependencies. |
+| Secrets-blocking hooks | The author's own Claude Code user settings (not shipped in this repo) | SonarQube secrets hooks run on prompt submit and before file reads. They need the `sonar` CLI. |
 
-Nothing loads `.env` automatically: export the variables in your shell
-(`set -a; . ./.env; set +a`) or set them in your MCP client's server config.
+More in [SECURITY.md](SECURITY.md).
 
-### Athlete-state files
+## Design principles
 
-These JSON files live in the athlete-state directory (`data/athlete/`,
-`TRAIL_FACTORS_ATHLETE_DIR`). The code reads them; none is rebuilt from raw
-data, and every one is optional until you use the feature. The SPEC.md
-section named holds the design and format; the two hand-edited files are
-shown with their shape.
+- **Tools carry the filters.** MCP tools are parameterised primitives that never take SQL: the selection is free, the computation is fixed, and every result states its applied filters and what it excluded. Every report section carries one of four statuses (`ok`, `gated`, `refused`, `unavailable`), never a bare null.
+- **The athlete outranks the instrument.** A file the validator rejects names its own fix, and the athlete confirms the valid window with `confirm-file`; the window is applied before validation, so a car ride at the end of a recording no longer sinks the run.
+- **The database rebuilds from raw FIT.** Files in `data/raw/` are immutable and never edited. The database is derived from them, with athlete-supplied state re-applied, so deleting it and re-running ingest is safe. Athlete-supplied state (window confirmations, segment names, notes) lives in `data/athlete/`, outside the rebuild path, because nothing can regenerate it. It is gitignored with the rest of `data/`, so back it up yourself.
 
-| File | Holds | Written by |
-|---|---|---|
-| `window_confirmations.json` | confirmed valid start/end per raw file (§4.3) | `confirm-window`, `confirm-file` |
-| `segment_names.json` | your names for segments, run-anchored (§12, §19) | `name-segment` |
-| `venues.json` | venue name → anchor segments (§19) | `venue-anchor` |
-| `notes.json` | free-text run notes | `note` |
-| `ride_blocks.json` | stationary-bike resistance/RPM blocks | MCP `save_ride_blocks` |
-| `hr_zones.json` | dated HR zone fallback: a list of `{sport, effective_from, zone_floors, max_hr}` (§14e) | by hand |
-| `bike_config.json` | measured knob ceiling, `{"resistance_max_turns": ...}` | by hand |
+## Known limitations
 
-## Getting data in
+Known issues and limitations are tracked in [GitHub issues](https://github.com/cambroussard9/trail-factors/issues). The constraints built into the design:
 
-```sh
-uv run trail-factors garmin-login        # once: email + password, MFA if asked
-uv run trail-factors sync                # download new activities, ingest,
-                                             # fetch weather, validate, report
-uv run trail-factors retile              # terrain, segments and recovery
-                                             # for runs that lack them
-uv run trail-factors report              # the report for the latest run
-```
+- **One athlete by design.** No multi-tenancy, no app, no web UI.
+- **Terrain needs a DEM tile.** Grade and elevation come from USGS 3DEP tiles, which cover the United States only; `fetch-tile` refuses a cell outside US territory before sending any request. A run with no tile on disk gets no terrain numbers, and the report says which tile is missing.
+- **Garmin download uses an unofficial library** (`garminconnect`). Garmin can throttle its login, and a failed login locks further attempts locally for 30 minutes.
+- **The MCP server runs over stdio only.**
 
-The CLI `sync` downloads from the whole account by default (`sync <days>`
-limits it) and does NOT run the terrain steps (dem, silver, match, recovery):
-run `retile`, or those commands individually, afterwards. Nothing in `sync`
-or the report asks you for answers about a run: effort comes from Garmin's
-own post-activity rating (see *Session load* below).
+## Built with
 
-### When a file is rejected
+[VS Code](https://code.visualstudio.com/) and the [Claude Code](https://claude.com/claude-code) extension.
 
-A file whose tail is a car ride, whose GPS is broken, or whose values are
-implausible is rejected rather than ingested. The loop to fix it:
+## About me
 
-```sh
-uv run trail-factors sync              # the rejection names the failing
-                                           # check and the command to run next
-uv run trail-factors rejected-files    # every rejected file: findings,
-                                           # span, a suggested window, and the
-                                           # confirm-file command for it
-uv run trail-factors confirm-file <garmin-id> --end 'YYYY-MM-DD HH:MM:SS'
-                                           # UTC; omit --end/--start to accept
-                                           # the suggestion; --note '...' optional
-uv run trail-factors sync              # retries the file with the window
-                                           # applied; it now ingests, trimmed,
-                                           # and the sync says so
-```
-
-If the impossible stretch is in the middle of the run, with running on both
-sides, no start/end window can remove it and the advice says so rather than
-offering one. A car ride at the end followed by a long walk from the car is
-still an edge: the advice gives the window and states how much walking it
-would cut. Confirming only `--start` (or only `--end`) keeps the other bound
-you confirmed before. `confirm-window <garmin-id>`, for a file that did
-ingest, also only records the window; run `sync` to apply it.
-
-The window is applied before validation, so the trimmed run is what gets
-checked. Splits wholly outside it are dropped, a straddling split is
-truncated, and session totals are recomputed (Garmin's whole-file totals are
-kept alongside). Confirmations are stored in `window_confirmations.json` in
-the athlete-state directory, which is per-user and gitignored. Confirming a
-window is a CLI command only; the MCP server has no tool for it, and its
-`sync` job's `problems` name the CLI command instead.
-
-`garmin-login` reads your password with `getpass` and hands it to the
-[`garminconnect`](https://pypi.org/project/garminconnect/) library in memory.
-This project never writes the password to disk; the library stores an OAuth
-token in the token store, outside the repo. After a failed login, retries are
-refused locally for 30 minutes, because repeated attempts extend Garmin's
-rate limit.
-
-Terrain needs DEM tiles. The projection is derived per run from its own
-position unless `projection_crs` is set; segments in different UTM zones
-never match.
-
-```sh
-uv run trail-factors fetch-tile --missing   # resolve, download, verify, retile
-uv run trail-factors fetch-tile <cell> [--zone NN]   # one cell
-```
-
-A report on a run outside every tile names the missing 10 km cell and the
-exact `fetch_command` to run; copy that rather than building one. With
-`projection_crs` unset, cells are named in the run's own derived UTM zone,
-so the command carries `--zone NN` and a bare cell name is refused. 3DEP
-covers the US only: a cell in a southern-hemisphere zone, or a northern zone
-above 23, has no USGS tile grid and gets no fetch command.
-
-Run `uv run trail-factors` for the full command list.
-
-## MCP server
-
-```sh
-TRAIL_FACTORS_DB=/path/to/ultra.duckdb uv run trail-factors-mcp
-```
-
-The server uses the **stdio transport only**: it binds no port. Point your MCP
-client at that command (server name `trail-factors`; for a client that does
-not run `uv`, use the absolute path of `.venv/bin/trail-factors-mcp`), and set
-any environment variables in the client's `env` block. Every query tool opens the database read-only. Only two things
-write: `save_ride_blocks`, which puts a validated stationary-bike ride log in
-the athlete-state directory, and the `sync` tool. Window confirmations are
-written by the CLI (`confirm-file`), not the server. `sync`
-starts a background job that appends new files to the raw directory (a
-400-day download window) and then runs the full pipeline: ingest, dem,
-silver, weather, match, recovery and validate. That is more than the CLI
-`sync`, which stops before the terrain steps. With no DEM tiles yet, the job
-skips the terrain steps with a note instead of failing, and it always reports
-any rejected file with its fix. Results never include a GPS
-position or an absolute path. The finest location they carry is the 10 km
-grid cell of a missing DEM tile.
-
-**`run_type` is not collected in this build.** Every selection tool keeps
-its `run_type` parameter, but a non-empty value is rejected by name ("no
-run_type source in this build"), and every per-run result reports
-`run_type: null`, labelled "not collected". A later version re-enables it
-through user-defined run types.
-
-**Session load.** The `session_load` tool and the report carry Foster load =
-Garmin's post-activity RPE × timer minutes. An activity without a Garmin
-self-evaluation says so instead of reporting a number. Garmin's "feel"
-rating is shown but never used in the load. Over a date range or `last_n`,
-the load covers every sport (rides included), and says how many activities
-were unrated or could not be priced; only then is the total a lower bound.
-
-**Known limitations.** Date filters use the UTC date of a run's start, while
-`list_runs` shows the local date, so an evening run close to midnight can
-fall on the next day in a filter. With `projection_crs` unset, two runs over
-the same hill whose positions sit mostly either side of a UTM zone line form
-two segments instead of one; setting `projection_crs` avoids it.
-
-## Tests
-
-```sh
-uv run pytest                                     # unit tests; corpus tests skip
-TRAIL_FACTORS_DB=data/copy.duckdb uv run pytest   # everything
-```
-
-The suite is plain `unittest`; pytest runs it, and
-`uv run python -m unittest discover tests` works too.
-
-Corpus tests read an ingested database and run only when `TRAIL_FACTORS_DB` is
-set. Point it at a **copy** of your database. The tests open it read-only and
-look for runs by their properties, so they work on anyone's corpus, and they
-skip with a stated reason when your corpus has no qualifying run. If the
-variable is set to a path that does not exist, the run fails rather than
-skipping everything, and no test may create a database file.
-`tests/golden/capture.py` pins three query outputs as a private refactoring
-guard; they are stored in `data/golden/` (`TRAIL_FACTORS_GOLDEN_DIR`), never in
-the repo. A fresh checkout has none. Run it with `--pin` once to choose the
-pinned activity list, then with no flag to capture the outputs, then with
-`--check` after every refactor (it exits non-zero on a diff).
-
-## Development
-
-```sh
-pre-commit install            # once: gitleaks + ruff on every commit
-pre-commit run --all-files    # everything (gitleaks scans what is staged)
-uv run ruff check . && uv run ruff format --check .
-```
-
-CI (`.github/workflows/ci.yml`) runs ruff and pytest on every push and pull
-request, with `TRAIL_FACTORS_DB` unset, so corpus tests skip. A second
-workflow scans the full git history with TruffleHog on every push and fails
-on any verified or unknown finding. Dependabot proposes weekly updates for the
-GitHub Actions and for the Python dependencies (Dependabot's `uv`
-ecosystem).
-
-## Privacy defaults
-
-- The entire `data/` directory is gitignored. That includes your raw files
-  (which carry GPS positions), the database, DEM tiles, lookups and
-  `data/athlete/`. `data/athlete/` holds things you entered (window
-  confirmations, segment and venue names, notes, ride logs) that cannot be
-  rebuilt from anything else, so **back it up yourself**.
-- `*.fit` files are ignored everywhere except `demo/` and `tests/fixtures/`,
-  which are for synthetic files only.
-- Weather requests send one start coordinate per run, rounded to about
-  1.1 km. DEM fetches send a 10 km grid cell. Nothing else leaves the
-  machine except Garmin's own API calls.
+<!-- Replace YOUR-LINKEDIN-URL with your LinkedIn profile URL. -->
+[LinkedIn](YOUR-LINKEDIN-URL)
 
 ## License
 
