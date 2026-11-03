@@ -6,7 +6,10 @@ Trail and ultra running analysis from your own Garmin FIT files, served to Claud
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 <!-- SonarQube badge goes here -->
 
-![Trail Factors demo](docs/demo.gif)
+<p align="center">
+  <img src="docs/interval-laps.gif" width="300" alt="Asking Claude for running pace with the walk breaks taken out on my last interval run, answered lap by lap">
+</p>
+<p align="center"><em>Recorded on my phone with my own data, in a Claude Project that holds my coaching notes. The repo is the analytics layer.</em></p>
 
 ## Why I built this
 
@@ -38,6 +41,37 @@ Raw FIT files are the immutable source of truth. The database is derived from th
 More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/tools.md](docs/tools.md) (all 29 MCP tools), [docs/HISTORY.md](docs/HISTORY.md), and [SPEC.md](SPEC.md) (the full design).
 
 ## What you can ask
+
+Each clip is a question asked out loud and answered from my own data.
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/mile-splits.gif" width="300" alt="Asking Claude to break my last Rim Ridge run into laps, answered mile by mile"><br>
+      <b>"Look at my last run on that Rim Ridge trail. Can you break that run into laps, showing running pace, elevation, heart rate for each lap, and any other metric you might think is pertinent to compare lap by lap?"</b><br>
+      Mile-by-mile running pace with the walks removed, plus elevation, walk time and cadence.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/race-profile.gif" width="300" alt="Asking Claude how my weekend hill runs compare with my upcoming races' elevation profiles"><br>
+      <b>"My last couple weekend hilly runs, how does that track compare to my upcoming races course profile in terms of elevation?"</b><br>
+      Recent hill runs compared with the climbing profile of target races.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/hr-recovery.gif" width="300" alt="Asking Claude about heart-rate recovery during the walk breaks of my last two interval runs"><br>
+      <b>"I wanted to look at my last two interval runs and look at my heart rate recovery. Like, how long does it take my heart rate to recover between these intervals?"</b><br>
+      Heart-rate recovery during walk breaks across two interval runs.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/hill-climb.gif" width="300" alt="Asking Claude whether I am getting faster on the climb before the peak, answered with a refusal to call a trend"><br>
+      <b>"On my weekend hill runs, there's a climb right before the peak. Compare my running pace on that climb across my last few runs. Am I getting faster?"</b><br>
+      One climb compared across runs; when the data is too thin, it says so instead of guessing.
+    </td>
+  </tr>
+</table>
+
+### Try it yourself with the demo data
 
 These answers come from the bundled demo database (`data/demo.duckdb`, built by `uv run trail-factors demo`), not from a live account.
 
@@ -85,7 +119,7 @@ claude mcp add trail-factors -e TRAIL_FACTORS_DB=data/demo.duckdb -- uv run --di
 claude mcp get trail-factors      # or: claude mcp list
 ```
 
-Then ask Claude one of the questions above.
+Then ask Claude one of the [demo-data questions above](#try-it-yourself-with-the-demo-data).
 
 Using Codex instead? See [SETUP.md, step 11](SETUP.md#step-11-register-the-mcp-server-with-codex-from-openais-docs-untested) (from OpenAI's docs, untested).
 
