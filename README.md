@@ -148,8 +148,9 @@ Tests built on synthetic fixtures run anywhere. Corpus tests read a real databas
 |---|---|---|
 | CI, every push | 726 pass, 430 skip | Everything that needs no private data passes. The 430 corpus tests skip because they need real runs. |
 | The demo database | 1,064 pass, 92 skip | The corpus tests run against the bundled demo runs. Reproduce it with the commands below. |
-| The author's private corpus | 1,123 pass | The analysis holds up on real recordings (GPS gaps, watch and phone duplicates, DEM elevation), which synthetic fixtures can't cover. |
-| The private build this was extracted from | 1,122 tests | That build includes features not published here. |
+| The author's private corpus | 1,132 pass, 24 skip | The analysis holds up on real recordings (GPS gaps, watch and phone duplicates, DEM elevation), which synthetic fixtures can't cover. |
+
+Trail Factors was extracted from a private build; tests for features not published here stayed there.
 
 To reproduce the demo-database run:
 
