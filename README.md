@@ -140,6 +140,26 @@ Copy `config/athlete.example.yaml` to `config/athlete.yaml`, log in once with `u
 
 More in [SECURITY.md](SECURITY.md).
 
+## Testing
+
+Tests built on synthetic fixtures run anywhere. Corpus tests read a real database named by `TRAIL_FACTORS_DB` and skip when none is set, so the same suite gives different counts depending on what it runs against.
+
+| Run against | Result | What it shows |
+|---|---|---|
+| CI, every push | 726 pass, 430 skip | Everything that needs no private data passes. The 430 corpus tests skip because they need real runs. |
+| The demo database | 1,064 pass, 92 skip | The corpus tests run against the bundled demo runs. Reproduce it with the commands below. |
+| The author's private corpus | 1,123 pass | The analysis holds up on real recordings (GPS gaps, watch and phone duplicates, DEM elevation), which synthetic fixtures can't cover. |
+| The private build this was extracted from | 1,122 tests | That build includes features not published here. |
+
+To reproduce the demo-database run:
+
+```sh
+uv run trail-factors demo                          # builds data/demo.duckdb
+TRAIL_FACTORS_DB=data/demo.duckdb uv run pytest
+```
+
+Counts as of 2026-11-03.
+
 ## Design principles
 
 - **Tools carry the filters.** MCP tools are parameterised primitives that never take SQL: the selection is free, the computation is fixed, and every result states its applied filters and what it excluded. Every report section carries one of four statuses (`ok`, `gated`, `refused`, `unavailable`), never a bare null.
